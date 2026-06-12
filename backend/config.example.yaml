@@ -1,0 +1,33 @@
+ai_model:
+    api_key: ""
+collector:
+    agent_token: ""
+cors:
+    allowed_headers:
+        - Authorization
+        - Content-Type
+        - X-Requested-With
+        - X-Collector-Token
+    allowed_methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+    allowed_origins:
+        - '*'
+mysql:
+    database: kol_admin
+    password: ""
+    username: root
+platform_apis:
+    instagram_access_token: ""
+    instagram_user_id: ""
+    meta_graph_api_version: v21.0
+    tikhub_api_key: ""
+    tiktok_access_token: ""
+    youtube_api_key: ""
+    youtube_proxy_url: http://127.0.0.1:7890
+server:
+    addr: :8080
