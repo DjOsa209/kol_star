@@ -29,6 +29,10 @@ const importProjectId = ref<number | null>(null);
 const importRows = ref<any[]>([]);
 const importFileName = ref("");
 const marketOptions = ref<string[]>([]);
+const selectedProjectId = ref<number | null>(null);
+const activePipelineStage = ref("all");
+const executionDrawer = ref(false);
+const activeCooperation = ref<any>(null);
 
 const defaultMarketOptions = [
   "美国",
@@ -118,6 +122,105 @@ const projectReviewTableRows = computed(() => [
 const overallReviewInsight = computed(() =>
   buildReviewInsight("全部项目", overallReview.value, true)
 );
+const selectedProject = computed(() =>
+  projects.value.find(
+    item => Number(item.id) === Number(selectedProjectId.value)
+  )
+);
+const selectedCooperations = computed(() =>
+  cooperations.value.filter(
+    item => Number(item.projectId) === Number(selectedProjectId.value)
+  )
+);
+const selectedProjectReview = computed(() =>
+  selectedProject.value
+    ? projectStats(selectedProject.value.id)
+    : emptyProjectStats()
+);
+const pipelineStages = computed(() => {
+  const stageDefinitions = [
+    {
+      key: "inviting",
+      label: "邀约 / 议价",
+      icon: "ri:send-plane-line",
+      description: "等待达人回复或确认价格"
+    },
+    {
+      key: "confirmed",
+      label: "已确认合作",
+      icon: "ri:handshake-line",
+      description: "合作已确认，等待启动交付"
+    },
+    {
+      key: "production",
+      label: "内容制作",
+      icon: "ri:movie-2-line",
+      description: "脚本、稿件或内容正在制作"
+    },
+    {
+      key: "pending_publish",
+      label: "待发布",
+      icon: "ri:calendar-event-line",
+      description: "内容已确认，等待按计划发布"
+    },
+    {
+      key: "published",
+      label: "已发布",
+      icon: "ri:checkbox-circle-line",
+      description: "进入数据回收与复盘"
+    }
+  ];
+  return stageDefinitions.map(stage => ({
+    ...stage,
+    count: selectedCooperations.value.filter(
+      item => cooperationStage(item) === stage.key
+    ).length
+  }));
+});
+const pipelineRows = computed(() =>
+  activePipelineStage.value === "all"
+    ? selectedCooperations.value
+    : selectedCooperations.value.filter(
+        item => cooperationStage(item) === activePipelineStage.value
+      )
+);
+const pendingActions = computed(() =>
+  selectedCooperations.value
+    .map(item => ({
+      ...item,
+      action: cooperationAction(item)
+    }))
+    .filter(item => Boolean(item.action))
+    .slice(0, 6)
+);
+const campaignHealth = computed(() => {
+  const rows = selectedCooperations.value;
+  const budget = numberValue(selectedProject.value?.budget);
+  const spent = rows.reduce(
+    (total, item) => total + numberValue(item.quoteAmount),
+    0
+  );
+  const published = rows.filter(
+    item => cooperationStage(item) === "published"
+  ).length;
+  const missingData = rows.filter(
+    item =>
+      cooperationStage(item) === "published" &&
+      primaryReach(item) <= 0 &&
+      numberValue(item.clicks) <= 0
+  ).length;
+  return {
+    budget,
+    spent,
+    remaining: Math.max(budget - spent, 0),
+    budgetRate:
+      budget > 0 ? Math.min(Math.round((spent / budget) * 100), 100) : 0,
+    published,
+    completionRate:
+      rows.length > 0 ? Math.round((published / rows.length) * 100) : 0,
+    missingData
+  };
+});
 
 async function loadData() {
   const [projectRes, cooperationRes] = await Promise.all([
@@ -128,6 +231,9 @@ async function loadData() {
     projects.value = projectRes.data.list;
     if (!importProjectId.value && projects.value.length > 0) {
       importProjectId.value = projects.value[0].id;
+    }
+    if (!selectedProjectId.value && projects.value.length > 0) {
+      selectedProjectId.value = projects.value[0].id;
     }
   }
   if (cooperationRes.code === 0) cooperations.value = cooperationRes.data.list;
@@ -288,7 +394,9 @@ async function submitProject() {
     ? await updateProject(payload)
     : await createProject(payload);
   if (res.code === 0) {
-    ElMessage.success(editingProjectId.value ? "项目已更新" : "项目已创建");
+    ElMessage.success(
+      editingProjectId.value ? "Campaign 已更新" : "Campaign 已创建"
+    );
     projectDialog.value = false;
     loadData();
   }
@@ -443,6 +551,71 @@ function cpmText(cost: unknown, reach: unknown, currency = "USD") {
   return moneyText((costNumber / reachNumber) * 1000, currency);
 }
 
+function cooperationStage(row: any) {
+  const status = `${row.status || ""} ${row.deliverableStatus || ""}`;
+  if (/已发布|已完成|完成发布|数据回收/.test(status)) return "published";
+  if (/待发布|排期|发布中/.test(status)) return "pending_publish";
+  if (/制作|脚本|稿件|审核|修改|交付中/.test(status)) return "production";
+  if (/确认合作|已确认|合作建立|待启动/.test(status)) return "confirmed";
+  return "inviting";
+}
+
+function cooperationStageLabel(row: any) {
+  return (
+    pipelineStages.value.find(item => item.key === cooperationStage(row))
+      ?.label || "邀约 / 议价"
+  );
+}
+
+function cooperationStageTag(row: any) {
+  const stage = cooperationStage(row);
+  if (stage === "published") return "success";
+  if (stage === "pending_publish") return "warning";
+  if (stage === "production") return "primary";
+  if (stage === "confirmed") return "info";
+  return "warning";
+}
+
+function cooperationAction(row: any) {
+  const stage = cooperationStage(row);
+  if (stage === "inviting") return "确认报价与合作意向";
+  if (stage === "confirmed") return "启动内容制作与交付";
+  if (stage === "production") return "审核内容或跟进修改";
+  if (stage === "pending_publish") return "确认发布排期与链接";
+  if (
+    stage === "published" &&
+    primaryReach(row) <= 0 &&
+    numberValue(row.clicks) <= 0
+  ) {
+    return "回收发布效果数据";
+  }
+  return "";
+}
+
+function updatedTimeText(row: any) {
+  const value = row.updatedAt || row.createdAt || row.releaseDate;
+  if (!value) return "等待跟进";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "等待跟进";
+  const days = Math.max(
+    0,
+    Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000))
+  );
+  if (days === 0) return "今天有更新";
+  return `已等待 ${days} 天`;
+}
+
+function openExecutionDetail(row: any) {
+  activeCooperation.value = row;
+  executionDrawer.value = true;
+}
+
+function editFromExecutionDetail() {
+  if (!activeCooperation.value) return;
+  executionDrawer.value = false;
+  openEditCooperation(activeCooperation.value);
+}
+
 function emptyProjectStats() {
   return {
     cooperationCount: 0,
@@ -456,7 +629,10 @@ function emptyProjectStats() {
   };
 }
 
-function accumulateProjectStat(stat: ReturnType<typeof emptyProjectStats>, row: any) {
+function accumulateProjectStat(
+  stat: ReturnType<typeof emptyProjectStats>,
+  row: any
+) {
   const reach = primaryReach(row);
   const resourceId = Number(row.resourceId || 0);
   stat.cooperationCount += 1;
@@ -536,7 +712,7 @@ function reviewRowClassName({ row }: any) {
 
 async function handleUploadFile(file: any) {
   if (!importProjectId.value) {
-    ElMessage.warning("请先选择导入项目");
+    ElMessage.warning("请先选择导入 Campaign");
     return;
   }
   const rawFile = file.raw;
@@ -573,7 +749,7 @@ async function handleUploadFile(file: any) {
 
 async function submitImport() {
   if (!importProjectId.value) {
-    ElMessage.warning("请先选择导入项目");
+    ElMessage.warning("请先选择导入 Campaign");
     return;
   }
   if (validImportRows.value.length === 0) {
@@ -612,15 +788,16 @@ onMounted(() => {
   <div class="business-page">
     <section class="page-hero">
       <div>
-        <span>Project Collaboration</span>
-        <h1>项目合作</h1>
+        <span>Campaign Operations Center</span>
+        <h1>Campaign 执行中心</h1>
         <p>
-          管理营销项目需求、候选资源、合作进度与效果回填，让资源评分持续来自真实复盘。
+          从达人邀约、议价、内容交付到发布复盘，统一掌握每个 Campaign
+          的执行节奏与待处理事项。
         </p>
       </div>
       <el-button type="primary" @click="openCreateProject">
         <IconifyIconOnline icon="ri:add-line" class="mr-1" />
-        创建项目
+        创建 Campaign
       </el-button>
     </section>
 
@@ -638,25 +815,306 @@ onMounted(() => {
       <div>
         <span>总体互动率</span>
         <strong>
-          {{ ratioPercent(overallReview.totalEngagements, overallReview.totalReach) }}
+          {{
+            ratioPercent(
+              overallReview.totalEngagements,
+              overallReview.totalReach
+            )
+          }}
         </strong>
         <p>转赞藏评 {{ formatCount(overallReview.totalEngagements) }}</p>
       </div>
       <div>
         <span>付费 CPM</span>
-        <strong>{{ cpmText(overallReview.totalCost, overallReview.totalReach) }}</strong>
+        <strong>{{
+          cpmText(overallReview.totalCost, overallReview.totalReach)
+        }}</strong>
         <p>成本 {{ moneyText(overallReview.totalCost) }}</p>
       </div>
     </section>
 
     <el-card shadow="never" class="workspace-card">
       <el-tabs>
-        <el-tab-pane label="项目需求">
+        <el-tab-pane label="执行总览">
+          <section class="campaign-switcher">
+            <div>
+              <span>当前 Campaign</span>
+              <el-select
+                v-model="selectedProjectId"
+                filterable
+                placeholder="选择 Campaign"
+              >
+                <el-option
+                  v-for="project in projects"
+                  :key="project.id"
+                  :label="project.name"
+                  :value="project.id"
+                />
+              </el-select>
+            </div>
+            <div class="campaign-switcher-main">
+              <div>
+                <strong>{{ selectedProject?.name || "暂无 Campaign" }}</strong>
+                <p>
+                  {{ selectedProject?.targetMarket || "未设置市场" }} ·
+                  {{ selectedProject?.platform || "全平台" }} ·
+                  {{ selectedProject?.campaignType || "未设置合作目标" }}
+                </p>
+              </div>
+              <div class="campaign-switcher-actions">
+                <el-tag effect="plain">
+                  {{ selectedProject?.status || "待配置" }}
+                </el-tag>
+                <el-button
+                  v-if="selectedProject"
+                  link
+                  type="primary"
+                  @click="openEditProject(selectedProject)"
+                >
+                  编辑 Campaign
+                </el-button>
+              </div>
+            </div>
+          </section>
+
+          <section class="execution-metrics">
+            <article>
+              <IconifyIconOnline icon="ri:user-search-line" />
+              <div>
+                <span>合作达人 / 媒体</span>
+                <strong>{{ selectedProjectReview.resourceCount }}</strong>
+                <p>{{ selectedProjectReview.cooperationCount }} 条执行记录</p>
+              </div>
+            </article>
+            <article>
+              <IconifyIconOnline icon="ri:wallet-3-line" />
+              <div>
+                <span>预算执行</span>
+                <strong>
+                  {{
+                    moneyText(campaignHealth.spent, selectedProject?.currency)
+                  }}
+                </strong>
+                <p>
+                  预算
+                  {{
+                    moneyText(campaignHealth.budget, selectedProject?.currency)
+                  }}
+                </p>
+              </div>
+              <el-progress
+                :percentage="campaignHealth.budgetRate"
+                :stroke-width="6"
+                :show-text="false"
+              />
+            </article>
+            <article>
+              <IconifyIconOnline icon="ri:checkbox-circle-line" />
+              <div>
+                <span>发布完成率</span>
+                <strong>{{ campaignHealth.completionRate }}%</strong>
+                <p>{{ campaignHealth.published }} 条内容已发布</p>
+              </div>
+              <el-progress
+                :percentage="campaignHealth.completionRate"
+                :stroke-width="6"
+                :show-text="false"
+                status="success"
+              />
+            </article>
+            <article>
+              <IconifyIconOnline icon="ri:line-chart-line" />
+              <div>
+                <span>当前触达</span>
+                <strong>{{
+                  formatCount(selectedProjectReview.totalReach)
+                }}</strong>
+                <p>
+                  CPM
+                  {{
+                    cpmText(
+                      selectedProjectReview.totalCost,
+                      selectedProjectReview.totalReach
+                    )
+                  }}
+                </p>
+              </div>
+            </article>
+          </section>
+
+          <section class="pipeline-section">
+            <div class="section-heading">
+              <div>
+                <strong>Campaign 执行流程</strong>
+                <span>按合作记录与交付状态自动归类</span>
+              </div>
+              <el-tag type="success" effect="plain">
+                {{ selectedProject?.owner || "未指定负责人" }}
+              </el-tag>
+            </div>
+            <div class="pipeline-grid">
+              <button
+                v-for="stage in pipelineStages"
+                :key="stage.key"
+                type="button"
+                :class="{ active: activePipelineStage === stage.key }"
+                @click="activePipelineStage = stage.key"
+              >
+                <IconifyIconOnline :icon="stage.icon" />
+                <strong>{{ stage.count }}</strong>
+                <span>{{ stage.label }}</span>
+                <p>{{ stage.description }}</p>
+              </button>
+            </div>
+          </section>
+
+          <section class="pending-section">
+            <div class="section-heading">
+              <div>
+                <strong>待处理动作</strong>
+                <span>把最需要人工判断的节点集中到这里</span>
+              </div>
+              <el-tag type="warning" effect="plain">
+                {{ pendingActions.length }} 项待处理
+              </el-tag>
+            </div>
+            <div v-if="pendingActions.length" class="pending-grid">
+              <button
+                v-for="item in pendingActions"
+                :key="item.id"
+                type="button"
+                @click="openExecutionDetail(item)"
+              >
+                <div class="pending-icon">
+                  <IconifyIconOnline icon="ri:user-follow-line" />
+                </div>
+                <div>
+                  <span>{{ item.action }}</span>
+                  <strong>{{ item.resourceName || "未命名资源" }}</strong>
+                  <p>
+                    {{ cooperationStageLabel(item) }} ·
+                    {{ updatedTimeText(item) }}
+                  </p>
+                </div>
+                <IconifyIconOnline icon="ri:arrow-right-line" />
+              </button>
+            </div>
+            <el-empty v-else description="当前没有需要人工处理的动作" />
+          </section>
+
+          <section
+            v-if="campaignHealth.missingData > 0"
+            class="execution-alert"
+          >
+            <IconifyIconOnline icon="ri:alert-line" />
+            <div>
+              <strong
+                >有
+                {{ campaignHealth.missingData }}
+                条已发布内容尚未回收效果数据</strong
+              >
+              <p>建议补充曝光、播放或点击数据，以便完成 Campaign 复盘。</p>
+            </div>
+          </section>
+
+          <section class="creator-pipeline">
+            <div class="section-heading">
+              <div>
+                <strong>达人执行看板</strong>
+                <span>集中查看报价、交付、效果和下一步动作</span>
+              </div>
+              <el-button
+                v-if="activePipelineStage !== 'all'"
+                link
+                type="primary"
+                @click="activePipelineStage = 'all'"
+              >
+                查看全部
+              </el-button>
+            </div>
+            <div class="stage-filter">
+              <button
+                type="button"
+                :class="{ active: activePipelineStage === 'all' }"
+                @click="activePipelineStage = 'all'"
+              >
+                全部 {{ selectedCooperations.length }}
+              </button>
+              <button
+                v-for="stage in pipelineStages"
+                :key="`filter-${stage.key}`"
+                type="button"
+                :class="{ active: activePipelineStage === stage.key }"
+                @click="activePipelineStage = stage.key"
+              >
+                {{ stage.label }} {{ stage.count }}
+              </button>
+            </div>
+            <el-table :data="pipelineRows" stripe class="business-table">
+              <el-table-column
+                prop="resourceName"
+                label="达人 / 媒体"
+                min-width="180"
+              />
+              <el-table-column label="执行阶段" width="140">
+                <template #default="{ row }">
+                  <el-tag :type="cooperationStageTag(row)" effect="light">
+                    {{ cooperationStageLabel(row) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="status" label="合作状态" width="130" />
+              <el-table-column
+                prop="deliverableStatus"
+                label="交付状态"
+                width="130"
+              />
+              <el-table-column label="报价" width="130">
+                <template #default="{ row }">
+                  {{ moneyText(row.quoteAmount, row.currency) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="当前 CPM" width="130">
+                <template #default="{ row }">
+                  {{
+                    cpmText(row.quoteAmount, primaryReach(row), row.currency)
+                  }}
+                </template>
+              </el-table-column>
+              <el-table-column label="触达" width="120">
+                <template #default="{ row }">
+                  {{ formatCount(primaryReach(row)) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="下一步" min-width="190">
+                <template #default="{ row }">
+                  {{ cooperationAction(row) || "等待数据复盘" }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="100" fixed="right">
+                <template #default="{ row }">
+                  <el-button
+                    link
+                    type="primary"
+                    @click="openExecutionDetail(row)"
+                  >
+                    查看
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+        </el-tab-pane>
+        <el-tab-pane label="Campaign 管理">
           <div class="toolbar">
-            <span class="toolbar-title">项目需求池</span>
+            <span class="toolbar-title">Campaign 需求池</span>
           </div>
           <el-table :data="projects" stripe class="business-table">
-            <el-table-column prop="name" label="项目名称" min-width="180" />
+            <el-table-column
+              prop="name"
+              label="Campaign 名称"
+              min-width="180"
+            />
             <el-table-column prop="targetMarket" label="目标市场" width="120" />
             <el-table-column prop="platform" label="平台" width="140" />
             <el-table-column prop="campaignType" label="合作目标" width="120" />
@@ -683,12 +1141,15 @@ onMounted(() => {
             </el-table-column>
           </el-table>
         </el-tab-pane>
-        <el-tab-pane label="项目复盘">
+        <el-tab-pane label="效果复盘">
           <section class="review-report">
             <div class="review-report-heading">
               <div>
-                <strong>项目效果复盘</strong>
-                <span>逐项目展示达人/媒体、曝光、互动、CPM，最后一行为 SUM 总和</span>
+                <strong>Campaign 效果复盘</strong>
+                <span
+                  >逐 Campaign 展示达人/媒体、曝光、互动、CPM，最后一行为 SUM
+                  总和</span
+                >
               </div>
               <el-tag effect="plain">自动汇总</el-tag>
             </div>
@@ -698,7 +1159,12 @@ onMounted(() => {
               class="business-table"
               :row-class-name="reviewRowClassName"
             >
-              <el-table-column prop="name" label="项目" min-width="180" fixed />
+              <el-table-column
+                prop="name"
+                label="Campaign"
+                min-width="180"
+                fixed
+              />
               <el-table-column prop="targetMarket" label="市场" width="120" />
               <el-table-column prop="platform" label="平台" width="130" />
               <el-table-column label="合作达人 / 媒体" width="140">
@@ -767,8 +1233,14 @@ onMounted(() => {
                   </span>
                 </div>
                 <div class="project-card-actions">
-                  <el-tag effect="plain">{{ project.status || "进行中" }}</el-tag>
-                  <el-button link type="primary" @click="openEditProject(project)">
+                  <el-tag effect="plain">{{
+                    project.status || "进行中"
+                  }}</el-tag>
+                  <el-button
+                    link
+                    type="primary"
+                    @click="openEditProject(project)"
+                  >
                     编辑
                   </el-button>
                 </div>
@@ -784,12 +1256,19 @@ onMounted(() => {
                 </div>
                 <div>
                   <span>总互动</span>
-                  <strong>{{ formatCount(project.review.totalEngagements) }}</strong>
+                  <strong>{{
+                    formatCount(project.review.totalEngagements)
+                  }}</strong>
                 </div>
                 <div>
                   <span>CPM</span>
                   <strong>
-                    {{ cpmText(project.review.totalCost, project.review.totalReach) }}
+                    {{
+                      cpmText(
+                        project.review.totalCost,
+                        project.review.totalReach
+                      )
+                    }}
                   </strong>
                 </div>
               </div>
@@ -797,7 +1276,7 @@ onMounted(() => {
                 <strong>智能效果摘要</strong>
                 <p>{{ buildReviewInsight(project.name, project.review) }}</p>
               </div>
-              <div class="best-item" v-if="project.review.bestItem">
+              <div v-if="project.review.bestItem" class="best-item">
                 <span>最高触达内容</span>
                 <el-link
                   v-if="project.review.bestItem.deliverableLinks"
@@ -807,8 +1286,12 @@ onMounted(() => {
                 >
                   {{ project.review.bestItem.resourceName }}
                 </el-link>
-                <strong v-else>{{ project.review.bestItem.resourceName }}</strong>
-                <span>{{ formatCount(primaryReach(project.review.bestItem)) }}</span>
+                <strong v-else>{{
+                  project.review.bestItem.resourceName
+                }}</strong>
+                <span>{{
+                  formatCount(primaryReach(project.review.bestItem))
+                }}</span>
               </div>
             </article>
           </div>
@@ -818,7 +1301,7 @@ onMounted(() => {
             <el-select
               v-model="importProjectId"
               class="import-project-select"
-              placeholder="选择导入项目"
+              placeholder="选择导入 Campaign"
             >
               <el-option
                 v-for="project in projects"
@@ -871,7 +1354,8 @@ onMounted(() => {
               <template #default="{ row }">
                 {{
                   ratioPercent(
-                    numberValue(row.engagementCount) + numberValue(row.commentsCount),
+                    numberValue(row.engagementCount) +
+                      numberValue(row.commentsCount),
                     primaryReach(row)
                   )
                 }}
@@ -910,7 +1394,11 @@ onMounted(() => {
             />
             <el-table-column label="操作" width="90" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openEditCooperation(row)">
+                <el-button
+                  link
+                  type="primary"
+                  @click="openEditCooperation(row)"
+                >
                   编辑
                 </el-button>
               </template>
@@ -920,13 +1408,171 @@ onMounted(() => {
       </el-tabs>
     </el-card>
 
+    <el-drawer
+      v-model="executionDrawer"
+      title="达人执行详情"
+      size="620px"
+      class="execution-drawer"
+    >
+      <template v-if="activeCooperation">
+        <section class="drawer-profile">
+          <div class="drawer-avatar">
+            {{ String(activeCooperation.resourceName || "R").slice(0, 1) }}
+          </div>
+          <div>
+            <el-tag
+              :type="cooperationStageTag(activeCooperation)"
+              effect="light"
+            >
+              {{ cooperationStageLabel(activeCooperation) }}
+            </el-tag>
+            <h3>{{ activeCooperation.resourceName || "未命名资源" }}</h3>
+            <p>
+              {{ activeCooperation.projectName || selectedProject?.name }} ·
+              {{ activeCooperation.cooperationType || "未设置合作形式" }}
+            </p>
+          </div>
+          <el-button type="primary" @click="editFromExecutionDetail">
+            更新执行记录
+          </el-button>
+        </section>
+
+        <section class="drawer-decision-grid">
+          <div>
+            <span>合作报价</span>
+            <strong>
+              {{
+                moneyText(
+                  activeCooperation.quoteAmount,
+                  activeCooperation.currency
+                )
+              }}
+            </strong>
+          </div>
+          <div>
+            <span>当前 CPM</span>
+            <strong>
+              {{
+                cpmText(
+                  activeCooperation.quoteAmount,
+                  primaryReach(activeCooperation),
+                  activeCooperation.currency
+                )
+              }}
+            </strong>
+          </div>
+          <div>
+            <span>曝光 / 播放</span>
+            <strong>{{ formatCount(primaryReach(activeCooperation)) }}</strong>
+          </div>
+          <div>
+            <span>互动率</span>
+            <strong>
+              {{
+                ratioPercent(
+                  numberValue(activeCooperation.engagementCount) +
+                    numberValue(activeCooperation.commentsCount),
+                  primaryReach(activeCooperation)
+                )
+              }}
+            </strong>
+          </div>
+        </section>
+
+        <section class="drawer-next-action">
+          <IconifyIconOnline icon="ri:focus-3-line" />
+          <div>
+            <span>建议下一步</span>
+            <strong>
+              {{ cooperationAction(activeCooperation) || "进入效果复盘" }}
+            </strong>
+            <p>{{ updatedTimeText(activeCooperation) }}</p>
+          </div>
+        </section>
+
+        <section class="drawer-section">
+          <div class="section-heading">
+            <div>
+              <strong>执行时间线</strong>
+              <span>根据当前合作与交付状态生成</span>
+            </div>
+          </div>
+          <div class="execution-timeline">
+            <div
+              v-for="stage in pipelineStages"
+              :key="`timeline-${stage.key}`"
+              :class="{
+                completed:
+                  pipelineStages.findIndex(item => item.key === stage.key) <=
+                  pipelineStages.findIndex(
+                    item => item.key === cooperationStage(activeCooperation)
+                  )
+              }"
+            >
+              <span><IconifyIconOnline :icon="stage.icon" /></span>
+              <div>
+                <strong>{{ stage.label }}</strong>
+                <p>{{ stage.description }}</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="drawer-section">
+          <div class="section-heading">
+            <div>
+              <strong>执行信息</strong>
+              <span>用于协作交接与风险判断</span>
+            </div>
+          </div>
+          <dl class="drawer-info-list">
+            <div>
+              <dt>合作状态</dt>
+              <dd>{{ activeCooperation.status || "-" }}</dd>
+            </div>
+            <div>
+              <dt>交付状态</dt>
+              <dd>{{ activeCooperation.deliverableStatus || "-" }}</dd>
+            </div>
+            <div>
+              <dt>发布日期</dt>
+              <dd>{{ activeCooperation.releaseDate || "-" }}</dd>
+            </div>
+            <div>
+              <dt>点击 / 转化</dt>
+              <dd>
+                {{ formatCount(activeCooperation.clicks) }} /
+                {{ formatCount(activeCooperation.conversions) }}
+              </dd>
+            </div>
+            <div>
+              <dt>团队评分</dt>
+              <dd>{{ activeCooperation.teamRating || "-" }}</dd>
+            </div>
+            <div>
+              <dt>备注</dt>
+              <dd>{{ activeCooperation.notes || "暂无备注" }}</dd>
+            </div>
+          </dl>
+          <el-link
+            v-if="activeCooperation.deliverableLinks"
+            type="primary"
+            :href="activeCooperation.deliverableLinks"
+            target="_blank"
+          >
+            查看已发布内容
+          </el-link>
+        </section>
+      </template>
+    </el-drawer>
+
     <el-dialog
       v-model="projectDialog"
-      :title="editingProjectId ? '编辑项目需求' : '创建项目需求'"
+      :title="editingProjectId ? '编辑 Campaign' : '创建 Campaign'"
       width="640px"
     >
       <el-form :model="projectForm" label-width="96px">
-        <el-form-item label="项目名称"
+        <el-form-item label="Campaign 名称"
           ><el-input v-model="projectForm.name"
         /></el-form-item>
         <el-form-item label="目标市场"
@@ -957,8 +1603,8 @@ onMounted(() => {
                 </el-button>
               </div>
             </el-option>
-          </el-select
-        ></el-form-item>
+          </el-select></el-form-item
+        >
         <el-form-item label="平台"
           ><el-input v-model="projectForm.platform"
         /></el-form-item>
@@ -1201,6 +1847,434 @@ onMounted(() => {
 
 .workspace-card {
   border-radius: 8px;
+}
+
+.campaign-switcher {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+  margin-bottom: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.campaign-switcher > div:first-child {
+  display: grid;
+  gap: 8px;
+}
+
+.campaign-switcher span,
+.campaign-switcher p,
+.section-heading span,
+.execution-metrics span,
+.execution-metrics p,
+.pipeline-grid p,
+.pending-grid span,
+.pending-grid p,
+.execution-alert p,
+.drawer-profile p,
+.drawer-decision-grid span,
+.drawer-next-action span,
+.drawer-next-action p,
+.execution-timeline p {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.campaign-switcher-main,
+.campaign-switcher-actions,
+.section-heading,
+.drawer-profile {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.campaign-switcher-main > div:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+.campaign-switcher-main strong {
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.campaign-switcher-actions {
+  justify-content: flex-end;
+}
+
+.execution-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.execution-metrics article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-height: 112px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.execution-metrics article > svg {
+  padding: 8px;
+  font-size: 22px;
+  color: #2563eb;
+  background: #eff6ff;
+  border-radius: 8px;
+}
+
+.execution-metrics article > div {
+  display: grid;
+  gap: 5px;
+}
+
+.execution-metrics strong {
+  font-size: 20px;
+  color: #0f172a;
+}
+
+.execution-metrics .el-progress {
+  grid-column: 1 / -1;
+}
+
+.pipeline-section,
+.pending-section,
+.creator-pipeline,
+.drawer-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.section-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.section-heading strong {
+  color: #0f172a;
+}
+
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pipeline-grid button,
+.pending-grid button,
+.stage-filter button {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+}
+
+.pipeline-grid button {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  min-height: 124px;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.pipeline-grid button::after {
+  position: absolute;
+  top: 26px;
+  right: -10px;
+  z-index: 1;
+  width: 10px;
+  height: 2px;
+  content: "";
+  background: #cbd5e1;
+}
+
+.pipeline-grid button:last-child::after {
+  display: none;
+}
+
+.pipeline-grid button:hover,
+.pipeline-grid button.active {
+  border-color: #2563eb;
+  box-shadow: 0 8px 20px rgb(37 99 235 / 10%);
+}
+
+.pipeline-grid svg {
+  font-size: 20px;
+  color: #2563eb;
+}
+
+.pipeline-grid strong {
+  font-size: 24px;
+  color: #0f172a;
+}
+
+.pipeline-grid span {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.pending-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pending-grid button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.pending-grid button:hover {
+  border-color: #f59e0b;
+  box-shadow: 0 8px 20px rgb(245 158 11 / 10%);
+}
+
+.pending-grid button > div:nth-child(2) {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pending-grid button > svg {
+  color: #94a3b8;
+}
+
+.pending-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  color: #ea580c;
+  background: #fff7ed;
+  border-radius: 50%;
+}
+
+.pending-grid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.execution-alert {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  margin-bottom: 14px;
+  color: #9a3412;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+}
+
+.execution-alert svg {
+  flex: 0 0 auto;
+  font-size: 20px;
+}
+
+.execution-alert div {
+  display: grid;
+  gap: 4px;
+}
+
+.stage-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stage-filter button {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #475569;
+  border-radius: 999px;
+}
+
+.stage-filter button.active {
+  color: #fff;
+  background: #0f172a;
+  border-color: #0f172a;
+}
+
+.drawer-profile {
+  padding: 14px;
+  margin-bottom: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.drawer-profile > div:nth-child(2) {
+  display: grid;
+  flex: 1;
+  gap: 5px;
+}
+
+.drawer-profile h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.drawer-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 50%;
+}
+
+.drawer-decision-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.drawer-decision-grid > div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.drawer-decision-grid strong {
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.drawer-next-action {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px;
+  margin-bottom: 14px;
+  color: #9a3412;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+}
+
+.drawer-next-action > div {
+  display: grid;
+  gap: 4px;
+}
+
+.drawer-next-action svg {
+  flex: 0 0 auto;
+  font-size: 20px;
+}
+
+.drawer-section {
+  margin-bottom: 14px;
+}
+
+.execution-timeline {
+  display: grid;
+}
+
+.execution-timeline > div {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 18px;
+}
+
+.execution-timeline > div::before {
+  position: absolute;
+  top: 26px;
+  bottom: 0;
+  left: 15px;
+  width: 2px;
+  content: "";
+  background: #e2e8f0;
+}
+
+.execution-timeline > div:last-child {
+  padding-bottom: 0;
+}
+
+.execution-timeline > div:last-child::before {
+  display: none;
+}
+
+.execution-timeline > div > span {
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: #94a3b8;
+  background: #f1f5f9;
+  border-radius: 50%;
+}
+
+.execution-timeline > div.completed > span {
+  color: #fff;
+  background: #2563eb;
+}
+
+.execution-timeline > div > div {
+  display: grid;
+  gap: 4px;
+}
+
+.execution-timeline strong {
+  color: #334155;
+}
+
+.drawer-info-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.drawer-info-list > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.drawer-info-list dt {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.drawer-info-list dd {
+  margin: 0;
+  color: #0f172a;
 }
 
 .review-report {
@@ -1461,8 +2535,24 @@ onMounted(() => {
 
   .review-summary-grid,
   .project-review-list,
-  .project-review-metrics {
+  .project-review-metrics,
+  .campaign-switcher,
+  .execution-metrics,
+  .pipeline-grid,
+  .pending-grid,
+  .drawer-decision-grid,
+  .drawer-info-list {
     grid-template-columns: 1fr;
+  }
+
+  .campaign-switcher-main,
+  .drawer-profile {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .pipeline-grid button::after {
+    display: none;
   }
 
   .review-report-heading {

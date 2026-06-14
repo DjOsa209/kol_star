@@ -3,9 +3,13 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
 import {
+  addProjectResource,
   createMarketOption,
   deleteMarketOption,
+  getCooperationList,
   getMarketOptions,
+  getProjectList,
+  getResourcePosts,
   recommendResources
 } from "@/api/business";
 
@@ -23,6 +27,17 @@ const attachedFiles = ref<any[]>([]);
 const marketOptions = ref<string[]>([]);
 const avatarLoadFailed = reactive<Record<string, boolean>>({});
 const avatarLoaded = reactive<Record<string, boolean>>({});
+const projects = ref<any[]>([]);
+const cooperations = ref<any[]>([]);
+const matchedResourceIds = reactive<Record<number, boolean>>({});
+const selectedProjectId = ref<number | null>(null);
+const addingToCampaign = ref(false);
+const profileDrawerVisible = ref(false);
+const profileLoading = ref(false);
+const profileTab = ref("overview");
+const selectedResource = ref<any | null>(null);
+const selectedResourcePosts = ref<any[]>([]);
+const selectedResourcePostStats = ref<any>({});
 let timer: ReturnType<typeof setInterval> | undefined;
 let requestSeq = 0;
 const recommendationStorageKey = "business-assistant-last-recommendation";
@@ -65,7 +80,9 @@ const parsedItems = computed(() =>
 );
 const attachmentSummary = computed(() =>
   attachedFiles.value
-    .map(file => `${file.name}：${file.summary || "已上传，等待模型参考文件信息"}`)
+    .map(
+      file => `${file.name}：${file.summary || "已上传，等待模型参考文件信息"}`
+    )
     .join("\n")
 );
 const filterItems = computed(() => Object.entries(filteredSummary.value));
@@ -103,6 +120,35 @@ const panelTitle = computed(() => {
   return "等待执行";
 });
 const topRecommendations = computed(() => recommendations.value.slice(0, 6));
+const matchedRecommendations = computed(() =>
+  topRecommendations.value.filter(item => matchedResourceIds[Number(item.id)])
+);
+const selectedResourceCooperations = computed(() => {
+  const resourceId = Number(selectedResource.value?.id || 0);
+  return cooperations.value.filter(
+    item => Number(item.resourceId) === resourceId
+  );
+});
+const selectedResourceCooperationStats = computed(() => {
+  const result = {
+    count: 0,
+    reach: 0,
+    engagement: 0,
+    cost: 0,
+    completed: 0
+  };
+  selectedResourceCooperations.value.forEach(item => {
+    result.count += 1;
+    result.reach += primaryReach(item);
+    result.engagement +=
+      numberValue(item.engagementCount) + numberValue(item.commentsCount);
+    result.cost += numberValue(item.quoteAmount);
+    if (/已发布|已完成/.test(`${item.status} ${item.deliverableStatus}`)) {
+      result.completed += 1;
+    }
+  });
+  return result;
+});
 const recommendationLogic = computed(() => {
   if (topRecommendations.value.length === 0) {
     return "输入项目需求后，系统会结合目标市场、平台、资源类型、预算与风险等级生成推荐逻辑。";
@@ -206,6 +252,22 @@ async function generate() {
   }
 }
 
+async function loadBusinessContext() {
+  const [projectRes, cooperationRes] = await Promise.all([
+    getProjectList(),
+    getCooperationList()
+  ]);
+  if (projectRes.code === 0) {
+    projects.value = projectRes.data.list || [];
+    if (!selectedProjectId.value && projects.value.length > 0) {
+      selectedProjectId.value = projects.value[0].id;
+    }
+  }
+  if (cooperationRes.code === 0) {
+    cooperations.value = cooperationRes.data.list || [];
+  }
+}
+
 async function loadMarkets() {
   marketOptions.value = defaultMarketOptions;
   try {
@@ -292,7 +354,11 @@ function removeAttachment(uid: string | number) {
 
 async function extractAttachmentSummary(file: File) {
   const name = file.name.toLowerCase();
-  if (name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".csv")) {
+  if (
+    name.endsWith(".xlsx") ||
+    name.endsWith(".xls") ||
+    name.endsWith(".csv")
+  ) {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
     const lines = workbook.SheetNames.slice(0, 3).map(sheetName => {
@@ -444,6 +510,153 @@ function compactNumber(value: unknown) {
   return number.toLocaleString("zh-CN");
 }
 
+function numberValue(value: unknown) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatCount(value: unknown) {
+  const number = numberValue(value);
+  if (number <= 0) return "-";
+  return number.toLocaleString("zh-CN");
+}
+
+function percentText(value: unknown) {
+  const number = numberValue(value);
+  if (number <= 0) return "-";
+  const percent = number > 1 ? number : number * 100;
+  return `${percent.toFixed(percent >= 10 ? 0 : 1)}%`;
+}
+
+function ratioPercent(numerator: unknown, denominator: unknown) {
+  const top = numberValue(numerator);
+  const bottom = numberValue(denominator);
+  if (top <= 0 || bottom <= 0) return "-";
+  return `${((top / bottom) * 100).toFixed(1)}%`;
+}
+
+function primaryReach(row: any) {
+  return numberValue(row.impressions) || numberValue(row.views);
+}
+
+function moneyWithCurrency(value: unknown, currency = "USD") {
+  const number = numberValue(value);
+  if (number <= 0) return "-";
+  return `${currency} ${number.toLocaleString("zh-CN", {
+    maximumFractionDigits: 0
+  })}`;
+}
+
+function toggleMatched(item: any) {
+  const id = Number(item.id || 0);
+  if (!id) return;
+  matchedResourceIds[id] = !matchedResourceIds[id];
+}
+
+async function addMatchedToCampaign() {
+  if (!selectedProjectId.value) {
+    ElMessage.warning("请先选择 Campaign");
+    return;
+  }
+  if (matchedRecommendations.value.length === 0) {
+    ElMessage.warning("请先标记匹配达人");
+    return;
+  }
+  addingToCampaign.value = true;
+  const results = await Promise.all(
+    matchedRecommendations.value.map(item =>
+      addProjectResource({
+        projectId: selectedProjectId.value,
+        resourceId: item.id,
+        status: "候选",
+        source: "AI 推荐",
+        reason: item.reason,
+        priority: item.priority,
+        estimatedCost: item.estimatedCost,
+        riskTip: item.riskTip
+      })
+    )
+  );
+  addingToCampaign.value = false;
+  const successCount = results.filter(item => item.code === 0).length;
+  ElMessage.success(`已将 ${successCount} 位达人加入 Campaign 候选池`);
+}
+
+async function addResourceToCampaign(item: any) {
+  if (!selectedProjectId.value) {
+    ElMessage.warning("请先选择 Campaign");
+    return;
+  }
+  addingToCampaign.value = true;
+  const res = await addProjectResource({
+    projectId: selectedProjectId.value,
+    resourceId: item.id,
+    status: "候选",
+    source: "AI 推荐",
+    reason: item.reason,
+    priority: item.priority,
+    estimatedCost: item.estimatedCost,
+    riskTip: item.riskTip
+  });
+  addingToCampaign.value = false;
+  if (res.code === 0) {
+    matchedResourceIds[Number(item.id)] = true;
+    ElMessage.success(`${item.name} 已加入 Campaign 候选池`);
+  }
+}
+
+async function openResourceProfile(item: any) {
+  selectedResource.value = item;
+  selectedResourcePosts.value = [];
+  selectedResourcePostStats.value = {};
+  profileTab.value = "overview";
+  profileDrawerVisible.value = true;
+  profileLoading.value = true;
+  try {
+    const res = await getResourcePosts({
+      resourceId: item.id,
+      currentPage: 1,
+      pageSize: 12
+    });
+    if (res.code === 0) {
+      selectedResource.value = {
+        ...item,
+        ...(res.data.resource || {})
+      };
+      selectedResourcePosts.value = res.data.list || [];
+      selectedResourcePostStats.value = res.data.stats || {};
+    }
+  } finally {
+    profileLoading.value = false;
+  }
+}
+
+function deliveryStage(item: any) {
+  const status = `${item.status || ""} ${item.deliverableStatus || ""}`;
+  if (/已发布|已完成/.test(status)) return "已完成";
+  if (/待发布|排期/.test(status)) return "待发布";
+  if (/制作|脚本|审核|修改/.test(status)) return "内容制作";
+  if (/确认/.test(status)) return "已确认合作";
+  return "沟通 / 议价";
+}
+
+function deliveryType(item: any) {
+  const stage = deliveryStage(item);
+  if (stage === "已完成") return "success";
+  if (stage === "待发布") return "warning";
+  if (stage === "内容制作") return "primary";
+  return "info";
+}
+
+function formatDateTime(value: unknown) {
+  if (!value) return "-";
+  const timestamp = Number(value);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    return new Date(timestamp).toLocaleDateString("zh-CN");
+  }
+  return String(value);
+}
+
 function initials(name: unknown) {
   return String(name || "AI")
     .split(/\s+/)
@@ -469,6 +682,7 @@ function markAvatarLoaded(row: any) {
 onMounted(() => {
   loadLastRecommendation();
   loadMarkets();
+  loadBusinessContext();
 });
 onBeforeUnmount(stopTimer);
 </script>
@@ -508,7 +722,10 @@ onBeforeUnmount(stopTimer);
       <div class="upload-panel">
         <div>
           <strong>产品信息 / 策略方案</strong>
-          <span>支持 TXT、Markdown、CSV、Excel；PDF/Docx 会先作为文件上下文进入推荐。</span>
+          <span
+            >支持 TXT、Markdown、CSV、Excel；PDF/Docx
+            会先作为文件上下文进入推荐。</span
+          >
         </div>
         <el-upload
           accept=".txt,.md,.csv,.xlsx,.xls,.pdf,.doc,.docx"
@@ -673,44 +890,88 @@ onBeforeUnmount(stopTimer);
 
     <section class="recommend-section">
       <div class="section-heading">
-        <h2>推荐资源</h2>
-        <el-button
-          v-if="hasResult"
-          link
-          type="danger"
-          :disabled="loading"
-          @click="clearLastRecommendation"
-        >
-          清空上次推荐
-        </el-button>
+        <div>
+          <h2>AI 推荐达人</h2>
+          <span>根据需求、平台数据、历史表现与风险信息生成</span>
+        </div>
+        <div class="recommend-actions">
+          <el-select
+            v-model="selectedProjectId"
+            placeholder="选择 Campaign"
+            class="campaign-select"
+          >
+            <el-option
+              v-for="project in projects"
+              :key="project.id"
+              :label="project.name"
+              :value="project.id"
+            />
+          </el-select>
+          <el-button
+            type="primary"
+            :loading="addingToCampaign"
+            :disabled="matchedRecommendations.length === 0"
+            @click="addMatchedToCampaign"
+          >
+            加入 Campaign（{{ matchedRecommendations.length }}）
+          </el-button>
+          <el-button
+            v-if="hasResult"
+            link
+            type="danger"
+            :disabled="loading"
+            @click="clearLastRecommendation"
+          >
+            清空
+          </el-button>
+        </div>
       </div>
       <div v-if="topRecommendations.length === 0" class="empty-block">
         暂无推荐结果
       </div>
       <div v-else class="resource-grid">
-        <article v-for="item in topRecommendations" :key="item.id">
+        <article
+          v-for="item in topRecommendations"
+          :key="item.id"
+          :class="{ matched: matchedResourceIds[Number(item.id)] }"
+        >
           <div class="resource-head">
-            <div class="resource-avatar">
-              <span>{{ initials(item.name) }}</span>
-              <img
-                v-if="item.avatarUrl && !avatarLoadFailed[avatarKey(item)]"
-                v-show="avatarLoaded[avatarKey(item)]"
-                :src="item.avatarUrl"
-                :alt="item.name"
-                @load="markAvatarLoaded(item)"
-                @error="markAvatarFailed(item)"
-              />
-            </div>
-            <div class="resource-title">
-              <div>
-                <strong>{{ item.name }}</strong>
+            <button
+              type="button"
+              class="resource-identity"
+              @click="openResourceProfile(item)"
+            >
+              <span class="resource-avatar">
+                <span>{{ initials(item.name) }}</span>
+                <img
+                  v-if="item.avatarUrl && !avatarLoadFailed[avatarKey(item)]"
+                  v-show="avatarLoaded[avatarKey(item)]"
+                  :src="item.avatarUrl"
+                  :alt="item.name"
+                  @load="markAvatarLoaded(item)"
+                  @error="markAvatarFailed(item)"
+                />
+              </span>
+              <span class="resource-title">
                 <span>
-                  {{ item.resourceType || "-" }} · {{ item.platform || "-" }}
+                  <strong>{{ item.name }}</strong>
+                  <span>
+                    {{ item.resourceType || "-" }} · {{ item.platform || "-" }}
+                  </span>
                 </span>
-              </div>
+                <span class="match-score">
+                  {{ item.matchScore || item.score || 0 }}
+                  <small>/ 100 匹配</small>
+                </span>
+              </span>
+            </button>
+            <div class="card-actions">
               <el-tag :type="priorityType(item.priority)" effect="light">
-                {{ item.level || "-" }} 匹配
+                {{ item.priority || "-" }}优先级
               </el-tag>
+              <el-button link type="primary" @click="openResourceProfile(item)">
+                查看详情
+              </el-button>
             </div>
           </div>
 
@@ -724,18 +985,39 @@ onBeforeUnmount(stopTimer);
               <span>平均播放 / 阅读</span>
             </div>
             <div>
-              <strong>{{ item.engagementRate || "-" }}%</strong>
+              <strong>{{ percentText(item.engagementRate) }}</strong>
               <span>互动率</span>
             </div>
             <div>
-              <strong>{{ item.country || "-" }}</strong>
-              <span>所在地</span>
+              <strong>{{ moneyWithCurrency(item.estimatedCost) }}</strong>
+              <span>预估合作价</span>
             </div>
           </div>
 
           <div class="reason-box">
             <strong>推荐理由</strong>
             <span>{{ item.reason || "综合匹配度较高，适合进入候选池。" }}</span>
+          </div>
+          <div class="recommend-card-footer">
+            <span>
+              {{ item.country || "未设置地区" }} ·
+              {{ item.language || "未设置语言" }} · 风险
+              {{ item.riskLevel || "低" }}
+            </span>
+            <button
+              type="button"
+              :class="{ active: matchedResourceIds[Number(item.id)] }"
+              @click="toggleMatched(item)"
+            >
+              <IconifyIconOnline
+                :icon="
+                  matchedResourceIds[Number(item.id)]
+                    ? 'ri:check-line'
+                    : 'ri:thumb-up-line'
+                "
+              />
+              {{ matchedResourceIds[Number(item.id)] ? "已匹配" : "匹配" }}
+            </button>
           </div>
         </article>
       </div>
@@ -756,6 +1038,311 @@ onBeforeUnmount(stopTimer);
         <span v-if="filterItems.length === 0">无过滤记录</span>
       </div>
     </section>
+
+    <el-drawer
+      v-model="profileDrawerVisible"
+      size="72%"
+      class="creator-profile-drawer"
+      :with-header="false"
+    >
+      <div
+        v-if="selectedResource"
+        v-loading="profileLoading"
+        class="creator-profile"
+      >
+        <header class="creator-profile-header">
+          <el-button circle @click="profileDrawerVisible = false">
+            <IconifyIconOnline icon="ri:arrow-left-line" />
+          </el-button>
+          <div class="profile-avatar-large">
+            <span>{{ initials(selectedResource.name) }}</span>
+            <img
+              v-if="
+                selectedResource.avatarUrl &&
+                !avatarLoadFailed[avatarKey(selectedResource)]
+              "
+              v-show="avatarLoaded[avatarKey(selectedResource)]"
+              :src="selectedResource.avatarUrl"
+              :alt="selectedResource.name"
+              @load="markAvatarLoaded(selectedResource)"
+              @error="markAvatarFailed(selectedResource)"
+            />
+          </div>
+          <div class="profile-heading">
+            <div>
+              <h2>{{ selectedResource.name }}</h2>
+              <el-tag type="warning" effect="light">
+                {{ selectedResource.matchScore || selectedResource.score || 0 }}
+                分匹配
+              </el-tag>
+            </div>
+            <p>
+              {{ selectedResource.platform || "-" }} ·
+              {{ selectedResource.country || "-" }} ·
+              {{ selectedResource.language || "-" }} ·
+              {{ selectedResource.resourceType || "-" }}
+            </p>
+          </div>
+          <div class="profile-header-actions">
+            <el-button @click="toggleMatched(selectedResource)">
+              {{
+                matchedResourceIds[Number(selectedResource.id)]
+                  ? "取消匹配"
+                  : "标记匹配"
+              }}
+            </el-button>
+            <el-button
+              type="primary"
+              :loading="addingToCampaign"
+              @click="addResourceToCampaign(selectedResource)"
+            >
+              加入 Campaign
+            </el-button>
+          </div>
+        </header>
+
+        <section class="quality-strip">
+          <div>
+            <IconifyIconOnline icon="ri:time-line" />
+            <span><strong>近期活跃</strong>平台数据持续更新</span>
+          </div>
+          <div>
+            <IconifyIconOnline icon="ri:bar-chart-grouped-line" />
+            <span
+              ><strong>互动表现</strong
+              >{{ percentText(selectedResource.engagementRate) }}</span
+            >
+          </div>
+          <div>
+            <IconifyIconOnline icon="ri:shield-check-line" />
+            <span
+              ><strong>风险等级</strong
+              >{{ selectedResource.riskLevel || "低" }}</span
+            >
+          </div>
+          <div>
+            <IconifyIconOnline icon="ri:star-line" />
+            <span
+              ><strong>内部评分</strong
+              >{{ selectedResource.score || "-" }}</span
+            >
+          </div>
+        </section>
+
+        <el-tabs v-model="profileTab" class="profile-tabs">
+          <el-tab-pane label="达人概览" name="overview">
+            <section class="profile-section">
+              <div class="profile-section-heading">
+                <div>
+                  <h3>关键指标</h3>
+                  <span>平台基础数据与过往合作表现</span>
+                </div>
+              </div>
+              <div class="key-metrics">
+                <div>
+                  <span>粉丝 / 订阅</span>
+                  <strong>{{ formatCount(selectedResource.followers) }}</strong>
+                </div>
+                <div>
+                  <span>平台平均播放</span>
+                  <strong>{{ formatCount(selectedResource.avgViews) }}</strong>
+                </div>
+                <div>
+                  <span>平台互动率</span>
+                  <strong>{{
+                    percentText(selectedResource.engagementRate)
+                  }}</strong>
+                </div>
+                <div>
+                  <span>历史合作次数</span>
+                  <strong>{{ selectedResourceCooperationStats.count }}</strong>
+                </div>
+                <div>
+                  <span>合作总触达</span>
+                  <strong>{{
+                    formatCount(selectedResourceCooperationStats.reach)
+                  }}</strong>
+                </div>
+                <div>
+                  <span>合作内容互动率</span>
+                  <strong>
+                    {{
+                      ratioPercent(
+                        selectedResourceCooperationStats.engagement,
+                        selectedResourceCooperationStats.reach
+                      )
+                    }}
+                  </strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="profile-section">
+              <div class="profile-section-heading">
+                <div>
+                  <h3>AI 匹配判断</h3>
+                  <span>为什么适合当前推广需求</span>
+                </div>
+              </div>
+              <div class="ai-match-panel">
+                <strong>{{
+                  selectedResource.reason || "综合匹配度较高"
+                }}</strong>
+                <p>{{ selectedResource.riskTip || "暂无明显风险" }}</p>
+                <div>
+                  <el-tag
+                    v-for="rule in selectedResource.hitRules || []"
+                    :key="rule"
+                    effect="plain"
+                    type="success"
+                  >
+                    {{ rule }}
+                  </el-tag>
+                </div>
+              </div>
+            </section>
+          </el-tab-pane>
+
+          <el-tab-pane label="历史合作" name="history">
+            <section class="profile-section">
+              <div class="profile-section-heading">
+                <div>
+                  <h3>历史合作记录</h3>
+                  <span>报价、发布表现与团队复盘</span>
+                </div>
+              </div>
+              <el-table
+                :data="selectedResourceCooperations"
+                class="profile-table"
+              >
+                <el-table-column
+                  prop="projectName"
+                  label="Campaign"
+                  min-width="180"
+                />
+                <el-table-column
+                  prop="cooperationType"
+                  label="合作形式"
+                  width="130"
+                />
+                <el-table-column label="报价" width="130">
+                  <template #default="{ row }">
+                    {{ moneyWithCurrency(row.quoteAmount, row.currency) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="触达" width="120">
+                  <template #default="{ row }">
+                    {{ formatCount(primaryReach(row)) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="roi" label="ROI" width="90" />
+                <el-table-column
+                  prop="teamRating"
+                  label="团队评分"
+                  width="110"
+                />
+                <el-table-column
+                  prop="notes"
+                  label="复盘备注"
+                  min-width="200"
+                />
+              </el-table>
+              <el-empty
+                v-if="selectedResourceCooperations.length === 0"
+                description="暂无历史合作记录"
+              />
+            </section>
+          </el-tab-pane>
+
+          <el-tab-pane label="内容交付" name="delivery">
+            <section class="profile-section">
+              <div class="profile-section-heading">
+                <div>
+                  <h3>内容交付时间线</h3>
+                  <span>查看每次合作的制作、审核与发布状态</span>
+                </div>
+              </div>
+              <div class="delivery-list">
+                <article
+                  v-for="item in selectedResourceCooperations"
+                  :key="item.id"
+                >
+                  <span class="delivery-dot" />
+                  <div>
+                    <div>
+                      <strong>{{ item.projectName }}</strong>
+                      <el-tag :type="deliveryType(item)" effect="light">
+                        {{ deliveryStage(item) }}
+                      </el-tag>
+                    </div>
+                    <p>
+                      {{ item.cooperationType || "未设置合作形式" }} ·
+                      {{ item.deliverableStatus || "未开始" }}
+                    </p>
+                    <span>{{ item.notes || "暂无交付备注" }}</span>
+                    <el-link
+                      v-if="item.deliverableLinks"
+                      :href="item.deliverableLinks"
+                      type="primary"
+                      target="_blank"
+                    >
+                      查看交付内容
+                    </el-link>
+                  </div>
+                  <time>{{
+                    item.releaseDate || formatDateTime(item.updatedAt)
+                  }}</time>
+                </article>
+              </div>
+              <el-empty
+                v-if="selectedResourceCooperations.length === 0"
+                description="暂无内容交付记录"
+              />
+            </section>
+          </el-tab-pane>
+
+          <el-tab-pane label="平台作品" name="posts">
+            <section class="profile-section">
+              <div class="profile-section-heading">
+                <div>
+                  <h3>近期平台作品</h3>
+                  <span>
+                    {{ selectedResourcePostStats.postCount || 0 }} 条作品 ·
+                    平均播放
+                    {{ formatCount(selectedResourcePostStats.avgViews) }}
+                  </span>
+                </div>
+              </div>
+              <div class="profile-post-grid">
+                <article v-for="post in selectedResourcePosts" :key="post.id">
+                  <img
+                    v-if="post.coverUrl"
+                    :src="post.coverUrl"
+                    :alt="post.title"
+                  />
+                  <div v-else class="post-cover-empty">
+                    <IconifyIconOnline icon="ri:video-line" />
+                  </div>
+                  <div>
+                    <strong>{{ post.title || "未命名作品" }}</strong>
+                    <p>{{ post.description || "暂无描述" }}</p>
+                    <span>
+                      播放 {{ formatCount(post.viewCount) }} · 点赞
+                      {{ formatCount(post.likeCount) }} · 评论
+                      {{ formatCount(post.commentCount) }}
+                    </span>
+                  </div>
+                </article>
+              </div>
+              <el-empty
+                v-if="selectedResourcePosts.length === 0"
+                description="暂无同步作品数据"
+              />
+            </section>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -913,10 +1500,10 @@ onBeforeUnmount(stopTimer);
 .attachment-list span {
   display: -webkit-box;
   overflow: hidden;
+  -webkit-line-clamp: 2;
   font-size: 12px;
   line-height: 1.5;
   color: #7a7a7a;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
@@ -1142,18 +1729,66 @@ onBeforeUnmount(stopTimer);
   margin-bottom: 14px;
 }
 
+.section-heading > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.section-heading > div:first-child span {
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+.recommend-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.campaign-select {
+  width: 220px;
+}
+
 .resource-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
 .resource-grid article {
   display: grid;
   gap: 12px;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid #e2e2e2;
-  border-radius: 8px;
+  border-radius: 12px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.resource-grid article:hover,
+.resource-grid article.matched {
+  border-color: #ff6a2a;
+  box-shadow: 0 10px 28px rgb(234 88 12 / 8%);
+}
+
+.resource-grid article.matched {
+  background: #fffaf7;
+}
+
+.resource-identity {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
 }
 
 .resource-avatar {
@@ -1169,7 +1804,7 @@ onBeforeUnmount(stopTimer);
   font-weight: 780;
   color: #059669;
   background: #ecfdf5;
-  border-radius: 8px;
+  border-radius: 50%;
 }
 
 .resource-avatar img {
@@ -1180,26 +1815,27 @@ onBeforeUnmount(stopTimer);
   object-fit: cover;
 }
 
-.resource-title {
+.resource-identity .resource-title {
+  display: flex;
   flex: 1;
+  gap: 12px;
+  align-items: center;
   justify-content: space-between;
   min-width: 0;
 }
 
-.resource-title > div {
-  display: flex;
-  flex-wrap: wrap;
+.resource-identity .resource-title > span:first-child {
+  display: grid;
   gap: 4px 8px;
-  align-items: baseline;
   min-width: 0;
 }
 
-.resource-title strong {
+.resource-identity .resource-title strong {
   font-size: 16px;
   color: #171717;
 }
 
-.resource-title span,
+.resource-identity .resource-title span,
 .metric-grid span,
 .reason-box span,
 .logic-section p,
@@ -1207,17 +1843,52 @@ onBeforeUnmount(stopTimer);
   color: #7a7a7a;
 }
 
-.resource-title span,
+.resource-identity .resource-title span,
 .metric-grid span,
 .reason-box span,
 .filter-row span {
   font-size: 12px;
 }
 
+.match-score {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  font-size: 22px !important;
+  font-weight: 780;
+  color: #171717 !important;
+}
+
+.match-score small {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #8a8a8a;
+}
+
+.card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #ececec;
+  border-radius: 10px;
+}
+
+.metric-grid > div {
+  padding: 12px;
+  border-right: 1px solid #ececec;
+}
+
+.metric-grid > div:last-child {
+  border-right: 0;
 }
 
 .metric-grid strong {
@@ -1243,6 +1914,360 @@ onBeforeUnmount(stopTimer);
 .reason-box strong {
   margin-right: 8px;
   color: #c2410c;
+}
+
+.recommend-card-footer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.recommend-card-footer > span {
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+.recommend-card-footer button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  min-width: 104px;
+  min-height: 40px;
+  padding: 0 18px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: #171717;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 10px;
+}
+
+.recommend-card-footer button:hover,
+.recommend-card-footer button.active {
+  color: #fff;
+  background: #ff5a1f;
+  border-color: #ff5a1f;
+}
+
+.creator-profile {
+  min-height: 100%;
+  padding: 22px;
+  color: #171717;
+  background: #f8f8f7;
+}
+
+.creator-profile-header {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 14px;
+}
+
+.profile-avatar-large {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 800;
+  color: #c2410c;
+  background: #fff1e8;
+  border-radius: 50%;
+}
+
+.profile-avatar-large img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-heading {
+  display: grid;
+  gap: 7px;
+}
+
+.profile-heading > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.profile-heading h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.profile-heading p {
+  margin: 0;
+  font-size: 13px;
+  color: #777;
+}
+
+.profile-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.quality-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 14px 0;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #dceee1;
+  border-radius: 12px;
+}
+
+.quality-strip > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 14px;
+  border-right: 1px solid #e4eee7;
+}
+
+.quality-strip > div:last-child {
+  border-right: 0;
+}
+
+.quality-strip svg {
+  flex: 0 0 auto;
+  font-size: 20px;
+  color: #16a34a;
+}
+
+.quality-strip span {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+.quality-strip strong {
+  font-size: 13px;
+  color: #2f5137;
+}
+
+.profile-tabs {
+  padding: 0 18px 18px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 14px;
+}
+
+.profile-section {
+  padding-top: 8px;
+}
+
+.profile-section-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.profile-section-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.profile-section-heading h3 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.profile-section-heading span {
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+.key-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+}
+
+.key-metrics > div {
+  display: grid;
+  gap: 7px;
+  min-height: 92px;
+  padding: 16px;
+  border-right: 1px solid #e8e8e8;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.key-metrics > div:nth-child(3n) {
+  border-right: 0;
+}
+
+.key-metrics > div:nth-last-child(-n + 3) {
+  border-bottom: 0;
+}
+
+.key-metrics span {
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+.key-metrics strong {
+  font-size: 22px;
+  color: #171717;
+}
+
+.ai-match-panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  margin-top: 18px;
+  background: #fffaf6;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+}
+
+.ai-match-panel p {
+  margin: 0;
+  font-size: 13px;
+  color: #8a5b43;
+}
+
+.ai-match-panel > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.profile-table {
+  border: 1px solid #e8e8e8;
+  border-radius: 10px;
+}
+
+.delivery-list {
+  display: grid;
+  padding-left: 8px;
+}
+
+.delivery-list article {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 120px;
+  padding-bottom: 20px;
+}
+
+.delivery-list article::before {
+  position: absolute;
+  top: 20px;
+  bottom: 0;
+  left: 6px;
+  width: 2px;
+  content: "";
+  background: #fed7aa;
+}
+
+.delivery-list article:last-child::before {
+  display: none;
+}
+
+.delivery-dot {
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  background: #ff6a2a;
+  border: 3px solid #fff3ea;
+  border-radius: 50%;
+}
+
+.delivery-list article > div {
+  display: grid;
+  gap: 7px;
+}
+
+.delivery-list article > div > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.delivery-list p,
+.delivery-list span,
+.delivery-list time {
+  margin: 0;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+.profile-post-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.profile-post-grid article {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid #e8e8e8;
+  border-radius: 10px;
+}
+
+.profile-post-grid img,
+.post-cover-empty {
+  width: 120px;
+  height: 100px;
+  object-fit: cover;
+}
+
+.post-cover-empty {
+  display: grid;
+  place-items: center;
+  font-size: 28px;
+  color: #b8b8b8;
+  background: #f1f1f1;
+}
+
+.profile-post-grid article > div:last-child {
+  display: grid;
+  gap: 6px;
+  align-content: center;
+  min-width: 0;
+  padding: 10px 10px 10px 0;
+}
+
+.profile-post-grid strong,
+.profile-post-grid p,
+.profile-post-grid span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-post-grid p,
+.profile-post-grid span {
+  margin: 0;
+  font-size: 11px;
+  color: #8a8a8a;
 }
 
 .logic-section p {
@@ -1329,8 +2354,12 @@ onBeforeUnmount(stopTimer);
     justify-content: flex-start;
   }
 
-  .resource-grid {
-    grid-template-columns: 1fr;
+  .creator-profile-header {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .profile-header-actions {
+    grid-column: 2 / -1;
   }
 }
 
@@ -1342,7 +2371,8 @@ onBeforeUnmount(stopTimer);
   .assistant-header,
   .brand-block,
   .resource-head,
-  .resource-title {
+  .resource-title,
+  .recommend-card-footer {
     align-items: flex-start;
   }
 
@@ -1354,6 +2384,26 @@ onBeforeUnmount(stopTimer);
   .resource-head,
   .resource-title {
     display: grid;
+  }
+
+  .section-heading,
+  .recommend-actions,
+  .recommend-card-footer,
+  .profile-header-actions {
+    align-items: stretch;
+  }
+
+  .section-heading,
+  .recommend-actions,
+  .recommend-card-footer,
+  .creator-profile-header,
+  .profile-header-actions {
+    display: grid;
+  }
+
+  .campaign-select,
+  .recommend-actions .el-button {
+    width: 100%;
   }
 
   .status-pill,
@@ -1371,6 +2421,53 @@ onBeforeUnmount(stopTimer);
 
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-grid > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .metric-grid > div:nth-child(-n + 2) {
+    border-bottom: 1px solid #ececec;
+  }
+
+  .quality-strip,
+  .key-metrics,
+  .profile-post-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-strip > div,
+  .key-metrics > div,
+  .key-metrics > div:nth-child(3n),
+  .key-metrics > div:nth-last-child(-n + 3) {
+    border-right: 0;
+    border-bottom: 1px solid #e8e8e8;
+  }
+
+  .quality-strip > div:last-child,
+  .key-metrics > div:last-child {
+    border-bottom: 0;
+  }
+
+  .creator-profile {
+    padding: 12px;
+  }
+
+  .creator-profile-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .profile-avatar-large {
+    grid-column: 1;
+  }
+
+  .profile-heading {
+    grid-column: 2;
+  }
+
+  .profile-header-actions {
+    grid-column: 1 / -1;
   }
 
   .draft-box {

@@ -1,3 +1,9 @@
 .DS_Store
 .gocache/
+.tools/
+.cache/
+.mysql-data/
+.mysql-data.failed*/
+.mysql-run/
+.mysql-undo/
 backend/config.yaml

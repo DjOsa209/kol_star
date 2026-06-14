@@ -568,25 +568,25 @@ func (a *app) updateRoleMenus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) onlineLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, username, ip, address, system, browser, status,
+	a.table(w, r, `select id, username, ip, address, sys_online_users.system, browser, status,
 	                     cast(unix_timestamp(login_time) * 1000 as unsigned) as loginTime
 	                from sys_online_users order by id desc`)
 }
 
 func (a *app) loginLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, username, ip, address, system, browser, status, behavior,
+	a.table(w, r, `select id, username, ip, address, sys_login_logs.system, browser, status, behavior,
 	                     cast(unix_timestamp(login_time) * 1000 as unsigned) as loginTime
 	                from sys_login_logs order by id desc`)
 }
 
 func (a *app) operationLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, username, module, summary, ip, address, system, browser, method,
+	a.table(w, r, `select id, username, module, summary, ip, address, sys_operation_logs.system, browser, method,
 	                     cast(unix_timestamp(operation_time) * 1000 as unsigned) as operationTime
 	                from sys_operation_logs order by id desc`)
 }
 
 func (a *app) systemLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, module, url, method, ip, address, system, browser, takes_time as takesTime,
+	a.table(w, r, `select id, module, url, method, ip, address, sys_system_logs.system, browser, takes_time as takesTime,
 	                     cast(unix_timestamp(request_time) * 1000 as unsigned) as requestTime
 	                from sys_system_logs order by id desc`)
 }
@@ -594,7 +594,7 @@ func (a *app) systemLogs(w http.ResponseWriter, r *http.Request) {
 func (a *app) systemLogDetail(w http.ResponseWriter, r *http.Request) {
 	id := intField(readBody(r), "id")
 	rows, err := a.queryMaps(r.Context(),
-		`select id, module, url, method, ip, address, system, browser, takes_time as takesTime,
+		`select id, module, url, method, ip, address, sys_system_logs.system, browser, takes_time as takesTime,
 		        request_body as requestBody, response_body as responseBody,
 		        cast(unix_timestamp(request_time) * 1000 as unsigned) as requestTime
 		   from sys_system_logs where id = ? limit 1`,

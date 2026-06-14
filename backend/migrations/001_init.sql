@@ -71,7 +71,7 @@ create table if not exists sys_online_users (
   username varchar(64) not null,
   ip varchar(64) not null default '',
   address varchar(128) not null default '',
-  system varchar(64) not null default '',
+  `system` varchar(64) not null default '',
   browser varchar(64) not null default '',
   status tinyint not null default 1,
   login_time datetime not null default current_timestamp
@@ -82,7 +82,7 @@ create table if not exists sys_login_logs (
   username varchar(64) not null,
   ip varchar(64) not null default '',
   address varchar(128) not null default '',
-  system varchar(64) not null default '',
+  `system` varchar(64) not null default '',
   browser varchar(64) not null default '',
   status tinyint not null default 1,
   behavior varchar(64) not null default '',
@@ -97,7 +97,7 @@ create table if not exists sys_operation_logs (
   method varchar(16) not null default '',
   ip varchar(64) not null default '',
   address varchar(128) not null default '',
-  system varchar(64) not null default '',
+  `system` varchar(64) not null default '',
   browser varchar(64) not null default '',
   operation_time datetime not null default current_timestamp
 );
@@ -109,7 +109,7 @@ create table if not exists sys_system_logs (
   method varchar(16) not null default '',
   ip varchar(64) not null default '',
   address varchar(128) not null default '',
-  system varchar(64) not null default '',
+  `system` varchar(64) not null default '',
   browser varchar(64) not null default '',
   takes_time int not null default 0,
   request_body text null,
@@ -147,15 +147,15 @@ insert ignore into sys_menus (id, parent_id, menu_type, title, path, name, compo
 insert ignore into sys_role_menus (role_id, menu_id)
 select 1, id from sys_menus;
 
-insert ignore into sys_online_users (id, username, ip, address, system, browser, status) values
+insert ignore into sys_online_users (id, username, ip, address, `system`, browser, status) values
 (1, 'admin', '127.0.0.1', '本机', 'macOS', 'Chrome', 1);
 
-insert ignore into sys_login_logs (id, username, ip, address, system, browser, status, behavior) values
+insert ignore into sys_login_logs (id, username, ip, address, `system`, browser, status, behavior) values
 (1, 'admin', '127.0.0.1', '本机', 'macOS', 'Chrome', 1, '登录系统'),
 (2, 'common', '127.0.0.1', '本机', 'Windows', 'Edge', 1, '登录系统');
 
-insert ignore into sys_operation_logs (id, username, module, summary, method, ip, address, system, browser) values
+insert ignore into sys_operation_logs (id, username, module, summary, method, ip, address, `system`, browser) values
 (1, 'admin', '系统管理', '查询用户列表', 'POST', '127.0.0.1', '本机', 'macOS', 'Chrome');
 
-insert ignore into sys_system_logs (id, module, url, method, ip, address, system, browser, takes_time, request_body, response_body) values
+insert ignore into sys_system_logs (id, module, url, method, ip, address, `system`, browser, takes_time, request_body, response_body) values
 (1, '系统管理', '/user', 'POST', '127.0.0.1', '本机', 'macOS', 'Chrome', 38, '{}', '{"code":0}');

@@ -23,6 +23,7 @@ mysql -uroot -p kol_admin < migrations/013_platform_sync_engine.sql
 mysql -uroot -p kol_admin < migrations/014_platform_sync_control.sql
 mysql -uroot -p kol_admin < migrations/015_resource_platform_posts_menu.sql
 mysql -uroot -p kol_admin < migrations/016_market_options.sql
+mysql -uroot -p kol_admin < migrations/017_campaign_execution_center.sql
 ```
 
 2. Start the API:
