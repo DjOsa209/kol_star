@@ -134,8 +134,8 @@ export const createBriefTemplate = (data?: object) => {
   });
 };
 
-export const getBusinessDashboard = () => {
-  return http.request<Result>("get", "/business/dashboard");
+export const getBusinessDashboard = (params?: object) => {
+  return http.request<Result>("get", "/business/dashboard", { params });
 };
 
 export const getGovernanceRules = () => {

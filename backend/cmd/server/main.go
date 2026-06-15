@@ -73,6 +73,7 @@ func newApp(db *sql.DB, cfg Config) *app {
 	a := &app{}
 	a.db.Store(db)
 	a.config.Store(cfg)
+	configureResourceImageHTTPClient(cfg.PlatformAPIs.YouTubeProxyURL)
 	return a
 }
 
@@ -96,12 +97,18 @@ func (a *app) reloadConfig(next Config) error {
 		_ = old.Close()
 	}
 	a.config.Store(next)
+	configureResourceImageHTTPClient(next.PlatformAPIs.YouTubeProxyURL)
 	return nil
 }
 
 func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.Handle("GET /uploads/images/", http.StripPrefix("/uploads/images/", http.FileServer(http.Dir("uploads/images"))))
+	resourceImages := http.StripPrefix("/uploads/resource-images/", http.FileServer(http.Dir(resourceImageRoot)))
+	mux.Handle("GET /uploads/resource-images/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		resourceImages.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /refresh-token", a.refreshToken)
 	mux.HandleFunc("GET /mine", a.mine)

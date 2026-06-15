@@ -22,15 +22,6 @@ export default {
         title: $t("menus.pureHome"),
         showLink: VITE_HIDE_HOME === "true" ? false : true
       }
-    },
-    {
-      path: "/business/ai-model",
-      name: "BusinessAIModel",
-      component: () => import("@/views/business/ai-model/index.vue"),
-      meta: {
-        title: "AI模型配置",
-        showLink: false
-      }
     }
   ]
 } satisfies RouteConfigsTable;

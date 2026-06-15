@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,7 +40,8 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		"country":      "country like ?",
 		"language":     "language like ?",
 		"platform":     "platform = ?",
-		"industry":     "industry like ?",
+		"industry":     "concat(industry, category) like ?",
+		"tier":         "tier = ?",
 		"status":       "status = ?",
 		"level":        "level = ?",
 		"riskLevel":    "risk_level = ?",
@@ -811,6 +813,7 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	if avgViews == 0 && len(posts) > 0 {
 		avgViews = averagePostViews(posts)
 	}
+	avatarURL = localizeResourceImage(ctx, id, "avatar", avatarURL)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1127,6 +1130,7 @@ func (a *app) persistInstagramUser(ctx context.Context, resourceID int, user ins
 		engagementRate = float64(totalEngagement) / float64(user.FollowersCount) / float64(len(posts))
 	}
 	displayName := firstNonEmpty(user.Name, user.Username)
+	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.ProfilePictureURL)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1135,7 +1139,7 @@ func (a *app) persistInstagramUser(ctx context.Context, resourceID int, user ins
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		displayName, displayName, user.FollowersCount, user.MediaCount, engagementRate, engagementRate,
-		user.ID, user.Username, user.ProfilePictureURL, resourceID,
+		user.ID, user.Username, avatarURL, resourceID,
 	)
 	if err != nil {
 		return nil, err
@@ -1148,7 +1152,7 @@ func (a *app) persistInstagramUser(ctx context.Context, resourceID int, user ins
 		"followers":      user.FollowersCount,
 		"videoCount":     user.MediaCount,
 		"engagementRate": engagementRate,
-		"avatarUrl":      user.ProfilePictureURL,
+		"avatarUrl":      avatarURL,
 		"syncedPosts":    len(posts),
 		"posts":          posts,
 		"syncedAt":       time.Now().Format(time.RFC3339),
@@ -1218,6 +1222,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 			return nil, err
 		}
 	}
+	avatarURL := localizeResourceImage(ctx, id, "avatar", user.AvatarURL)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1226,7 +1231,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		user.DisplayName, user.DisplayName, user.FollowerCount, recentViews, user.VideoCount, avgViews,
-		firstNonEmpty(user.SecUID, user.UserID), user.Username, user.AvatarURL, id,
+		firstNonEmpty(user.SecUID, user.UserID), user.Username, avatarURL, id,
 	)
 	if err != nil {
 		return nil, err
@@ -1240,7 +1245,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		"totalViews":     recentViews,
 		"videoCount":     user.VideoCount,
 		"avgViews":       avgViews,
-		"avatarUrl":      user.AvatarURL,
+		"avatarUrl":      avatarURL,
 		"syncedPosts":    len(posts),
 		"posts":          posts,
 		"warnings":       warnings,
@@ -1649,6 +1654,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 			return nil, err
 		}
 	}
+	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.AvatarURL)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1660,7 +1666,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 		 where id = ?`,
 		user.DisplayName, user.DisplayName, user.FollowerCount, totalViews, avgViews, user.MediaCount, engagementRate, engagementRate,
 		active30D, active90D, postFrequency, postFrequency,
-		user.ID, user.Username, user.AvatarURL, resourceID,
+		user.ID, user.Username, avatarURL, resourceID,
 	)
 	if err != nil {
 		return nil, err
@@ -1678,7 +1684,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 		"active30d":      active30D,
 		"active90d":      active90D,
 		"postFrequency":  postFrequency,
-		"avatarUrl":      user.AvatarURL,
+		"avatarUrl":      avatarURL,
 		"syncedPosts":    len(user.Posts),
 		"posts":          user.Posts,
 		"warnings":       warnings,
@@ -1687,10 +1693,17 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 }
 
 func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, platform string, posts []platformPost) error {
-	for _, post := range posts {
+	for index := range posts {
+		post := &posts[index]
 		if strings.TrimSpace(post.PlatformPostID) == "" {
 			continue
 		}
+		post.CoverURL = localizeResourceImage(
+			ctx,
+			resourceID,
+			filepath.Join("posts", platform+"_"+post.PlatformPostID),
+			post.CoverURL,
+		)
 		var rawJSON any
 		if post.Raw != nil {
 			data, err := json.Marshal(post.Raw)
@@ -3294,15 +3307,109 @@ func (a *app) businessDashboard(w http.ResponseWriter, r *http.Request) {
 		{"riskResourceTotal", "select count(*) from biz_resources where risk_level in ('中','高')"},
 		{"projectTotal", "select count(*) from biz_projects"},
 		{"cooperationTotal", "select count(*) from biz_cooperations"},
+		{"totalFollowers", "select coalesce(sum(followers), 0) from biz_resources"},
+		{"totalAvgViews", "select coalesce(sum(avg_views), 0) from biz_resources"},
+		{"totalExposure", "select coalesce(sum(greatest(impressions, views)), 0) from biz_cooperations"},
+		{"totalEngagements", "select coalesce(sum(engagement_count + comments_count), 0) from biz_cooperations"},
+		{"totalCooperationCost", "select coalesce(sum(case when currency = 'USD' then quote_amount else 0 end), 0) from biz_cooperations"},
 	}
 	for _, stat := range stats {
-		var n int
+		var n float64
 		if err := a.DB().QueryRowContext(r.Context(), stat.query).Scan(&n); err != nil {
 			writeDBError(w, err)
 			return
 		}
 		data[stat.key] = n
 	}
+	totalExposure, _ := data["totalExposure"].(float64)
+	totalEngagements, _ := data["totalEngagements"].(float64)
+	averageEngagementRate := float64(0)
+	if totalExposure > 0 {
+		averageEngagementRate = totalEngagements / totalExposure
+	}
+	data["averageEngagementRate"] = averageEngagementRate
+
+	postWhere := " where p.published_at >= ? and p.published_at < date_add(?, interval 1 day)"
+	startDate := strings.TrimSpace(r.URL.Query().Get("startDate"))
+	endDate := strings.TrimSpace(r.URL.Query().Get("endDate"))
+	if startDate == "" {
+		startDate = time.Now().AddDate(0, 0, -29).Format("2006-01-02")
+	}
+	if endDate == "" {
+		endDate = time.Now().Format("2006-01-02")
+	}
+	postArgs := []any{startDate, endDate}
+	if platform := strings.TrimSpace(r.URL.Query().Get("platform")); platform != "" {
+		postWhere += " and p.platform = ?"
+		postArgs = append(postArgs, platform)
+	}
+	if resourceType := strings.TrimSpace(r.URL.Query().Get("resourceType")); resourceType != "" {
+		postWhere += " and r.resource_type = ?"
+		postArgs = append(postArgs, resourceType)
+	}
+	if country := strings.TrimSpace(r.URL.Query().Get("country")); country != "" {
+		postWhere += " and r.country = ?"
+		postArgs = append(postArgs, country)
+	}
+
+	var totalPostCount, totalPostViews, totalPostInteractions, hotPostCount float64
+	if err := a.DB().QueryRowContext(r.Context(),
+		`select count(*) as postCount,
+		        coalesce(sum(p.view_count), 0) as totalViews,
+		        coalesce(sum(p.like_count + p.comment_count + p.share_count), 0) as totalInteractions,
+		        coalesce(sum(case when p.view_count >= 1000000 then 1 else 0 end), 0) as hotPostCount
+		   from biz_resource_platform_posts p
+		   left join biz_resources r on r.id = p.resource_id`+postWhere,
+		postArgs...,
+	).Scan(&totalPostCount, &totalPostViews, &totalPostInteractions, &hotPostCount); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	data["totalPostCount"] = totalPostCount
+	data["totalPostViews"] = totalPostViews
+	data["totalPostInteractions"] = totalPostInteractions
+	data["hotPostCount"] = hotPostCount
+	postEngagementRate := float64(0)
+	if totalPostViews > 0 {
+		postEngagementRate = totalPostInteractions / totalPostViews
+	}
+	data["postEngagementRate"] = postEngagementRate
+
+	trend, err := a.queryMaps(r.Context(),
+		`select date_format(date(p.published_at), '%Y-%m-%d') as date,
+		        count(*) as postCount,
+		        coalesce(sum(p.view_count), 0) as exposure,
+		        coalesce(sum(p.like_count + p.comment_count + p.share_count), 0) as interactions
+		   from biz_resource_platform_posts p
+		   left join biz_resources r on r.id = p.resource_id`+postWhere+`
+		  group by date(p.published_at)
+		  order by date(p.published_at)`,
+		postArgs...,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	topResources, err := a.queryMaps(r.Context(),
+		`select r.id, r.name, r.platform, count(*) as postCount,
+		        coalesce(sum(p.view_count), 0) as exposure,
+		        coalesce(sum(p.like_count + p.comment_count + p.share_count), 0) as interactions,
+		        case when sum(p.view_count) > 0
+		             then sum(p.like_count + p.comment_count + p.share_count) / sum(p.view_count)
+		             else 0 end as engagementRate
+		   from biz_resource_platform_posts p
+		   left join biz_resources r on r.id = p.resource_id`+postWhere+`
+		  group by r.id, r.name, r.platform
+		  order by exposure desc
+		  limit 10`,
+		postArgs...,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	data["trend"] = trend
+	data["topResources"] = topResources
 
 	byCountry, err := a.queryMaps(r.Context(), `select country as name, count(*) as value from biz_resources group by country order by value desc limit 10`)
 	if err != nil {
@@ -3322,6 +3429,10 @@ func (a *app) businessDashboard(w http.ResponseWriter, r *http.Request) {
 	data["byCountry"] = byCountry
 	data["byPlatform"] = byPlatform
 	data["byLevel"] = byLevel
+	data["filters"] = map[string]any{
+		"startDate": startDate,
+		"endDate":   endDate,
+	}
 	writeOK(w, data)
 }
 

@@ -66,6 +66,11 @@ func (a *app) persistTikTokCollectorPayload(ctx context.Context, body map[string
 	if err != nil {
 		return nil, err
 	}
+	if avatarURL := localizeResourceImage(ctx, int(resourceID), "avatar", anyString(creator["avatarUrl"])); avatarURL != "" {
+		if _, err := a.DB().ExecContext(ctx, `update biz_resources set avatar_url = ? where id = ?`, avatarURL, resourceID); err != nil {
+			return nil, err
+		}
+	}
 
 	posts := collectorPosts(body["posts"])
 	if err := a.upsertResourcePlatformPosts(ctx, int(resourceID), "TikTok", posts); err != nil {

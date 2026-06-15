@@ -24,6 +24,7 @@ mysql -uroot -p kol_admin < migrations/014_platform_sync_control.sql
 mysql -uroot -p kol_admin < migrations/015_resource_platform_posts_menu.sql
 mysql -uroot -p kol_admin < migrations/016_market_options.sql
 mysql -uroot -p kol_admin < migrations/017_campaign_execution_center.sql
+mysql -uroot -p kol_admin < migrations/018_dashboard_first_menu.sql
 ```
 
 2. Start the API:
@@ -50,6 +51,8 @@ CONFIG_FILE=/absolute/path/config.yaml go run ./cmd/server
 ```
 
 Viper watches the config file and hot-reloads runtime settings. MySQL account/password/database changes reconnect the database; CORS changes take effect on the next request. `server.addr` is read at startup and requires a restart.
+
+Platform-synced resource images are stored under `uploads/resource-images/{resourceId}/`. Each resource avatar and platform-post cover uses a stable filename, so later syncs replace the existing image instead of creating timestamped copies. Image downloads retry temporary network failures and reuse `platform_apis.youtube_proxy_url` when it is configured.
 
 Default seeded login:
 
