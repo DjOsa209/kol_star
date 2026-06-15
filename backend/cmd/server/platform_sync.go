@@ -90,6 +90,11 @@ func (a *app) savePlatformSyncControl(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) startBusinessResourcesSyncAll(w http.ResponseWriter, r *http.Request) {
+	selectedPlatforms, err := selectedSyncPlatforms(readBody(r))
+	if err != nil {
+		writeError(w, http.StatusOK, 10001, err.Error())
+		return
+	}
 	if err := a.ensurePlatformSyncSettings(r.Context()); err != nil {
 		writeDBError(w, err)
 		return
@@ -121,11 +126,11 @@ func (a *app) startBusinessResourcesSyncAll(w http.ResponseWriter, r *http.Reque
 		writeDBError(w, err)
 		return
 	}
-	go a.runBusinessResourcesSyncAll(int(jobID))
+	go a.runBusinessResourcesSyncAll(int(jobID), selectedPlatforms)
 	writeOK(w, map[string]any{
 		"started": true,
 		"jobId":   jobID,
-		"message": "异步同步任务已启动",
+		"message": fmt.Sprintf("%s异步同步任务已启动", syncPlatformScopeLabel(selectedPlatforms)),
 	})
 }
 
@@ -138,7 +143,23 @@ func (a *app) businessResourcesSyncStatus(w http.ResponseWriter, r *http.Request
 	writeOK(w, data)
 }
 
-func (a *app) runBusinessResourcesSyncAll(jobID int) {
+func (a *app) interruptStalePlatformSyncJobs(ctx context.Context) (int64, error) {
+	result, err := a.DB().ExecContext(ctx,
+		`update biz_platform_sync_jobs
+		    set status = '已中止',
+		        message = '服务已重启，未完成的同步任务不会继续执行',
+		        current_resource_id = null,
+		        current_resource_name = '',
+		        finished_at = now()
+		  where status = '运行中'`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (a *app) runBusinessResourcesSyncAll(jobID int, selectedPlatforms map[string]bool) {
 	ctx := context.Background()
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -160,12 +181,29 @@ func (a *app) runBusinessResourcesSyncAll(jobID int) {
 		a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("读取资源失败：%v", err))
 		return
 	}
+	if len(selectedPlatforms) > 0 {
+		filtered := make([]syncResourceRow, 0, len(resources))
+		for _, resource := range resources {
+			if selectedPlatforms[platformDisplayName(resource.Platform)] {
+				filtered = append(filtered, resource)
+			}
+		}
+		resources = filtered
+	}
 	_, _ = a.DB().ExecContext(ctx, `update biz_platform_sync_jobs set total_count = ? where id = ?`, len(resources), jobID)
 
 	successCount := 0
 	failedCount := 0
 	skippedCount := 0
 	for _, resource := range resources {
+		running, err := a.platformSyncJobIsRunning(ctx, jobID)
+		if err != nil {
+			a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("检查任务状态失败：%v", err))
+			return
+		}
+		if !running {
+			return
+		}
 		platform := platformDisplayName(resource.Platform)
 		enabled := settings[platform]
 		if !enabled {
@@ -174,7 +212,7 @@ func (a *app) runBusinessResourcesSyncAll(jobID int) {
 			continue
 		}
 		a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, "同步中")
-		err := a.syncResourceByPlatform(ctx, resource)
+		err = a.syncResourceByPlatform(ctx, resource)
 		if err != nil {
 			failedCount++
 			a.markResourceSyncFailed(ctx, resource.ID, err.Error())
@@ -191,8 +229,53 @@ func (a *app) runBusinessResourcesSyncAll(jobID int) {
 	} else if failedCount > 0 {
 		status = "部分失败"
 	}
-	message := fmt.Sprintf("同步完成：成功 %d，失败 %d，跳过 %d", successCount, failedCount, skippedCount)
+	message := fmt.Sprintf("%s同步完成：成功 %d，失败 %d，跳过 %d", syncPlatformScopeLabel(selectedPlatforms), successCount, failedCount, skippedCount)
 	a.finishPlatformSyncJob(ctx, jobID, status, message)
+}
+
+func (a *app) platformSyncJobIsRunning(ctx context.Context, jobID int) (bool, error) {
+	var running int
+	err := a.DB().QueryRowContext(ctx,
+		`select count(*) from biz_platform_sync_jobs where id = ? and status = '运行中'`,
+		jobID,
+	).Scan(&running)
+	return running > 0, err
+}
+
+func selectedSyncPlatforms(body map[string]any) (map[string]bool, error) {
+	raw, exists := body["platforms"]
+	if !exists {
+		return nil, nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("platforms 必须是数组")
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	selected := make(map[string]bool, len(values))
+	for _, value := range values {
+		platform := platformDisplayName(fmt.Sprint(value))
+		if platform == "" {
+			return nil, fmt.Errorf("不支持的平台：%v", value)
+		}
+		selected[platform] = true
+	}
+	return selected, nil
+}
+
+func syncPlatformScopeLabel(selected map[string]bool) string {
+	if len(selected) == 0 {
+		return "全部平台"
+	}
+	platforms := make([]string, 0, len(selected))
+	for _, platform := range []string{"YouTube", "Instagram", "TikTok"} {
+		if selected[platform] {
+			platforms = append(platforms, platform)
+		}
+	}
+	return strings.Join(platforms, "、")
 }
 
 func (a *app) syncResourceByPlatform(ctx context.Context, resource syncResourceRow) error {
@@ -393,25 +476,25 @@ func (a *app) platformTokenStatus(ctx context.Context) map[string]any {
 
 func (a *app) savePlatformAPIConfig(ctx context.Context, data map[string]any) error {
 	current := a.effectivePlatformAPIConfig(ctx)
-	if key := strings.TrimSpace(str(data, "youtubeApiKey")); key != "" {
+	if key := optionalConfigValue(data["youtubeApiKey"]); key != "" {
 		current.YouTubeAPIKey = key
 	}
 	if proxyURL, ok := data["youtubeProxyUrl"]; ok {
-		current.YouTubeProxyURL = strings.TrimSpace(anyString(proxyURL))
+		current.YouTubeProxyURL = optionalConfigValue(proxyURL)
 	}
-	if version := strings.TrimSpace(str(data, "metaGraphApiVersion")); version != "" {
+	if version := optionalConfigValue(data["metaGraphApiVersion"]); version != "" {
 		current.MetaGraphAPIVersion = version
 	}
-	if token := strings.TrimSpace(str(data, "instagramAccessToken")); token != "" {
+	if token := optionalConfigValue(data["instagramAccessToken"]); token != "" {
 		current.InstagramAccessToken = token
 	}
-	if userID := strings.TrimSpace(str(data, "instagramUserId")); userID != "" {
+	if userID := optionalConfigValue(data["instagramUserId"]); userID != "" {
 		current.InstagramUserID = userID
 	}
-	if token := strings.TrimSpace(str(data, "tiktokAccessToken")); token != "" {
+	if token := optionalConfigValue(data["tiktokAccessToken"]); token != "" {
 		current.TikTokAccessToken = token
 	}
-	if token := strings.TrimSpace(str(data, "tikhubApiKey")); token != "" {
+	if token := optionalConfigValue(data["tikhubApiKey"]); token != "" {
 		current.TikHubAPIKey = token
 		current.TikTokAccessToken = token
 	}
@@ -519,28 +602,36 @@ func (a *app) effectivePlatformAPIConfig(ctx context.Context) PlatformAPIConfig 
 	if err := json.Unmarshal([]byte(content), &data); err != nil {
 		return cfg
 	}
-	if value := strings.TrimSpace(str(data, "youtubeApiKey")); value != "" {
+	if value := optionalConfigValue(data["youtubeApiKey"]); value != "" {
 		cfg.YouTubeAPIKey = value
 	}
 	if value, ok := data["youtubeProxyUrl"]; ok {
-		cfg.YouTubeProxyURL = strings.TrimSpace(anyString(value))
+		cfg.YouTubeProxyURL = optionalConfigValue(value)
 	}
-	if value := strings.TrimSpace(str(data, "metaGraphApiVersion")); value != "" {
+	if value := optionalConfigValue(data["metaGraphApiVersion"]); value != "" {
 		cfg.MetaGraphAPIVersion = value
 	}
-	if value := strings.TrimSpace(str(data, "instagramAccessToken")); value != "" {
+	if value := optionalConfigValue(data["instagramAccessToken"]); value != "" {
 		cfg.InstagramAccessToken = value
 	}
-	if value := strings.TrimSpace(str(data, "instagramUserId")); value != "" {
+	if value := optionalConfigValue(data["instagramUserId"]); value != "" {
 		cfg.InstagramUserID = value
 	}
-	if value := strings.TrimSpace(str(data, "tiktokAccessToken")); value != "" {
+	if value := optionalConfigValue(data["tiktokAccessToken"]); value != "" {
 		cfg.TikTokAccessToken = value
 	}
-	if value := strings.TrimSpace(str(data, "tikhubApiKey")); value != "" {
+	if value := optionalConfigValue(data["tikhubApiKey"]); value != "" {
 		cfg.TikHubAPIKey = value
 	}
 	return cfg
+}
+
+func optionalConfigValue(value any) string {
+	cleaned := strings.TrimSpace(anyString(value))
+	if cleaned == "<nil>" {
+		return ""
+	}
+	return cleaned
 }
 
 func tikHubAPIKey(cfg PlatformAPIConfig) string {

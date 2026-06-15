@@ -18,7 +18,8 @@ import {
   getResourcePosts,
   getProjectList,
   createCooperation,
-  updateCooperation
+  updateCooperation,
+  syncCooperation
 } from "@/api/business";
 
 defineOptions({ name: "BusinessResources" });
@@ -27,7 +28,13 @@ const router = useRouter();
 const loading = ref(false);
 const syncingAll = ref(false);
 const showSyncCard = ref(false);
+const syncDialogVisible = ref(false);
+const syncScope = ref<"all" | "selected">("all");
+const selectedSyncPlatforms = ref<string[]>(["YouTube", "Instagram", "TikTok"]);
+const syncPlatformOptions = ["YouTube", "Instagram", "TikTok"];
 const syncingResourceIds = reactive<Record<number, boolean>>({});
+const syncingCooperationIds = reactive<Record<number, boolean>>({});
+const savingCooperation = ref(false);
 const dialogVisible = ref(false);
 const profileDialogVisible = ref(false);
 const cooperationDialogVisible = ref(false);
@@ -147,6 +154,12 @@ const canSubmitImport = computed(
 );
 const latestSyncJob = computed(() => syncStatus.value?.latestJob || null);
 const syncRunning = computed(() => latestSyncJob.value?.status === "运行中");
+const syncJobTagType = computed(() => {
+  const status = latestSyncJob.value?.status;
+  if (status === "运行中" || status === "已中止") return "warning";
+  if (status === "失败" || status === "部分失败") return "danger";
+  return "success";
+});
 const syncProgress = computed(() => {
   const job = latestSyncJob.value;
   if (!job?.totalCount) return 0;
@@ -460,6 +473,14 @@ function numberValue(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function todayDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function dateRank(row: any) {
   const releaseTime = row?.releaseDate
     ? new Date(row.releaseDate).getTime()
@@ -715,7 +736,7 @@ function resetCooperationForm() {
     conversions: 0,
     roi: 0,
     teamRating: 0,
-    releaseDate: "",
+    releaseDate: todayDate(),
     deliverableLinks: "",
     notes: ""
   });
@@ -749,17 +770,45 @@ function openEditCooperation(row: any) {
 }
 
 async function submitCooperation() {
+  if (savingCooperation.value) return;
   const payload = editingCooperationId.value
     ? { id: editingCooperationId.value, ...cooperationForm, currency: "USD" }
     : { ...cooperationForm, currency: "USD" };
-  const res = editingCooperationId.value
-    ? await updateCooperation(payload)
-    : await createCooperation(payload);
-  if (res.code === 0) {
-    ElMessage.success("合作记录保存成功");
-    cooperationEditorVisible.value = false;
-    await loadData();
+  savingCooperation.value = true;
+  try {
+    const res = editingCooperationId.value
+      ? await updateCooperation(payload)
+      : await createCooperation(payload);
+    if (res.code === 0) {
+      ElMessage.success(
+        res.data?.postSync?.synced
+          ? `合作记录保存成功，${res.data.postSync.message}`
+          : "合作记录保存成功"
+      );
+      if (res.data?.postSync?.message && !res.data.postSync.synced) {
+        ElMessage.warning(res.data.postSync.message);
+      }
+      cooperationEditorVisible.value = false;
+      await loadData();
+    }
+  } finally {
+    savingCooperation.value = false;
   }
+}
+
+async function syncCooperationPost(row: any) {
+  const id = Number(row.id || 0);
+  if (!id) return;
+  syncingCooperationIds[id] = true;
+  const res = await syncCooperation({ id });
+  syncingCooperationIds[id] = false;
+  if (res.code !== 0) return;
+  if (res.data?.synced) {
+    ElMessage.success(res.data.message || "合作作品数据同步成功");
+    await loadData();
+    return;
+  }
+  ElMessage.warning(res.data?.message || "未找到匹配的合作作品");
 }
 
 function openProfile(row: any) {
@@ -781,6 +830,17 @@ function openPosts(row: any) {
 }
 
 async function submit() {
+  if (cooperationEditorVisible.value) {
+    await ElMessageBox.confirm(
+      "当前合作记录尚未保存。继续保存资源主档将不会保存这条合作记录。",
+      "合作记录未保存",
+      {
+        type: "warning",
+        confirmButtonText: "仍然保存资源",
+        cancelButtonText: "返回保存合作"
+      }
+    );
+  }
   addPlatformOption(form.platform);
   const tagIds = await ensureTagIds(form.tagNames);
   const payload = editingId.value
@@ -809,18 +869,23 @@ function remove(row: any) {
 }
 
 async function syncAll() {
-  await ElMessageBox.confirm(
-    "将按抓取控制中的平台开关，在后台异步同步 YouTube、Instagram、TikTok 资源数据。",
-    "立即同步KOL数据",
-    {
-      type: "info",
-      confirmButtonText: "开始同步",
-      cancelButtonText: "取消"
-    }
-  );
+  syncDialogVisible.value = true;
+}
+
+async function confirmSyncAll() {
+  if (
+    syncScope.value === "selected" &&
+    selectedSyncPlatforms.value.length === 0
+  ) {
+    ElMessage.warning("请至少选择一个平台");
+    return;
+  }
+  const platforms =
+    syncScope.value === "all" ? [] : selectedSyncPlatforms.value;
+  syncDialogVisible.value = false;
   showSyncCard.value = true;
   syncingAll.value = true;
-  const res = await syncAllResources();
+  const res = await syncAllResources({ platforms });
   if (res.code === 0) {
     ElMessage.success(res.data?.message || "异步同步任务已启动");
     await loadSyncStatus(true);
@@ -1135,7 +1200,7 @@ onUnmounted(() => {
             上次同步：{{ formatDateTime(syncStatus.lastResourceSyncAt) }}
           </span>
         </div>
-        <el-tag :type="syncRunning ? 'warning' : 'success'" effect="plain">
+        <el-tag :type="syncJobTagType" effect="plain">
           {{ latestSyncJob.status }}
         </el-tag>
       </div>
@@ -1287,7 +1352,7 @@ onUnmounted(() => {
           <span>资源身份</span>
           <span>基础表现</span>
           <span>合作数据</span>
-          <span>最近合作内容</span>
+          <span>最近平台作品</span>
           <span>操作</span>
         </div>
         <article
@@ -1404,7 +1469,7 @@ onUnmounted(() => {
               @click="openPosts(row)"
             >
               <IconifyIconOnline icon="ri:play-list-2-line" />
-              <span>查看合作内容</span>
+              <span>查看作品数据</span>
             </button>
           </div>
 
@@ -1782,6 +1847,39 @@ onUnmounted(() => {
     </el-card>
 
     <el-dialog
+      v-model="syncDialogVisible"
+      title="立即同步KOL数据"
+      width="480px"
+    >
+      <div class="sync-platform-dialog">
+        <p>选择本次需要同步的平台。抓取控制中已停用的平台仍会跳过。</p>
+        <el-radio-group v-model="syncScope">
+          <el-radio value="all">全部平台</el-radio>
+          <el-radio value="selected">指定平台</el-radio>
+        </el-radio-group>
+        <el-checkbox-group
+          v-if="syncScope === 'selected'"
+          v-model="selectedSyncPlatforms"
+          class="sync-platform-checkboxes"
+        >
+          <el-checkbox
+            v-for="platform in syncPlatformOptions"
+            :key="platform"
+            :value="platform"
+          >
+            {{ platform }}
+          </el-checkbox>
+        </el-checkbox-group>
+      </div>
+      <template #footer>
+        <el-button @click="syncDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="syncingAll" @click="confirmSyncAll">
+          开始同步
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-if="false"
       v-model="dialogVisible"
       :title="editingId ? '编辑资源' : '新增资源'"
@@ -2017,19 +2115,9 @@ onUnmounted(() => {
           </div>
           <div class="editor-header__actions">
             <el-button @click="dialogVisible = false">关闭</el-button>
-            <el-button type="primary" @click="submit">保存资源主档</el-button>
           </div>
         </div>
       </template>
-
-      <div class="field-coverage">
-        <strong>字段覆盖</strong>
-        <span>基础身份 7 项</span>
-        <span>市场与平台 5 项</span>
-        <span>规模表现 3 项</span>
-        <span>合作与效果 9 项</span>
-        <span>联系与管理 3 项</span>
-      </div>
 
       <el-form :model="form" label-position="top" class="editor-form">
         <section class="editor-section">
@@ -2381,10 +2469,15 @@ onUnmounted(() => {
               </el-form-item>
             </div>
             <div class="inline-cooperation-editor__footer">
-              <el-button @click="cooperationEditorVisible = false"
+              <el-button
+                :disabled="savingCooperation"
+                @click="cooperationEditorVisible = false"
                 >取消</el-button
               >
-              <el-button type="primary" @click="submitCooperation"
+              <el-button
+                type="primary"
+                :loading="savingCooperation"
+                @click="submitCooperation"
                 >保存合作记录</el-button
               >
             </div>
@@ -2434,8 +2527,15 @@ onUnmounted(() => {
                 )
               }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="90" fixed="right">
+            <el-table-column label="操作" width="140" fixed="right">
               <template #default="{ row }">
+                <el-button
+                  link
+                  type="primary"
+                  :loading="!!syncingCooperationIds[Number(row.id || 0)]"
+                  @click="syncCooperationPost(row)"
+                  >同步作品</el-button
+                >
                 <el-button link type="primary" @click="openEditCooperation(row)"
                   >编辑</el-button
                 >
@@ -2471,7 +2571,13 @@ onUnmounted(() => {
 
       <template #footer>
         <div class="editor-footer">
-          <span>资源主档保存后，历史合作记录仍会独立留存。</span>
+          <span :class="{ 'editor-footer__warning': cooperationEditorVisible }">
+            {{
+              cooperationEditorVisible
+                ? "合作记录尚未保存，请先保存合作记录或确认放弃后再保存资源。"
+                : "资源主档保存后，历史合作记录仍会独立留存。"
+            }}
+          </span>
           <div>
             <el-button @click="dialogVisible = false">取消</el-button>
             <el-button type="primary" @click="submit">保存资源主档</el-button>
@@ -2570,8 +2676,15 @@ onUnmounted(() => {
         </div>
       </el-form>
       <template #footer>
-        <el-button @click="cooperationDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitCooperation"
+        <el-button
+          :disabled="savingCooperation"
+          @click="cooperationDialogVisible = false"
+          >取消</el-button
+        >
+        <el-button
+          type="primary"
+          :loading="savingCooperation"
+          @click="submitCooperation"
           >保存合作记录</el-button
         >
       </template>
@@ -2785,6 +2898,17 @@ onUnmounted(() => {
             min-width="180"
             show-overflow-tooltip
           />
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                :loading="!!syncingCooperationIds[Number(row.id || 0)]"
+                @click="syncCooperationPost(row)"
+                >同步作品</el-button
+              >
+            </template>
+          </el-table-column>
         </el-table>
       </section>
     </el-dialog>
@@ -2956,6 +3080,20 @@ onUnmounted(() => {
   color: #64748b;
 }
 
+.sync-platform-dialog p {
+  margin: 0 0 16px;
+  color: #64748b;
+}
+
+.sync-platform-checkboxes {
+  display: flex;
+  gap: 8px 20px;
+  padding: 14px 16px;
+  margin-top: 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
 .sync-card {
   margin-bottom: 16px;
   border-radius: 8px;
@@ -3029,7 +3167,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns:
     32px minmax(190px, 0.95fr) minmax(130px, 0.6fr)
-    minmax(270px, 1.35fr) minmax(180px, 0.9fr) 80px;
+    minmax(270px, 1.35fr) minmax(180px, 0.9fr) 112px;
   gap: 10px;
   align-items: center;
 }
@@ -3239,6 +3377,8 @@ onUnmounted(() => {
 .compact-content {
   display: flex;
   gap: 7px;
+  align-items: center;
+  justify-content: center;
   min-width: 0;
 }
 
@@ -3281,19 +3421,41 @@ onUnmounted(() => {
 }
 
 .compact-content .compact-content-empty {
-  display: grid;
-  gap: 2px;
+  display: inline-flex;
+  flex: none;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
   font-size: 11px;
-  color: #94a3b8;
-  place-content: center;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+}
+
+.compact-content .compact-content-empty:hover {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
 }
 
 .compact-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
+  flex-wrap: nowrap;
+  gap: 8px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.compact-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.compact-actions .el-dropdown {
+  display: inline-flex;
 }
 
 .resource-list {
@@ -3584,6 +3746,11 @@ onUnmounted(() => {
   color: #64748b;
 }
 
+.editor-footer__warning {
+  font-weight: 650;
+  color: #c2410c !important;
+}
+
 .editor-header__actions,
 .editor-footer > div {
   display: flex;
@@ -3634,7 +3801,7 @@ onUnmounted(() => {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  padding: 16px;
+  padding: 18px;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -3705,7 +3872,7 @@ onUnmounted(() => {
 
 .cooperation-field-summary {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -4299,7 +4466,7 @@ onUnmounted(() => {
   .compact-resource-row {
     grid-template-columns:
       32px minmax(205px, 1fr) minmax(150px, 0.75fr)
-      minmax(300px, 1.5fr) 90px;
+      minmax(300px, 1.5fr) 112px;
   }
 
   .compact-list-head span:nth-child(5),

@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import {
-  getPlatformSyncControl,
-  savePlatformSyncControl
-} from "@/api/system";
+import { ElMessage } from "element-plus";
+import { getPlatformSyncControl, savePlatformSyncControl } from "@/api/system";
 import { syncAllResources } from "@/api/business";
 
 defineOptions({ name: "SystemPlatformSyncControl" });
@@ -12,6 +9,11 @@ defineOptions({ name: "SystemPlatformSyncControl" });
 const loading = ref(false);
 const saving = ref(false);
 const syncing = ref(false);
+const syncDialogVisible = ref(false);
+const syncScope = ref<"all" | "selected">("all");
+const selectedSyncPlatforms = ref<string[]>(["YouTube", "Instagram", "TikTok"]);
+const syncPlatformOptions = ["YouTube", "Instagram", "TikTok"];
+const apiConfigDirty = ref(false);
 const settings = ref<any[]>([]);
 const tokenStatus = ref<Record<string, any>>({});
 const apiConfig = ref<any>({
@@ -37,6 +39,12 @@ const lastResourceSyncAt = ref<any>(null);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const syncRunning = computed(() => latestJob.value?.status === "运行中");
+const syncJobTagType = computed(() => {
+  const status = latestJob.value?.status;
+  if (status === "运行中" || status === "已中止") return "warning";
+  if (status === "失败" || status === "部分失败") return "danger";
+  return "success";
+});
 const progress = computed(() => {
   const job = latestJob.value;
   if (!job?.totalCount) return 0;
@@ -79,11 +87,13 @@ async function loadData() {
     postLimit: Number(row.postLimit || 25)
   }));
   tokenStatus.value = data.tokenStatus || {};
-  Object.assign(apiConfig.value, data.apiConfig || {});
-  apiConfig.value.youtubeApiKey = "";
-  apiConfig.value.instagramAccessToken = "";
-  apiConfig.value.tiktokAccessToken = "";
-  apiConfig.value.tikhubApiKey = "";
+  if (!apiConfigDirty.value) {
+    Object.assign(apiConfig.value, data.apiConfig || {});
+    apiConfig.value.youtubeApiKey = "";
+    apiConfig.value.instagramAccessToken = "";
+    apiConfig.value.tiktokAccessToken = "";
+    apiConfig.value.tikhubApiKey = "";
+  }
   latestJob.value = data.latestJob || null;
   resourceCounts.value = data.resourceCounts || [];
   lastResourceSyncAt.value = data.lastResourceSyncAt || null;
@@ -105,6 +115,7 @@ async function save() {
   saving.value = false;
   if (res.code === 0) {
     ElMessage.success("抓取控制已保存");
+    apiConfigDirty.value = false;
     await loadData();
     apiConfig.value.youtubeApiKey = typedSecrets.youtubeApiKey;
     apiConfig.value.instagramAccessToken = typedSecrets.instagramAccessToken;
@@ -114,17 +125,22 @@ async function save() {
 }
 
 async function startSync() {
-  await ElMessageBox.confirm(
-    "将按当前平台开关，在后台同步全球资源库中的可同步资源。",
-    "启动异步同步",
-    {
-      type: "info",
-      confirmButtonText: "启动",
-      cancelButtonText: "取消"
-    }
-  );
+  syncDialogVisible.value = true;
+}
+
+async function confirmSync() {
+  if (
+    syncScope.value === "selected" &&
+    selectedSyncPlatforms.value.length === 0
+  ) {
+    ElMessage.warning("请至少选择一个平台");
+    return;
+  }
+  const platforms =
+    syncScope.value === "all" ? [] : selectedSyncPlatforms.value;
+  syncDialogVisible.value = false;
   syncing.value = true;
-  const res = await syncAllResources();
+  const res = await syncAllResources({ platforms });
   if (res.code === 0) {
     ElMessage.success(res.data?.message || "同步任务已启动");
     await loadData();
@@ -197,13 +213,42 @@ onUnmounted(stopPolling);
       </div>
     </section>
 
+    <el-dialog v-model="syncDialogVisible" title="启动异步同步" width="480px">
+      <div class="sync-platform-dialog">
+        <p>选择本次需要同步的平台。已停用的平台仍会按抓取控制设置跳过。</p>
+        <el-radio-group v-model="syncScope">
+          <el-radio value="all">全部平台</el-radio>
+          <el-radio value="selected">指定平台</el-radio>
+        </el-radio-group>
+        <el-checkbox-group
+          v-if="syncScope === 'selected'"
+          v-model="selectedSyncPlatforms"
+          class="sync-platform-checkboxes"
+        >
+          <el-checkbox
+            v-for="platform in syncPlatformOptions"
+            :key="platform"
+            :value="platform"
+          >
+            {{ platform }}
+          </el-checkbox>
+        </el-checkbox-group>
+      </div>
+      <template #footer>
+        <el-button @click="syncDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="syncing" @click="confirmSync">
+          启动
+        </el-button>
+      </template>
+    </el-dialog>
+
     <section v-if="latestJob" class="sync-panel">
       <div class="panel-header">
         <div>
           <strong>异步任务</strong>
           <span>{{ latestJob.message || "等待同步" }}</span>
         </div>
-        <el-tag :type="syncRunning ? 'warning' : 'success'" effect="plain">
+        <el-tag :type="syncJobTagType" effect="plain">
           {{ latestJob.status }}
         </el-tag>
       </div>
@@ -238,6 +283,7 @@ onUnmounted(stopPolling);
                 type="password"
                 show-password
                 placeholder="留空不修改"
+                @input="apiConfigDirty = true"
               />
               <div class="field-tip">
                 {{
@@ -255,6 +301,7 @@ onUnmounted(stopPolling);
                 type="password"
                 show-password
                 placeholder="留空不修改"
+                @input="apiConfigDirty = true"
               />
               <div class="field-tip">
                 {{
@@ -266,16 +313,24 @@ onUnmounted(stopPolling);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="YouTube 代理地址">
+            <el-form-item label="YouTube 代理地址（可选）">
               <el-input
                 v-model="apiConfig.youtubeProxyUrl"
-                placeholder="例如 http://127.0.0.1:7890"
+                clearable
+                placeholder="留空则直连，例如 http://127.0.0.1:7890"
+                @input="apiConfigDirty = true"
               />
+              <div class="field-tip">
+                仅在服务器无法直接访问 Google API 时填写。
+              </div>
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
             <el-form-item label="TikHub 接入说明">
-              <el-input model-value="TikTok 与 Instagram 抓取共用该 Key" disabled />
+              <el-input
+                model-value="TikTok 与 Instagram 抓取共用该 Key"
+                disabled
+              />
             </el-form-item>
           </el-col>
         </el-row>
@@ -285,8 +340,8 @@ onUnmounted(stopPolling);
     <section v-loading="loading" class="settings-panel">
       <div class="panel-header">
         <div>
-          <strong>平台开关</strong>
-          <span>关闭后，一键同步会跳过对应平台资源。</span>
+          <strong>平台抓取设置</strong>
+          <span>配置平台启用状态、是否抓取作品，以及每次默认抓取数量。</span>
         </div>
       </div>
       <el-table :data="settings" stripe class="settings-table">
@@ -296,10 +351,28 @@ onUnmounted(stopPolling);
             <el-switch v-model="row.enabled" />
           </template>
         </el-table-column>
+        <el-table-column label="抓取作品" width="120">
+          <template #default="{ row }">
+            <el-switch v-model="row.syncPosts" />
+          </template>
+        </el-table-column>
+        <el-table-column label="默认作品数" width="150">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.postLimit"
+              :min="1"
+              :max="50"
+              controls-position="right"
+              class="post-limit-input"
+            />
+          </template>
+        </el-table-column>
         <el-table-column label="Token 状态" min-width="220">
           <template #default="{ row }">
             <el-tag
-              :type="tokenStatus[row.platform]?.configured ? 'success' : 'warning'"
+              :type="
+                tokenStatus[row.platform]?.configured ? 'success' : 'warning'
+              "
               effect="plain"
             >
               {{ tokenStatus[row.platform]?.message || "未检测" }}
@@ -433,6 +506,24 @@ onUnmounted(stopPolling);
 
 .settings-table {
   width: 100%;
+}
+
+.post-limit-input {
+  width: 110px;
+}
+
+.sync-platform-dialog p {
+  margin: 0 0 16px;
+  color: #64748b;
+}
+
+.sync-platform-checkboxes {
+  display: flex;
+  gap: 8px 20px;
+  padding: 14px 16px;
+  margin-top: 14px;
+  background: #f8fafc;
+  border-radius: 8px;
 }
 
 @media (max-width: 900px) {

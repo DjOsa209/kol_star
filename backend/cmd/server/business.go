@@ -68,7 +68,7 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		        cast(unix_timestamp(last_sync_at) * 1000 as unsigned) as lastSyncAt,
 		        score, level, risk_level as riskLevel, notes,
 		        cast(unix_timestamp(updated_at) * 1000 as unsigned) as updatedAt
-		   from biz_resources`+where+` order by score desc, updated_at desc limit ? offset ?`,
+		   from biz_resources`+where+` order by id asc limit ? offset ?`,
 		queryArgs...,
 	)
 	if err != nil {
@@ -806,24 +806,31 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		avgViews = totalViews / videoCount
 	}
 	avatarURL := bestThumbnailURL(item.Snippet.Thumbnails)
-	posts, err := a.fetchYouTubePosts(ctx, client, apiKey, id, item.ContentDetails.RelatedPlaylists.Uploads)
-	if err != nil {
-		return nil, err
+	syncPosts, postLimit := a.platformPostSyncOptions(ctx, "YouTube", 25)
+	posts := []platformPost{}
+	if syncPosts {
+		posts, err = a.fetchYouTubePosts(ctx, client, apiKey, id, item.ContentDetails.RelatedPlaylists.Uploads, postLimit)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if avgViews == 0 && len(posts) > 0 {
 		avgViews = averagePostViews(posts)
 	}
+	engagementRate := platformPostEngagementRate(posts, followers)
 	avatarURL = localizeResourceImage(ctx, id, "avatar", avatarURL)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
 		  country = if(country = '' and ? <> '', ?, country),
 		  followers = ?, total_views = ?, video_count = ?, avg_views = ?,
+		  engagement_rate = if(? > 0, ?, engagement_rate),
 		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		item.Snippet.Title, item.Snippet.Title, item.Snippet.Country, item.Snippet.Country,
-		followers, totalViews, videoCount, avgViews, item.ID, item.Snippet.CustomURL, avatarURL, id,
+		followers, totalViews, videoCount, avgViews, engagementRate, engagementRate,
+		item.ID, item.Snippet.CustomURL, avatarURL, id,
 	)
 	if err != nil {
 		return nil, err
@@ -837,6 +844,7 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		"totalViews":     totalViews,
 		"videoCount":     videoCount,
 		"avgViews":       avgViews,
+		"engagementRate": engagementRate,
 		"avatarUrl":      avatarURL,
 		"syncedPosts":    len(posts),
 		"posts":          posts,
@@ -872,7 +880,7 @@ type platformPost struct {
 	Raw            any        `json:"-"`
 }
 
-func (a *app) fetchYouTubePosts(ctx context.Context, client *http.Client, apiKey string, resourceID int, uploadsPlaylistID string) ([]platformPost, error) {
+func (a *app) fetchYouTubePosts(ctx context.Context, client *http.Client, apiKey string, resourceID int, uploadsPlaylistID string, postLimit int) ([]platformPost, error) {
 	uploadsPlaylistID = strings.TrimSpace(uploadsPlaylistID)
 	if uploadsPlaylistID == "" {
 		return nil, nil
@@ -880,7 +888,7 @@ func (a *app) fetchYouTubePosts(ctx context.Context, client *http.Client, apiKey
 	params := url.Values{}
 	params.Set("part", "contentDetails")
 	params.Set("playlistId", uploadsPlaylistID)
-	params.Set("maxResults", "25")
+	params.Set("maxResults", strconv.Itoa(clampInt(postLimit, 1, 50)))
 	params.Set("key", apiKey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/youtube/v3/playlistItems?"+params.Encode(), nil)
 	if err != nil {
@@ -970,6 +978,77 @@ func (a *app) fetchYouTubePosts(ctx context.Context, client *http.Client, apiKey
 		return nil, err
 	}
 	return posts, nil
+}
+
+func (a *app) fetchYouTubePostByID(ctx context.Context, resourceID int, postID string) (platformPost, error) {
+	cfg := a.effectivePlatformAPIConfig(ctx)
+	apiKey := strings.TrimSpace(cfg.YouTubeAPIKey)
+	if apiKey == "" {
+		return platformPost{}, fmt.Errorf("未配置 YouTube API Key")
+	}
+	client, err := youtubeHTTPClient(cfg)
+	if err != nil {
+		return platformPost{}, err
+	}
+	params := url.Values{}
+	params.Set("part", "snippet,statistics,contentDetails")
+	params.Set("id", postID)
+	params.Set("key", apiKey)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/youtube/v3/videos?"+params.Encode(), nil)
+	if err != nil {
+		return platformPost{}, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return platformPost{}, err
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Snippet struct {
+				PublishedAt string `json:"publishedAt"`
+				Title       string `json:"title"`
+				Description string `json:"description"`
+				Thumbnails  map[string]struct {
+					URL string `json:"url"`
+				} `json:"thumbnails"`
+			} `json:"snippet"`
+			Statistics struct {
+				ViewCount    string `json:"viewCount"`
+				LikeCount    string `json:"likeCount"`
+				CommentCount string `json:"commentCount"`
+			} `json:"statistics"`
+			ContentDetails struct {
+				Duration string `json:"duration"`
+			} `json:"contentDetails"`
+		} `json:"items"`
+	}
+	if err := decodePlatformResponse(resp, "YouTube", &payload); err != nil {
+		return platformPost{}, err
+	}
+	if len(payload.Items) == 0 {
+		return platformPost{}, fmt.Errorf("YouTube 未找到对应作品")
+	}
+	item := payload.Items[0]
+	post := platformPost{
+		PlatformPostID: item.ID,
+		Title:          item.Snippet.Title,
+		Description:    item.Snippet.Description,
+		PostURL:        "https://www.youtube.com/watch?v=" + item.ID,
+		CoverURL:       bestThumbnailURL(item.Snippet.Thumbnails),
+		MediaType:      "VIDEO",
+		PublishedAt:    parsePlatformTime(item.Snippet.PublishedAt),
+		Duration:       parseYouTubeDurationSeconds(item.ContentDetails.Duration),
+		ViewCount:      parseCount(item.Statistics.ViewCount),
+		LikeCount:      parseCount(item.Statistics.LikeCount),
+		CommentCount:   parseCount(item.Statistics.CommentCount),
+		Raw:            item,
+	}
+	if err := a.upsertResourcePlatformPosts(ctx, resourceID, "YouTube", []platformPost{post}); err != nil {
+		return platformPost{}, err
+	}
+	return post, nil
 }
 
 func (a *app) syncInstagramResource(ctx context.Context, id int, name, platformURL, platformUserID, platformHandle string) (map[string]any, error) {
@@ -1214,11 +1293,12 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 	}
 	recentViews := sumPostViews(posts)
 	avgViews := averagePostViews(posts)
+	engagementRate := platformPostEngagementRate(posts, user.FollowerCount)
 	if !postsFetched {
 		if err := a.DB().QueryRowContext(ctx,
-			`select total_views, avg_views from biz_resources where id = ? limit 1`,
+			`select total_views, avg_views, engagement_rate from biz_resources where id = ? limit 1`,
 			id,
-		).Scan(&recentViews, &avgViews); err != nil {
+		).Scan(&recentViews, &avgViews, &engagementRate); err != nil {
 			return nil, err
 		}
 	}
@@ -1227,10 +1307,12 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
 		  followers = ?, total_views = ?, video_count = ?, avg_views = ?,
+		  engagement_rate = if(? > 0, ?, engagement_rate),
 		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		user.DisplayName, user.DisplayName, user.FollowerCount, recentViews, user.VideoCount, avgViews,
+		engagementRate, engagementRate,
 		firstNonEmpty(user.SecUID, user.UserID), user.Username, avatarURL, id,
 	)
 	if err != nil {
@@ -1245,6 +1327,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		"totalViews":     recentViews,
 		"videoCount":     user.VideoCount,
 		"avgViews":       avgViews,
+		"engagementRate": engagementRate,
 		"avatarUrl":      avatarURL,
 		"syncedPosts":    len(posts),
 		"posts":          posts,
@@ -1630,14 +1713,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 	if err := a.upsertResourcePlatformPosts(ctx, resourceID, "Instagram", user.Posts); err != nil {
 		return nil, err
 	}
-	totalEngagement := int64(0)
-	for _, post := range user.Posts {
-		totalEngagement += post.LikeCount + post.CommentCount
-	}
-	engagementRate := 0.0
-	if user.FollowerCount > 0 && len(user.Posts) > 0 {
-		engagementRate = float64(totalEngagement) / float64(user.FollowerCount) / float64(len(user.Posts))
-	}
+	engagementRate := platformPostEngagementRate(user.Posts, user.FollowerCount)
 	totalViews := sumPostViews(user.Posts)
 	avgViews := averageViewedPostViews(user.Posts)
 	active30D, active90D := recentPostCounts(user.Posts, time.Now())
@@ -1740,7 +1816,7 @@ func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, p
 			return err
 		}
 	}
-	return nil
+	return a.syncCooperationsFromStoredPostsForResource(ctx, resourceID)
 }
 
 func decodePlatformResponse(resp *http.Response, platform string, target any) error {
@@ -1845,6 +1921,17 @@ func sumPostViews(posts []platformPost) int64 {
 		total += post.ViewCount
 	}
 	return total
+}
+
+func platformPostEngagementRate(posts []platformPost, followers int64) float64 {
+	if followers <= 0 || len(posts) == 0 {
+		return 0
+	}
+	total := int64(0)
+	for _, post := range posts {
+		total += post.LikeCount + post.CommentCount + post.ShareCount
+	}
+	return float64(total) / float64(followers) / float64(len(posts))
 }
 
 func truncateText(value string, max int) string {
@@ -3077,7 +3164,7 @@ func (a *app) businessCooperations(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) createBusinessCooperation(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
-	_, err := a.DB().ExecContext(r.Context(),
+	result, err := a.DB().ExecContext(r.Context(),
 		`insert into biz_cooperations
 		 (project_id, resource_id, cooperation_type, quote_amount, currency, status,
 		  deliverable_status, impressions, views, clicks, conversions, engagement_count,
@@ -3095,7 +3182,17 @@ func (a *app) createBusinessCooperation(w http.ResponseWriter, r *http.Request) 
 		writeDBError(w, err)
 		return
 	}
-	writeOK(w, map[string]any{"created": true})
+	id, err := result.LastInsertId()
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	syncResult, err := a.syncCooperationPost(r.Context(), int(id), true)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"created": true, "id": id, "postSync": syncResult})
 }
 
 func (a *app) updateBusinessCooperation(w http.ResponseWriter, r *http.Request) {
@@ -3124,7 +3221,26 @@ func (a *app) updateBusinessCooperation(w http.ResponseWriter, r *http.Request) 
 		writeDBError(w, err)
 		return
 	}
-	writeOK(w, map[string]any{"updated": true})
+	syncResult, err := a.syncCooperationPost(r.Context(), id, true)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"updated": true, "postSync": syncResult})
+}
+
+func (a *app) syncBusinessCooperation(w http.ResponseWriter, r *http.Request) {
+	id := intField(readBody(r), "id")
+	if id == 0 {
+		writeError(w, http.StatusOK, 10001, "合作记录 id 不能为空")
+		return
+	}
+	result, err := a.syncCooperationPost(r.Context(), id, true)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, result)
 }
 
 func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request) {
@@ -3185,11 +3301,14 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		writeDBError(w, err)
 		return
 	}
+	synced, syncWarnings := a.syncImportedCooperations(r.Context(), batchID)
 	writeOK(w, map[string]any{
 		"batchId":          batchID,
 		"imported":         imported,
 		"failed":           len(errors),
 		"createdResources": createdResources,
+		"syncedPosts":      synced,
+		"syncWarnings":     syncWarnings,
 		"errors":           errors,
 	})
 }

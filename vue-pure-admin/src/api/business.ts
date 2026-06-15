@@ -33,8 +33,8 @@ export const syncResource = (data?: object) => {
   return http.request<Result>("post", "/business/resources/sync", { data });
 };
 
-export const syncAllResources = () => {
-  return http.request<Result>("post", "/business/resources/sync-all");
+export const syncAllResources = (data?: { platforms?: string[] }) => {
+  return http.request<Result>("post", "/business/resources/sync-all", { data });
 };
 
 export const getResourceSyncStatus = () => {
@@ -105,15 +105,30 @@ export const getCooperationList = (data?: object) => {
 };
 
 export const createCooperation = (data?: object) => {
-  return http.request<Result>("post", "/business/cooperations/create", {
-    data
-  });
+  return http.request<Result>(
+    "post",
+    "/business/cooperations/create",
+    { data },
+    { timeout: 30000 }
+  );
 };
 
 export const updateCooperation = (data?: object) => {
-  return http.request<Result>("post", "/business/cooperations/update", {
-    data
-  });
+  return http.request<Result>(
+    "post",
+    "/business/cooperations/update",
+    { data },
+    { timeout: 30000 }
+  );
+};
+
+export const syncCooperation = (data?: object) => {
+  return http.request<Result>(
+    "post",
+    "/business/cooperations/sync",
+    { data },
+    { timeout: 30000 }
+  );
 };
 
 export const importCooperations = (data?: object) => {

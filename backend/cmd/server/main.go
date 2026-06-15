@@ -52,6 +52,11 @@ func main() {
 	defer db.Close()
 
 	a := newApp(db, cfg)
+	if interrupted, err := a.interruptStalePlatformSyncJobs(context.Background()); err != nil {
+		log.Fatalf("interrupt stale platform sync jobs: %v", err)
+	} else if interrupted > 0 {
+		log.Printf("interrupted %d stale platform sync job(s) from previous service run", interrupted)
+	}
 	watchConfig(watcher, func(next Config) {
 		if err := a.reloadConfig(next); err != nil {
 			log.Printf("reload config failed: %v", err)
@@ -169,6 +174,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/cooperations", a.requireMenu("/business/projects", a.businessCooperations))
 	mux.HandleFunc("POST /business/cooperations/create", a.requireMenu("/business/projects", a.createBusinessCooperation))
 	mux.HandleFunc("POST /business/cooperations/update", a.requireMenu("/business/projects", a.updateBusinessCooperation))
+	mux.HandleFunc("POST /business/cooperations/sync", a.requireMenu("/business/projects", a.syncBusinessCooperation))
 	mux.HandleFunc("POST /business/cooperations/import", a.requireMenu("/business/projects", a.importBusinessCooperations))
 	mux.HandleFunc("POST /business/brief-templates", a.requireMenu("/business/briefs", a.businessBriefTemplates))
 	mux.HandleFunc("POST /business/brief-templates/create", a.requireMenu("/business/briefs", a.createBusinessBriefTemplate))

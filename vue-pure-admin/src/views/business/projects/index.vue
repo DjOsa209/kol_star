@@ -9,6 +9,7 @@ import {
   getCooperationList,
   createCooperation,
   updateCooperation,
+  syncCooperation,
   importCooperations,
   getMarketOptions,
   createMarketOption,
@@ -33,6 +34,8 @@ const selectedProjectId = ref<number | null>(null);
 const activePipelineStage = ref("all");
 const executionDrawer = ref(false);
 const activeCooperation = ref<any>(null);
+const syncingCooperationIds = reactive<Record<number, boolean>>({});
+const savingCooperation = ref(false);
 
 const defaultMarketOptions = [
   "美国",
@@ -403,19 +406,47 @@ async function submitProject() {
 }
 
 async function submitCooperation() {
+  if (savingCooperation.value) return;
   const payload = editingCooperationId.value
     ? { id: editingCooperationId.value, ...cooperationForm }
     : cooperationForm;
-  const res = editingCooperationId.value
-    ? await updateCooperation(payload)
-    : await createCooperation(payload);
-  if (res.code === 0) {
-    ElMessage.success(
-      editingCooperationId.value ? "合作记录已更新" : "合作记录已创建"
-    );
-    cooperationDialog.value = false;
-    loadData();
+  savingCooperation.value = true;
+  try {
+    const res = editingCooperationId.value
+      ? await updateCooperation(payload)
+      : await createCooperation(payload);
+    if (res.code === 0) {
+      ElMessage.success(
+        res.data?.postSync?.synced
+          ? `${editingCooperationId.value ? "合作记录已更新" : "合作记录已创建"}，${res.data.postSync.message}`
+          : editingCooperationId.value
+            ? "合作记录已更新"
+            : "合作记录已创建"
+      );
+      if (res.data?.postSync?.message && !res.data.postSync.synced) {
+        ElMessage.warning(res.data.postSync.message);
+      }
+      cooperationDialog.value = false;
+      await loadData();
+    }
+  } finally {
+    savingCooperation.value = false;
   }
+}
+
+async function syncCooperationPost(row: any) {
+  const id = Number(row.id || 0);
+  if (!id) return;
+  syncingCooperationIds[id] = true;
+  const res = await syncCooperation({ id });
+  syncingCooperationIds[id] = false;
+  if (res.code !== 0) return;
+  if (res.data?.synced) {
+    ElMessage.success(res.data.message || "合作作品数据同步成功");
+    await loadData();
+    return;
+  }
+  ElMessage.warning(res.data?.message || "未找到匹配的合作作品");
 }
 
 function normalizeHeader(value: string) {
@@ -1392,8 +1423,16 @@ onMounted(() => {
               min-width="200"
               show-overflow-tooltip
             />
-            <el-table-column label="操作" width="90" fixed="right">
+            <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
+                <el-button
+                  link
+                  type="primary"
+                  :loading="!!syncingCooperationIds[Number(row.id || 0)]"
+                  @click="syncCooperationPost(row)"
+                >
+                  同步作品
+                </el-button>
                 <el-button
                   link
                   type="primary"
@@ -1735,8 +1774,17 @@ onMounted(() => {
         /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="cooperationDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitCooperation">保存</el-button>
+        <el-button
+          :disabled="savingCooperation"
+          @click="cooperationDialog = false"
+          >取消</el-button
+        >
+        <el-button
+          type="primary"
+          :loading="savingCooperation"
+          @click="submitCooperation"
+          >保存</el-button
+        >
       </template>
     </el-dialog>
 
