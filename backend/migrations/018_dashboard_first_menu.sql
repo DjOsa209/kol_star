@@ -13,7 +13,7 @@ where id = 905 or path = '/business/dashboard';
 
 update sys_menus set
   parent_id = 900,
-  title = 'Campaign 执行中心',
+  title = '营销项目执行中心',
   path = '/business/projects',
   name = 'BusinessProjects',
   component = 'business/projects/index',

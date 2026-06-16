@@ -34,6 +34,10 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		currentPage = 1
 	}
 	offset := (currentPage - 1) * pageSize
+	sequenceSortOrder := strings.ToLower(str(body, "sequenceSortOrder"))
+	if sequenceSortOrder != "desc" {
+		sequenceSortOrder = "asc"
+	}
 	where, args := businessFilters(body, map[string]string{
 		"name":         "name like ?",
 		"resourceType": "resource_type = ?",
@@ -68,7 +72,7 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		        cast(unix_timestamp(last_sync_at) * 1000 as unsigned) as lastSyncAt,
 		        score, level, risk_level as riskLevel, notes,
 		        cast(unix_timestamp(updated_at) * 1000 as unsigned) as updatedAt
-		   from biz_resources`+where+` order by id asc limit ? offset ?`,
+		   from biz_resources`+where+` order by id `+sequenceSortOrder+` limit ? offset ?`,
 		queryArgs...,
 	)
 	if err != nil {
@@ -690,52 +694,55 @@ func (a *app) syncBusinessResource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusOK, 10001, "资源 id 不能为空")
 		return
 	}
-	var resource struct {
-		Name           string
-		Platform       string
-		PlatformURL    string
-		PlatformUserID string
-		PlatformHandle string
-	}
-	err := a.DB().QueryRowContext(r.Context(),
-		`select name, platform, platform_url, platform_user_id, platform_handle from biz_resources where id = ? limit 1`,
-		id,
-	).Scan(&resource.Name, &resource.Platform, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle)
+	resource, err := a.syncableResourceByID(r.Context(), id)
 	if err != nil {
 		writeDBError(w, err)
 		return
 	}
-
-	switch strings.ToLower(strings.TrimSpace(resource.Platform)) {
-	case "youtube":
-		data, err := a.syncYouTubeResource(r.Context(), id, resource.Name, resource.PlatformURL)
-		if err != nil {
-			a.markResourceSyncFailed(r.Context(), id, err.Error())
-			writeError(w, http.StatusOK, 10002, err.Error())
-			return
-		}
-		writeOK(w, data)
-	case "instagram", "ins":
-		data, err := a.syncInstagramResource(r.Context(), id, resource.Name, resource.PlatformURL, resource.PlatformUserID, resource.PlatformHandle)
-		if err != nil {
-			a.markResourceSyncFailed(r.Context(), id, err.Error())
-			writeError(w, http.StatusOK, 10002, err.Error())
-			return
-		}
-		writeOK(w, data)
-	case "tiktok":
-		data, err := a.syncTikTokResource(r.Context(), id)
-		if err != nil {
-			a.markResourceSyncFailed(r.Context(), id, err.Error())
-			writeError(w, http.StatusOK, 10002, err.Error())
-			return
-		}
-		writeOK(w, data)
-	default:
-		message := "当前平台暂不支持官方 API 同步"
-		a.markResourceSyncFailed(r.Context(), id, message)
-		writeError(w, http.StatusOK, 10003, message)
+	if platformDisplayName(resource.Platform) == "" {
+		writeError(w, http.StatusOK, 10003, "当前平台暂不支持官方 API 同步")
+		return
 	}
+	running, err := a.latestRunningPlatformSyncJob(r.Context())
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if running != nil {
+		writeOK(w, map[string]any{
+			"started": false,
+			"message": "已有同步任务正在运行",
+			"job":     running,
+		})
+		return
+	}
+	result, err := a.DB().ExecContext(r.Context(),
+		`insert into biz_platform_sync_jobs
+		  (job_type, status, total_count, current_resource_id, current_resource_name, started_at, message)
+		 values ('resource_sync_one', '运行中', 1, ?, ?, now(), '任务已启动')`,
+		resource.ID, resource.Name,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	jobID, err := result.LastInsertId()
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	go a.runBusinessResourceSyncOne(int(jobID), resource)
+	job, err := a.platformSyncJob(r.Context(), int(jobID))
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{
+		"started": true,
+		"jobId":   jobID,
+		"message": "单个资源同步任务已启动",
+		"job":     job,
+	})
 }
 
 func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL string) (map[string]any, error) {
@@ -2931,6 +2938,10 @@ func (a *app) businessProjects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.queryMaps(r.Context(),
 		`select id, name, target_market as targetMarket, language, platform, campaign_type as campaignType,
 		        budget, currency, status, owner, brief,
+		        date_format(cycle_start_date, '%Y-%m-%d') as cycleStartDate,
+		        date_format(cycle_end_date, '%Y-%m-%d') as cycleEndDate,
+		        date_format(report_update_date, '%Y-%m-%d') as reportUpdateDate,
+		        cast(unix_timestamp(paused_at) * 1000 as unsigned) as pausedAt,
 		        cast(unix_timestamp(created_at) * 1000 as unsigned) as createdAt
 		   from biz_projects order by created_at desc`,
 	)
@@ -2945,11 +2956,14 @@ func (a *app) createBusinessProject(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
 	_, err := a.DB().ExecContext(r.Context(),
 		`insert into biz_projects
-		 (name, target_market, language, platform, campaign_type, budget, currency, status, owner, brief)
-		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (name, target_market, language, platform, campaign_type, budget, currency, status, owner, brief,
+		  cycle_start_date, cycle_end_date, report_update_date)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		str(body, "name"), str(body, "targetMarket"), str(body, "language"), str(body, "platform"),
 		str(body, "campaignType"), floatField(body, "budget"), defaultString(str(body, "currency"), "USD"),
 		defaultString(str(body, "status"), "需求创建"), str(body, "owner"), str(body, "brief"),
+		nullableDate(str(body, "cycleStartDate")), nullableDate(str(body, "cycleEndDate")),
+		nullableDate(str(body, "reportUpdateDate")),
 	)
 	if err != nil {
 		writeDBError(w, err)
@@ -2968,11 +2982,14 @@ func (a *app) updateBusinessProject(w http.ResponseWriter, r *http.Request) {
 	_, err := a.DB().ExecContext(r.Context(),
 		`update biz_projects set
 		  name = ?, target_market = ?, language = ?, platform = ?, campaign_type = ?,
-		  budget = ?, currency = ?, status = ?, owner = ?, brief = ?
+		  budget = ?, currency = ?, status = ?, owner = ?, brief = ?,
+		  cycle_start_date = ?, cycle_end_date = ?, report_update_date = ?
 		 where id = ?`,
 		str(body, "name"), str(body, "targetMarket"), str(body, "language"), str(body, "platform"),
 		str(body, "campaignType"), floatField(body, "budget"), defaultString(str(body, "currency"), "USD"),
-		defaultString(str(body, "status"), "需求创建"), str(body, "owner"), str(body, "brief"), id,
+		defaultString(str(body, "status"), "需求创建"), str(body, "owner"), str(body, "brief"),
+		nullableDate(str(body, "cycleStartDate")), nullableDate(str(body, "cycleEndDate")),
+		nullableDate(str(body, "reportUpdateDate")), id,
 	)
 	if err != nil {
 		writeDBError(w, err)
@@ -3143,11 +3160,17 @@ func (a *app) ensureBusinessMarketOptions(ctx context.Context) error {
 func (a *app) businessCooperations(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.queryMaps(r.Context(),
 		`select c.id, c.project_id as projectId, p.name as projectName, c.resource_id as resourceId,
-		        r.name as resourceName, c.cooperation_type as cooperationType, c.quote_amount as quoteAmount,
+		        r.name as resourceName, r.avatar_url as resourceAvatarUrl, r.platform_handle as platformHandle,
+		        r.platform_url as platformUrl, r.country, r.language, r.platform,
+		        c.cooperation_type as cooperationType, c.audience_segment as audienceSegment,
+		        c.creative_name as creativeName, c.quote_amount as quoteAmount,
 		        c.currency, c.status, c.deliverable_status as deliverableStatus,
 		        c.impressions, c.views, c.clicks, c.conversions, c.engagement_count as engagementCount,
 		        c.comments_count as commentsCount, c.roi, c.team_rating as teamRating,
 		        c.release_date as releaseDate, c.deliverable_links as deliverableLinks,
+		        c.final_link as finalLink, c.top_geographies as topGeographies,
+		        date_format(c.publish_time, '%Y-%m-%d %H:%i:%s') as publishTime,
+		        c.tracking_link as trackingLink, c.ad_authorization_code as adAuthorizationCode,
 		        c.import_batch_id as importBatchId, c.notes,
 		        cast(unix_timestamp(c.updated_at) * 1000 as unsigned) as updatedAt
 		   from biz_cooperations c
@@ -3166,17 +3189,21 @@ func (a *app) createBusinessCooperation(w http.ResponseWriter, r *http.Request) 
 	body := readBody(r)
 	result, err := a.DB().ExecContext(r.Context(),
 		`insert into biz_cooperations
-		 (project_id, resource_id, cooperation_type, quote_amount, currency, status,
+		 (project_id, resource_id, cooperation_type, audience_segment, creative_name, quote_amount, currency, status,
 		  deliverable_status, impressions, views, clicks, conversions, engagement_count,
-		  comments_count, roi, team_rating, release_date, deliverable_links, import_batch_id, notes)
-		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  comments_count, roi, team_rating, release_date, deliverable_links, final_link, top_geographies,
+		  publish_time, tracking_link, ad_authorization_code, import_batch_id, notes)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		intField(body, "projectId"), intField(body, "resourceId"), str(body, "cooperationType"),
+		str(body, "audienceSegment"), str(body, "creativeName"),
 		floatField(body, "quoteAmount"), defaultString(str(body, "currency"), "USD"),
 		defaultString(str(body, "status"), "邀约中"), defaultString(str(body, "deliverableStatus"), "未开始"),
 		intField(body, "impressions"), intField(body, "views"), intField(body, "clicks"),
 		intField(body, "conversions"), intField(body, "engagementCount"), intField(body, "commentsCount"),
 		floatField(body, "roi"), intField(body, "teamRating"), nullableDate(str(body, "releaseDate")),
-		str(body, "deliverableLinks"), str(body, "importBatchId"), str(body, "notes"),
+		str(body, "deliverableLinks"), str(body, "finalLink"), str(body, "topGeographies"),
+		nullableTime(str(body, "publishTime")), str(body, "trackingLink"), str(body, "adAuthorizationCode"),
+		str(body, "importBatchId"), str(body, "notes"),
 	)
 	if err != nil {
 		writeDBError(w, err)
@@ -3204,18 +3231,23 @@ func (a *app) updateBusinessCooperation(w http.ResponseWriter, r *http.Request) 
 	}
 	_, err := a.DB().ExecContext(r.Context(),
 		`update biz_cooperations set
-		  project_id = ?, resource_id = ?, cooperation_type = ?, quote_amount = ?, currency = ?,
+		  project_id = ?, resource_id = ?, cooperation_type = ?, audience_segment = ?, creative_name = ?,
+		  quote_amount = ?, currency = ?,
 		  status = ?, deliverable_status = ?, impressions = ?, views = ?, clicks = ?,
 		  conversions = ?, engagement_count = ?, comments_count = ?, roi = ?, team_rating = ?,
-		  release_date = ?, deliverable_links = ?, notes = ?
+		  release_date = ?, deliverable_links = ?, final_link = ?, top_geographies = ?, publish_time = ?,
+		  tracking_link = ?, ad_authorization_code = ?, notes = ?
 		 where id = ?`,
 		intField(body, "projectId"), intField(body, "resourceId"), str(body, "cooperationType"),
+		str(body, "audienceSegment"), str(body, "creativeName"),
 		floatField(body, "quoteAmount"), defaultString(str(body, "currency"), "USD"),
 		defaultString(str(body, "status"), "邀约中"), defaultString(str(body, "deliverableStatus"), "未开始"),
 		intField(body, "impressions"), intField(body, "views"), intField(body, "clicks"),
 		intField(body, "conversions"), intField(body, "engagementCount"), intField(body, "commentsCount"),
 		floatField(body, "roi"), intField(body, "teamRating"), nullableDate(str(body, "releaseDate")),
-		str(body, "deliverableLinks"), str(body, "notes"), id,
+		str(body, "deliverableLinks"), str(body, "finalLink"), str(body, "topGeographies"),
+		nullableTime(str(body, "publishTime")), str(body, "trackingLink"), str(body, "adAuthorizationCode"),
+		str(body, "notes"), id,
 	)
 	if err != nil {
 		writeDBError(w, err)
@@ -3947,6 +3979,14 @@ func calcLevel(score int) string {
 }
 
 func nullableDate(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "<nil>" {
+		return nil
+	}
+	return value
+}
+
+func nullableTime(value string) any {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "<nil>" {
 		return nil

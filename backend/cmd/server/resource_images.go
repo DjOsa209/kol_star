@@ -21,6 +21,7 @@ import (
 
 const maxSyncedImageSize = 20 << 20
 const resourceImageDownloadAttempts = 3
+const resourceImageDownloadTimeout = 2 * time.Minute
 
 var resourceImageRoot = filepath.Join("uploads", "resource-images")
 var resourceImageKeyPattern = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
@@ -36,7 +37,9 @@ func localizeResourceImage(ctx context.Context, resourceID int, key, sourceURL s
 		return sourceURL
 	}
 
-	data, contentType, err := downloadResourceImage(ctx, sourceURL)
+	downloadCtx, cancel := resourceImageDownloadContext(ctx)
+	defer cancel()
+	data, contentType, err := downloadResourceImage(downloadCtx, sourceURL)
 	if err != nil {
 		log.Printf("download resource image failed resource=%d key=%s after %d attempts: %v", resourceID, key, resourceImageDownloadAttempts, err)
 		return sourceURL
@@ -100,6 +103,13 @@ func newResourceImageHTTPClient(proxyURL string) *http.Client {
 
 func configureResourceImageHTTPClient(proxyURL string) {
 	resourceImageHTTPClient.Store(newResourceImageHTTPClient(proxyURL))
+}
+
+func resourceImageDownloadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), resourceImageDownloadTimeout)
 }
 
 func downloadResourceImage(ctx context.Context, sourceURL string) ([]byte, string, error) {

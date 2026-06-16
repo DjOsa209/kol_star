@@ -66,6 +66,36 @@ func TestLocalizeResourceImageUsesStablePostPath(t *testing.T) {
 	}
 }
 
+func TestLocalizeResourceImageIgnoresCanceledParentContext(t *testing.T) {
+	previousRoot := resourceImageRoot
+	previousClient := resourceImageHTTPClient.Load()
+	resourceImageRoot = t.TempDir()
+	t.Cleanup(func() {
+		resourceImageRoot = previousRoot
+		resourceImageHTTPClient.Store(previousClient)
+	})
+
+	resourceImageHTTPClient.Store(&http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if err := req.Context().Err(); err != nil {
+			t.Fatalf("download request used canceled context: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(bytes.NewReader([]byte("image-after-cancel"))),
+		}, nil
+	})})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got := localizeResourceImage(ctx, 8, "avatar", "https://example.com/avatar")
+	if got != "/api/uploads/resource-images/8/avatar.png" {
+		t.Fatalf("unexpected image URL with canceled parent context: %q", got)
+	}
+}
+
 func TestLocalizeResourceImageRetriesTemporaryDownloadFailure(t *testing.T) {
 	previousRoot := resourceImageRoot
 	previousClient := resourceImageHTTPClient.Load()

@@ -100,6 +100,39 @@ export const updateProject = (data?: object) => {
   return http.request<Result>("post", "/business/projects/update", { data });
 };
 
+export const getProjectDetail = (params?: object) => {
+  return http.request<Result>("get", "/business/projects/detail", { params });
+};
+
+export const updateProjectStatus = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/status", { data });
+};
+
+export const renewProject = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/renew", { data });
+};
+
+export const updateProjectBudget = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/budget", { data });
+};
+
+export const reportProjectInfluencer = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/influencer-report", {
+    data
+  });
+};
+
+export const downloadProjectReport = (params?: object) => {
+  return http.request<Blob>(
+    "get",
+    "/business/projects/report/download",
+    { params, responseType: "blob" },
+    {
+      beforeResponseCallback: response => response.data
+    } as any
+  );
+};
+
 export const getCooperationList = (data?: object) => {
   return http.request<ResultTable>("post", "/business/cooperations", { data });
 };

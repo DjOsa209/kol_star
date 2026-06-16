@@ -52,6 +52,7 @@ const editingCooperationId = ref<number | null>(null);
 const total = ref(0);
 const currentPage = ref(1);
 const pageSize = ref(10);
+const sequenceSortOrder = ref<"asc" | "desc">("asc");
 const workbookSheets = ref<any[]>([]);
 const selectedSheets = ref<string[]>([]);
 const importFileName = ref("");
@@ -402,7 +403,8 @@ async function loadData() {
   const params = {
     ...search,
     currentPage: currentPage.value,
-    pageSize: pageSize.value
+    pageSize: pageSize.value,
+    sequenceSortOrder: sequenceSortOrder.value
   };
   const [resourceRes, cooperationRes, projectRes] = await Promise.all([
     getResourceList(params),
@@ -440,6 +442,16 @@ function formatDateTime(value: unknown) {
   const time = Number(value);
   if (!Number.isFinite(time)) return String(value);
   return new Date(time).toLocaleString("zh-CN");
+}
+
+function sequenceNumber(index: number) {
+  if (sequenceSortOrder.value === "desc") {
+    return Math.max(
+      total.value - (currentPage.value - 1) * pageSize.value - index,
+      0
+    );
+  }
+  return (currentPage.value - 1) * pageSize.value + index + 1;
 }
 
 function displayText(value: unknown, fallback = "-") {
@@ -638,6 +650,13 @@ function stopSyncPolling() {
 }
 
 function searchData() {
+  currentPage.value = 1;
+  loadData();
+}
+
+function toggleSequenceSort() {
+  sequenceSortOrder.value =
+    sequenceSortOrder.value === "asc" ? "desc" : "asc";
   currentPage.value = 1;
   loadData();
 }
@@ -1347,8 +1366,24 @@ onUnmounted(() => {
         </div>
       </template>
       <section v-loading="loading" class="compact-resource-list">
-        <div class="compact-list-head" aria-hidden="true">
-          <span>序号</span>
+        <div class="compact-list-head">
+          <span class="compact-index-head">
+            <button
+              type="button"
+              class="sequence-sort-button"
+              :aria-label="`序号${sequenceSortOrder === 'asc' ? '正序' : '倒序'}，点击切换排序`"
+              @click="toggleSequenceSort"
+            >
+              <span>序号</span>
+              <IconifyIconOnline
+                :icon="
+                  sequenceSortOrder === 'asc'
+                    ? 'ri:arrow-up-s-line'
+                    : 'ri:arrow-down-s-line'
+                "
+              />
+            </button>
+          </span>
           <span>资源身份</span>
           <span>基础表现</span>
           <span>合作数据</span>
@@ -1361,7 +1396,7 @@ onUnmounted(() => {
           class="compact-resource-row"
         >
           <span class="compact-index">
-            {{ (currentPage - 1) * pageSize + index + 1 }}
+            {{ sequenceNumber(index) }}
           </span>
           <div class="compact-identity">
             <span class="avatar-box compact-avatar">
@@ -3185,6 +3220,33 @@ onUnmounted(() => {
 .compact-list-head span:first-child,
 .compact-list-head span:last-child {
   text-align: center;
+}
+
+.compact-index-head {
+  display: flex;
+  justify-content: center;
+}
+
+.sequence-sort-button {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 24px;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.sequence-sort-button:hover {
+  color: var(--el-color-primary);
+  background: #eef6ff;
 }
 
 .compact-resource-row {
