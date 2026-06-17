@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -215,9 +214,10 @@ func (a *app) runBusinessResourcesSyncAll(jobID int, selectedPlatforms map[strin
 		a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, "同步中")
 		err = a.syncResourceByPlatform(ctx, resource)
 		if err != nil {
+			errMessage := redactSensitiveText(err.Error())
 			failedCount++
-			a.markResourceSyncFailed(ctx, resource.ID, err.Error())
-			a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, err.Error())
+			a.markResourceSyncFailed(ctx, resource.ID, errMessage)
+			a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, errMessage)
 			continue
 		}
 		successCount++
@@ -241,6 +241,69 @@ func (a *app) platformSyncJobIsRunning(ctx context.Context, jobID int) (bool, er
 		jobID,
 	).Scan(&running)
 	return running > 0, err
+}
+
+func (a *app) syncableResourceByID(ctx context.Context, id int) (syncResourceRow, error) {
+	var resource syncResourceRow
+	err := a.DB().QueryRowContext(ctx,
+		`select id, name, platform, platform_url, platform_user_id, platform_handle
+		   from biz_resources
+		  where id = ?
+		    and lower(trim(platform)) in ('youtube', 'instagram', 'ins', 'tiktok')
+		  limit 1`,
+		id,
+	).Scan(&resource.ID, &resource.Name, &resource.Platform, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle)
+	return resource, err
+}
+
+func (a *app) runBusinessResourceSyncOne(jobID int, resource syncResourceRow) {
+	ctx := context.Background()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("任务异常：%v", recovered))
+		}
+	}()
+	running, err := a.platformSyncJobIsRunning(ctx, jobID)
+	if err != nil {
+		a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("检查任务状态失败：%v", err))
+		return
+	}
+	if !running {
+		return
+	}
+	a.updatePlatformSyncJobProgress(ctx, jobID, resource, 0, 0, 0, "同步中")
+	if err := a.syncResourceByPlatform(ctx, resource); err != nil {
+		errMessage := redactSensitiveText(err.Error())
+		a.markResourceSyncFailed(ctx, resource.ID, errMessage)
+		a.updatePlatformSyncJobProgress(ctx, jobID, resource, 0, 1, 0, errMessage)
+		a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("%s 同步失败：%s", resource.Name, errMessage))
+		return
+	}
+	a.updatePlatformSyncJobProgress(ctx, jobID, resource, 1, 0, 0, "同步成功")
+	a.finishPlatformSyncJob(ctx, jobID, "成功", fmt.Sprintf("%s 同步成功", resource.Name))
+}
+
+func (a *app) platformSyncJob(ctx context.Context, jobID int) (map[string]any, error) {
+	rows, err := a.queryMaps(ctx,
+		`select id, job_type as jobType, status, total_count as totalCount,
+		        success_count as successCount, failed_count as failedCount,
+		        skipped_count as skippedCount, current_resource_id as currentResourceId,
+		        current_resource_name as currentResourceName, message,
+		        cast(unix_timestamp(started_at) * 1000 as unsigned) as startedAt,
+		        cast(unix_timestamp(finished_at) * 1000 as unsigned) as finishedAt,
+		        cast(unix_timestamp(updated_at) * 1000 as unsigned) as updatedAt
+		   from biz_platform_sync_jobs
+		  where id = ?
+		  limit 1`,
+		jobID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return rows[0], nil
 }
 
 func selectedSyncPlatforms(body map[string]any) (map[string]bool, error) {
@@ -299,7 +362,7 @@ func (a *app) syncableResources(ctx context.Context) ([]syncResourceRow, error) 
 	rows, err := a.DB().QueryContext(ctx,
 		`select id, name, platform, platform_url, platform_user_id, platform_handle
 		   from biz_resources
-		  where lower(platform) in ('youtube', 'instagram', 'ins', 'tiktok')
+		  where lower(trim(platform)) in ('youtube', 'instagram', 'ins', 'tiktok')
 		  order by id asc`,
 	)
 	if err != nil {

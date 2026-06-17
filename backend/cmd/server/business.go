@@ -696,6 +696,10 @@ func (a *app) syncBusinessResource(w http.ResponseWriter, r *http.Request) {
 	}
 	resource, err := a.syncableResourceByID(r.Context(), id)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusOK, 10002, "资源不存在或当前平台暂不支持同步")
+			return
+		}
 		writeDBError(w, err)
 		return
 	}
@@ -2202,7 +2206,7 @@ func recentPostCounts(posts []platformPost, now time.Time) (int, int) {
 func (a *app) markResourceSyncFailed(ctx context.Context, id int, message string) {
 	_, _ = a.DB().ExecContext(ctx,
 		`update biz_resources set last_sync_status = '失败', last_sync_error = ?, last_sync_at = now() where id = ?`,
-		message, id,
+		redactSensitiveText(message), id,
 	)
 }
 

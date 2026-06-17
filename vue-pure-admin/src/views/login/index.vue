@@ -10,17 +10,12 @@ import { useNav } from "@/layout/hooks/useNav";
 import { useEventListener } from "@vueuse/core";
 import type { FormInstance } from "element-plus";
 import { $t, transformI18n } from "@/plugins/i18n";
-import { operates, thirdParty } from "./utils/enums";
 import { useLayout } from "@/layout/hooks/useLayout";
-import LoginPhone from "./components/LoginPhone.vue";
-import LoginRegist from "./components/LoginRegist.vue";
-import LoginUpdate from "./components/LoginUpdate.vue";
-import LoginQrCode from "./components/LoginQrCode.vue";
 import { useUserStoreHook } from "@/store/modules/user";
 import { initRouter, getTopMenu } from "@/router/utils";
 import { bg, avatar, illustration } from "./utils/static";
 import { ReImageVerify } from "@/components/ReImageVerify";
-import { ref, toRaw, reactive, watch, computed } from "vue";
+import { ref, toRaw, reactive, watch } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { useTranslationLang } from "@/layout/hooks/useTranslationLang";
 import { useDataThemeChange } from "@/layout/hooks/useDataThemeChange";
@@ -45,9 +40,6 @@ const loading = ref(false);
 const checked = ref(false);
 const disabled = ref(false);
 const ruleFormRef = ref<FormInstance>();
-const currentPage = computed(() => {
-  return useUserStoreHook().currentPage;
-});
 
 const { t } = useI18n();
 const { initStorage } = useLayout();
@@ -186,7 +178,6 @@ watch(loginDay, value => {
           </Motion>
 
           <el-form
-            v-if="currentPage === 0"
             ref="ruleFormRef"
             :model="ruleForm"
             :rules="loginRules"
@@ -269,13 +260,6 @@ watch(loginDay, value => {
                       />
                     </span>
                   </el-checkbox>
-                  <el-button
-                    link
-                    type="primary"
-                    @click="useUserStoreHook().SET_CURRENTPAGE(4)"
-                  >
-                    {{ t("login.pureForget") }}
-                  </el-button>
                 </div>
                 <el-button
                   class="w-full mt-4!"
@@ -289,54 +273,7 @@ watch(loginDay, value => {
                 </el-button>
               </el-form-item>
             </Motion>
-
-            <Motion :delay="300">
-              <el-form-item>
-                <div class="w-full h-5 flex-bc">
-                  <el-button
-                    v-for="(item, index) in operates"
-                    :key="index"
-                    class="w-full mt-4!"
-                    size="default"
-                    @click="useUserStoreHook().SET_CURRENTPAGE(index + 1)"
-                  >
-                    {{ t(item.title) }}
-                  </el-button>
-                </div>
-              </el-form-item>
-            </Motion>
           </el-form>
-
-          <Motion v-if="currentPage === 0" :delay="350">
-            <el-form-item>
-              <el-divider>
-                <p class="text-gray-500 text-xs">
-                  {{ t("login.pureThirdLogin") }}
-                </p>
-              </el-divider>
-              <div class="w-full flex justify-evenly">
-                <span
-                  v-for="(item, index) in thirdParty"
-                  :key="index"
-                  :title="t(item.title)"
-                >
-                  <IconifyIconOnline
-                    :icon="`ri:${item.icon}-fill`"
-                    width="20"
-                    class="cursor-pointer text-gray-500 hover:text-blue-400"
-                  />
-                </span>
-              </div>
-            </el-form-item>
-          </Motion>
-          <!-- 手机号登录 -->
-          <LoginPhone v-if="currentPage === 1" />
-          <!-- 二维码登录 -->
-          <LoginQrCode v-if="currentPage === 2" />
-          <!-- 注册 -->
-          <LoginRegist v-if="currentPage === 3" />
-          <!-- 忘记密码 -->
-          <LoginUpdate v-if="currentPage === 4" />
         </div>
       </div>
     </div>

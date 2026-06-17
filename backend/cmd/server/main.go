@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -10,13 +11,16 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -39,6 +43,8 @@ type tableData struct {
 	CurrentPage int `json:"currentPage"`
 }
 
+var sensitiveQueryParamPattern = regexp.MustCompile(`(?i)([?&](?:key|api_key|access_token|refresh_token|token|tikhub_api_key)=)[^&\s"]+`)
+
 func main() {
 	cfg, watcher, err := loadConfig()
 	if err != nil {
@@ -50,6 +56,9 @@ func main() {
 		log.Fatalf("open mysql: %v", err)
 	}
 	defer db.Close()
+	if err := ensureSecurityLogTables(context.Background(), db); err != nil {
+		log.Fatalf("ensure security log tables: %v", err)
+	}
 
 	a := newApp(db, cfg)
 	if interrupted, err := a.interruptStalePlatformSyncJobs(context.Background()); err != nil {
@@ -69,7 +78,7 @@ func main() {
 	a.routes(mux)
 
 	log.Printf("kol-admin backend listening on %s", cfg.Server.Addr)
-	if err := http.ListenAndServe(cfg.Server.Addr, a.withCORS(mux)); err != nil {
+	if err := http.ListenAndServe(cfg.Server.Addr, a.withRequestLogging(a.withCORS(mux))); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -90,11 +99,68 @@ func (a *app) Config() Config {
 	return a.config.Load().(Config)
 }
 
+func ensureSecurityLogTables(ctx context.Context, db *sql.DB) error {
+	statements := []string{
+		`create table if not exists sys_login_logs (
+		  id bigint primary key auto_increment,
+		  username varchar(64) not null,
+		  ip varchar(64) not null default '',
+		  address varchar(128) not null default '',
+		  ` + "`system`" + ` varchar(64) not null default '',
+		  browser varchar(64) not null default '',
+		  status tinyint not null default 1,
+		  behavior varchar(64) not null default '',
+		  login_time datetime not null default current_timestamp
+		)`,
+		`create table if not exists sys_operation_logs (
+		  id bigint primary key auto_increment,
+		  username varchar(64) not null,
+		  module varchar(64) not null default '',
+		  summary varchar(255) not null default '',
+		  method varchar(16) not null default '',
+		  ip varchar(64) not null default '',
+		  address varchar(128) not null default '',
+		  ` + "`system`" + ` varchar(64) not null default '',
+		  browser varchar(64) not null default '',
+		  operation_time datetime not null default current_timestamp
+		)`,
+		`create table if not exists sys_system_logs (
+		  id bigint primary key auto_increment,
+		  module varchar(64) not null default '',
+		  url varchar(255) not null default '',
+		  method varchar(16) not null default '',
+		  ip varchar(64) not null default '',
+		  address varchar(128) not null default '',
+		  ` + "`system`" + ` varchar(64) not null default '',
+		  browser varchar(64) not null default '',
+		  takes_time int not null default 0,
+		  request_body text null,
+		  response_body text null,
+		  request_time datetime not null default current_timestamp
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	for _, table := range []string{"sys_login_logs", "sys_operation_logs", "sys_system_logs"} {
+		if _, err := db.ExecContext(ctx, "alter table "+table+" convert to character set utf8mb4 collate utf8mb4_unicode_ci"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *app) reloadConfig(next Config) error {
 	current := a.Config()
 	if next.MySQL != current.MySQL {
 		db, err := openDB(next.MySQL)
 		if err != nil {
+			return err
+		}
+		if err := ensureSecurityLogTables(context.Background(), db); err != nil {
+			_ = db.Close()
 			return err
 		}
 		old := a.DB()
@@ -117,6 +183,8 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /refresh-token", a.refreshToken)
 	mux.HandleFunc("GET /mine", a.mine)
+	mux.HandleFunc("POST /mine-logs", a.mineLogs)
+	mux.HandleFunc("POST /mine/password", a.changeMinePassword)
 	mux.HandleFunc("POST /upload/images", a.uploadImage)
 	mux.HandleFunc("GET /get-async-routes", a.asyncRoutes)
 	mux.HandleFunc("POST /user", a.requireMenu("/system/user/index", a.users))
@@ -222,6 +290,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	).Scan(&user.ID, &user.Avatar, &user.Username, &user.Nickname, &user.PasswordHash, &user.Status)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			a.recordLoginLog(r, username, 0, "登录失败")
 			writeError(w, http.StatusOK, 10002, "用户名或密码错误")
 			return
 		}
@@ -229,6 +298,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user.Status != 1 || user.PasswordHash != sha256Hex(password) {
+		a.recordLoginLog(r, user.Username, 0, "登录失败")
 		writeError(w, http.StatusOK, 10002, "用户名或密码错误")
 		return
 	}
@@ -258,6 +328,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		"refreshToken": fmt.Sprintf("kol.%d.refresh.%d", user.ID, now.Unix()),
 		"expires":      now.Add(2 * time.Hour).Format("2006/01/02 15:04:05"),
 	}
+	a.recordLoginLog(r, user.Username, 1, "登录系统")
 	writeOK(w, data)
 }
 
@@ -404,6 +475,117 @@ func (a *app) mine(w http.ResponseWriter, r *http.Request) {
 		"phone":       user.Phone,
 		"description": user.Remark,
 	})
+}
+
+func (a *app) mineLogs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "未登录或登录已过期")
+		return
+	}
+	username, err := a.usernameByID(r.Context(), userID)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	body := readBody(r)
+	pageSize := intField(body, "pageSize")
+	currentPage := intField(body, "currentPage")
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	if currentPage <= 0 {
+		currentPage = 1
+	}
+	offset := (currentPage - 1) * pageSize
+
+	var total int
+	if err := a.DB().QueryRowContext(r.Context(),
+		`select count(*) from sys_login_logs where username = ?`,
+		username,
+	).Scan(&total); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	rows, err := a.queryMaps(r.Context(),
+		`select id,
+		        behavior as summary,
+		        ip,
+		        address,
+		        sys_login_logs.system,
+		        browser,
+		        status,
+		        cast(unix_timestamp(login_time) * 1000 as unsigned) as operatingTime
+		   from sys_login_logs
+		  where username = ?
+		  order by id desc
+		  limit ? offset ?`,
+		username, pageSize, offset,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if rows == nil {
+		rows = []map[string]any{}
+	}
+	writeOK(w, tableData{List: rows, Total: total, PageSize: pageSize, CurrentPage: currentPage})
+}
+
+func (a *app) changeMinePassword(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "未登录或登录已过期")
+		return
+	}
+	body := readBody(r)
+	oldPassword := stringField(body, "oldPassword")
+	newPassword := stringField(body, "newPassword")
+	confirmPassword := stringField(body, "confirmPassword")
+	if oldPassword == "" || newPassword == "" || confirmPassword == "" {
+		writeError(w, http.StatusOK, 10001, "当前密码、新密码和确认密码不能为空")
+		return
+	}
+	if newPassword != confirmPassword {
+		writeError(w, http.StatusOK, 10002, "两次输入的新密码不一致")
+		return
+	}
+	if oldPassword == newPassword {
+		writeError(w, http.StatusOK, 10003, "新密码不能与当前密码相同")
+		return
+	}
+	if !validPassword(newPassword) {
+		writeError(w, http.StatusOK, 10004, "密码格式应为8-18位数字、字母、符号的任意两种组合")
+		return
+	}
+
+	var passwordHash string
+	err := a.DB().QueryRowContext(r.Context(),
+		`select password_hash from sys_users where id = ? limit 1`,
+		userID,
+	).Scan(&passwordHash)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if passwordHash != sha256Hex(oldPassword) {
+		writeError(w, http.StatusOK, 10005, "当前密码不正确")
+		return
+	}
+	if _, err := a.DB().ExecContext(r.Context(),
+		`update sys_users set password_hash = ? where id = ?`,
+		sha256Hex(newPassword), userID,
+	); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if username, err := a.usernameByID(r.Context(), userID); err == nil {
+		a.recordLoginLog(r, username, 1, "修改密码")
+	}
+	writeOK(w, map[string]any{"updated": true})
 }
 
 func (a *app) asyncRoutes(w http.ResponseWriter, r *http.Request) {
@@ -934,6 +1116,260 @@ func (a *app) hasMenu(ctx context.Context, userID int, path string) (bool, error
 	return count > 0, err
 }
 
+func (a *app) usernameByID(ctx context.Context, userID int) (string, error) {
+	var username string
+	err := a.DB().QueryRowContext(ctx,
+		`select username from sys_users where id = ? limit 1`,
+		userID,
+	).Scan(&username)
+	return username, err
+}
+
+func (a *app) recordLoginLog(r *http.Request, username string, status int, behavior string) {
+	ip, address, systemName, browser := requestSecurityInfo(r)
+	if _, err := a.DB().ExecContext(r.Context(),
+		`insert into sys_login_logs
+		  (username, ip, address, `+"`system`"+`, browser, status, behavior)
+		 values (?, ?, ?, ?, ?, ?, ?)`,
+		username, ip, address, systemName, browser, status, behavior,
+	); err != nil {
+		log.Printf("record login log failed: %v", err)
+	}
+}
+
+func requestSecurityInfo(r *http.Request) (ip, address, systemName, browser string) {
+	ip = clientIP(r)
+	address = "未知"
+	if ip == "127.0.0.1" || ip == "::1" || ip == "localhost" {
+		address = "本机"
+	}
+	userAgent := r.UserAgent()
+	systemName = detectSystem(userAgent)
+	browser = detectBrowser(userAgent)
+	return ip, address, systemName, browser
+}
+
+func clientIP(r *http.Request) string {
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
+		value := strings.TrimSpace(r.Header.Get(header))
+		if value == "" {
+			continue
+		}
+		if comma := strings.Index(value, ","); comma >= 0 {
+			value = strings.TrimSpace(value[:comma])
+		}
+		if value != "" {
+			return value
+		}
+	}
+	host := r.RemoteAddr
+	if value, _, err := net.SplitHostPort(host); err == nil {
+		host = value
+	}
+	return strings.TrimSpace(host)
+}
+
+func detectSystem(userAgent string) string {
+	ua := strings.ToLower(userAgent)
+	switch {
+	case strings.Contains(ua, "windows"):
+		return "Windows"
+	case strings.Contains(ua, "mac os") || strings.Contains(ua, "macintosh"):
+		return "macOS"
+	case strings.Contains(ua, "iphone") || strings.Contains(ua, "ipad"):
+		return "iOS"
+	case strings.Contains(ua, "android"):
+		return "Android"
+	case strings.Contains(ua, "linux"):
+		return "Linux"
+	default:
+		return "未知"
+	}
+}
+
+func detectBrowser(userAgent string) string {
+	ua := strings.ToLower(userAgent)
+	switch {
+	case strings.Contains(ua, "edg/"):
+		return "Edge"
+	case strings.Contains(ua, "opr/") || strings.Contains(ua, "opera"):
+		return "Opera"
+	case strings.Contains(ua, "firefox/"):
+		return "Firefox"
+	case strings.Contains(ua, "chrome/") || strings.Contains(ua, "chromium/"):
+		return "Chrome"
+	case strings.Contains(ua, "safari/"):
+		return "Safari"
+	default:
+		return "未知"
+	}
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (w *loggingResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *loggingResponseWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if w.body.Len() < 4000 {
+		remaining := 4000 - w.body.Len()
+		if len(data) > remaining {
+			w.body.Write(validUTF8Prefix(data, remaining))
+		} else {
+			w.body.Write(data)
+		}
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+func (a *app) withRequestLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			next.ServeHTTP(w, r)
+			return
+		}
+		startedAt := time.Now()
+		requestBody := captureRequestBody(r)
+		recorder := &loggingResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+		if recorder.status == 0 {
+			recorder.status = http.StatusOK
+		}
+		a.recordPostRequestLog(r, requestBody, recorder.body.String(), time.Since(startedAt), recorder.status)
+	})
+}
+
+func captureRequestBody(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if strings.Contains(contentType, "multipart/form-data") {
+		return "[multipart form data omitted]"
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err != nil {
+		return "[request body read failed: " + err.Error() + "]"
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) == 64<<10 {
+		return truncateLogText(string(body), 64<<10) + "...[truncated]"
+	}
+	return strings.ToValidUTF8(string(body), "")
+}
+
+func (a *app) recordPostRequestLog(r *http.Request, requestBody, responseBody string, duration time.Duration, status int) {
+	ip, address, systemName, browser := requestSecurityInfo(r)
+	username := a.requestUsername(r, requestBody)
+	module, summary := requestLogLabels(r.URL.Path, status, responseBody)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := a.DB().ExecContext(ctx,
+		`insert into sys_system_logs
+		  (module, url, method, ip, address, `+"`system`"+`, browser, takes_time, request_body, response_body)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		module, r.URL.Path, r.Method, ip, address, systemName, browser, duration.Milliseconds(), truncateLogText(requestBody, 8000), truncateLogText(responseBody, 8000),
+	); err != nil {
+		log.Printf("record system log failed: %v", err)
+	}
+	if _, err := a.DB().ExecContext(ctx,
+		`insert into sys_operation_logs
+		  (username, module, summary, method, ip, address, `+"`system`"+`, browser)
+		 values (?, ?, ?, ?, ?, ?, ?, ?)`,
+		username, module, summary, r.Method, ip, address, systemName, browser,
+	); err != nil {
+		log.Printf("record operation log failed: %v", err)
+	}
+}
+
+func (a *app) requestUsername(r *http.Request, requestBody string) string {
+	if userID, ok := a.currentUserID(r); ok {
+		if username, err := a.usernameByID(r.Context(), userID); err == nil && username != "" {
+			return username
+		}
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(requestBody), &body); err == nil {
+		if username := stringField(body, "username"); username != "" && username != "<nil>" {
+			return username
+		}
+	}
+	return "anonymous"
+}
+
+func requestLogLabels(path string, status int, responseBody string) (string, string) {
+	module := "接口请求"
+	switch {
+	case strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/refresh-token"):
+		module = "认证"
+	case strings.HasPrefix(path, "/mine"):
+		module = "账户设置"
+	case strings.HasPrefix(path, "/user") || strings.HasPrefix(path, "/role") || strings.HasPrefix(path, "/menu") || strings.HasPrefix(path, "/dept"):
+		module = "系统管理"
+	case strings.HasPrefix(path, "/business"):
+		module = "业务管理"
+	case strings.HasPrefix(path, "/collector"):
+		module = "采集回调"
+	case strings.HasPrefix(path, "/upload"):
+		module = "文件上传"
+	}
+	result := "成功"
+	if status >= 400 || !apiResponseOK(responseBody) {
+		result = "失败"
+	}
+	return module, fmt.Sprintf("%s %s %s", result, http.MethodPost, path)
+}
+
+func apiResponseOK(responseBody string) bool {
+	var body struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(responseBody), &body); err != nil {
+		return true
+	}
+	return body.Code == 0
+}
+
+func truncateLogText(value string, limit int) string {
+	value = redactSensitiveText(value)
+	value = strings.ToValidUTF8(value, "")
+	if len(value) <= limit {
+		return value
+	}
+	return string(validUTF8Prefix([]byte(value), limit)) + "...[truncated]"
+}
+
+func validUTF8Prefix(data []byte, limit int) []byte {
+	if limit <= 0 {
+		return nil
+	}
+	if len(data) <= limit {
+		if utf8.Valid(data) {
+			return data
+		}
+		return []byte(strings.ToValidUTF8(string(data), ""))
+	}
+	limit = min(limit, len(data))
+	for limit > 0 && !utf8.Valid(data[:limit]) {
+		limit--
+	}
+	return data[:limit]
+}
+
+func redactSensitiveText(value string) string {
+	return sensitiveQueryParamPattern.ReplaceAllString(value, "${1}[REDACTED]")
+}
+
 func (a *app) queryMaps(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
 	rows, err := a.DB().QueryContext(ctx, query, args...)
 	if err != nil {
@@ -1110,6 +1546,37 @@ func intSliceField(body map[string]any, key string) []int {
 func sha256Hex(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func validPassword(value string) bool {
+	if len(value) < 8 || len(value) > 18 {
+		return false
+	}
+	hasLower := false
+	hasUpper := false
+	hasDigit := false
+	hasSymbol := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r >= 33 && r <= 126:
+			hasSymbol = true
+		default:
+			return false
+		}
+	}
+	categories := 0
+	for _, ok := range []bool{hasLower, hasUpper, hasDigit, hasSymbol} {
+		if ok {
+			categories++
+		}
+	}
+	return categories >= 2
 }
 
 func contains(values []string, target string) bool {

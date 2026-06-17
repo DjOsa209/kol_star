@@ -638,9 +638,16 @@ function startSyncPolling() {
     if (!syncRunning.value) {
       stopSyncPolling();
       syncingAll.value = false;
+      clearSyncingResourceIds();
       loadData();
     }
   }, 3000);
+}
+
+function clearSyncingResourceIds() {
+  Object.keys(syncingResourceIds).forEach(id => {
+    syncingResourceIds[Number(id)] = false;
+  });
 }
 
 function stopSyncPolling() {
@@ -655,8 +662,7 @@ function searchData() {
 }
 
 function toggleSequenceSort() {
-  sequenceSortOrder.value =
-    sequenceSortOrder.value === "asc" ? "desc" : "asc";
+  sequenceSortOrder.value = sequenceSortOrder.value === "asc" ? "desc" : "asc";
   currentPage.value = 1;
   loadData();
 }
@@ -935,20 +941,25 @@ async function syncOne(row: any) {
   try {
     const res = await syncResource({ id });
     if (res.code === 0) {
-      const warnings = Array.isArray(res.data?.warnings)
-        ? res.data.warnings.filter(Boolean)
-        : [];
-      if (warnings.length > 0) {
-        ElMessage.warning(`同步完成，${warnings.join("；")}`);
+      showSyncCard.value = true;
+      if (res.data?.started === false) {
+        ElMessage.warning(res.data?.message || "已有同步任务正在运行");
+        syncingResourceIds[id] = false;
       } else {
-        ElMessage.success("同步成功");
+        ElMessage.success(res.data?.message || "单个资源同步任务已启动");
       }
-      await Promise.all([loadData(), loadSyncStatus()]);
+      await loadSyncStatus(true);
+      if (!syncRunning.value) {
+        syncingResourceIds[id] = false;
+        await loadData();
+      }
     } else {
       ElMessage.warning(res.message || "同步失败");
       await loadData();
+      syncingResourceIds[id] = false;
     }
-  } finally {
+  } catch (error) {
+    ElMessage.warning("启动同步失败");
     syncingResourceIds[id] = false;
   }
 }

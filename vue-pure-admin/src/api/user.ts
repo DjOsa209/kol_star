@@ -72,6 +72,12 @@ type ResultTable = {
   };
 };
 
+type Result = {
+  code: number;
+  message: string;
+  data?: any;
+};
+
 /** 登录 */
 export const getLogin = (data?: object) => {
   return http.request<UserResult>("post", "/login", { data });
@@ -87,7 +93,12 @@ export const getMine = (data?: object) => {
   return http.request<UserInfoResult>("get", "/mine", { data });
 };
 
+/** 账户设置-修改密码 */
+export const updateMinePassword = (data?: object) => {
+  return http.request<Result>("post", "/mine/password", { data });
+};
+
 /** 账户设置-个人安全日志 */
 export const getMineLogs = (data?: object) => {
-  return http.request<ResultTable>("get", "/mine-logs", { data });
+  return http.request<ResultTable>("post", "/mine-logs", { data });
 };

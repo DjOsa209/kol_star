@@ -45,6 +45,12 @@ const columns: TableColumnList = [
     minWidth: 100
   },
   {
+    label: "状态",
+    prop: "status",
+    minWidth: 80,
+    formatter: ({ status }) => (Number(status) === 1 ? "成功" : "失败")
+  },
+  {
     label: "时间",
     prop: "operatingTime",
     minWidth: 180,
@@ -55,7 +61,10 @@ const columns: TableColumnList = [
 
 async function onSearch() {
   loading.value = true;
-  const { code, data } = await getMineLogs();
+  const { code, data } = await getMineLogs({
+    pageSize: pagination.pageSize,
+    currentPage: pagination.currentPage
+  });
   if (code === 0) {
     dataList.value = data.list;
     pagination.total = data.total;
@@ -66,6 +75,17 @@ async function onSearch() {
   setTimeout(() => {
     loading.value = false;
   }, 200);
+}
+
+function handleSizeChange(value: number) {
+  pagination.pageSize = value;
+  pagination.currentPage = 1;
+  onSearch();
+}
+
+function handleCurrentChange(value: number) {
+  pagination.currentPage = value;
+  onSearch();
 }
 
 onMounted(() => {
@@ -83,6 +103,8 @@ onMounted(() => {
       :data="dataList"
       :columns="columns"
       :pagination="pagination"
+      @page-size-change="handleSizeChange"
+      @page-current-change="handleCurrentChange"
     />
   </div>
 </template>
