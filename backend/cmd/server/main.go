@@ -259,6 +259,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/ai-model/test", a.requireMenu("/business/ai-model", a.testBusinessAIModelConfig))
 	mux.HandleFunc("GET /business/governance", a.requireMenu("/business/governance", a.businessGovernanceRules))
 	mux.HandleFunc("POST /business/governance/save", a.requireMenu("/business/governance", a.saveBusinessGovernanceRule))
+	mux.Handle("/api/", http.StripPrefix("/api", mux))
 }
 
 func (a *app) health(w http.ResponseWriter, r *http.Request) {
