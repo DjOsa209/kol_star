@@ -52,24 +52,24 @@ const getMainWidth = computed(() => {
 
 const getSectionStyle = computed(() => {
   return [
-    hideTabs.value && layout ? "padding-top: 48px;" : "",
+    hideTabs.value && layout ? "padding-top: 44px;" : "",
     !hideTabs.value && layout
       ? tagsStyle.value == "chrome"
-        ? "padding-top: 85px;"
-        : "padding-top: 81px;"
+        ? "padding-top: 81px;"
+        : "padding-top: 77px;"
       : "",
-    hideTabs.value && !layout.value ? "padding-top: 48px;" : "",
+    hideTabs.value && !layout.value ? "padding-top: 44px;" : "",
     !hideTabs.value && !layout.value
       ? tagsStyle.value == "chrome"
-        ? "padding-top: 85px;"
-        : "padding-top: 81px;"
+        ? "padding-top: 81px;"
+        : "padding-top: 77px;"
       : "",
     props.fixedHeader
       ? ""
       : `padding-top: 0;${
           hideTabs.value
-            ? "min-height: calc(100vh - 48px);"
-            : "min-height: calc(100vh - 86px);"
+            ? "min-height: calc(100vh - 44px);"
+            : "min-height: calc(100vh - 82px);"
         }`
   ];
 });
@@ -210,6 +210,6 @@ const transitionMain = defineComponent({
 }
 
 .main-content {
-  margin: 24px;
+  margin: 16px;
 }
 </style>

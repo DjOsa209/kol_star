@@ -24,6 +24,105 @@
   --pure-theme-sidebar-logo: none;
   --pure-theme-menu-title-hover: initial;
   --pure-theme-menu-active-before: transparent;
+
+  /* 全站紧凑密度：优先减少空白，不牺牲可读性与触控目标。 */
+  --el-font-size-base: 13px;
+  --el-component-size: 32px;
+  --el-component-size-small: 28px;
+  --el-component-size-large: 36px;
+}
+
+/* Common workspace density */
+.el-card__header {
+  padding: 12px 14px;
+}
+
+.el-card__body {
+  padding: 14px;
+}
+
+.el-form-item {
+  margin-bottom: 14px;
+}
+
+.el-form--inline .el-form-item {
+  margin-right: 12px;
+  margin-bottom: 10px;
+}
+
+.el-table th.el-table__cell,
+.el-table td.el-table__cell {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.el-table th.el-table__cell {
+  font-size: 13px;
+}
+
+.el-tabs__header {
+  margin-bottom: 12px;
+}
+
+.el-tabs__item {
+  height: 34px;
+  line-height: 34px;
+}
+
+.el-dialog__header {
+  padding: 16px 18px 10px;
+}
+
+.el-dialog__body {
+  padding: 14px 18px;
+}
+
+.el-dialog__footer {
+  padding: 10px 18px 16px;
+}
+
+.el-descriptions__body .el-descriptions__table .el-descriptions__cell {
+  padding: 8px 10px;
+}
+
+/* Vertical navigation shares the same compact cadence. */
+.sidebar-container {
+  .el-menu-item,
+  .el-sub-menu__title,
+  .el-menu-item div,
+  .el-menu-item span,
+  .el-sub-menu__title div,
+  .el-sub-menu__title span {
+    height: 44px;
+    line-height: 44px;
+  }
+}
+
+/* Admin pages use title bars, not oversized explanatory hero cards. */
+.page-hero {
+  display: flex !important;
+  gap: 12px !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 0 14px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+
+  > div > span,
+  > div > p {
+    display: none !important;
+  }
+
+  h1 {
+    margin: 0 !important;
+    font-size: 20px !important;
+    line-height: 1.35 !important;
+    letter-spacing: -0.02em;
+  }
 }
 
 /* 灰色模式 */

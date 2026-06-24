@@ -7,3 +7,5 @@
 .mysql-run/
 .mysql-undo/
 backend/config.yaml
+backend/uploads/resource-images/*
+!backend/uploads/resource-images/.gitkeep

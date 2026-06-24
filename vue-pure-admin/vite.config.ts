@@ -30,6 +30,7 @@ export default async ({ mode }: ConfigEnv): Promise<UserConfigExport> => {
       // 端口号
       port: VITE_PORT,
       host: "0.0.0.0",
+      allowedHosts: ["xmp.transsion.com"],
       // 本地跨域代理 https://cn.vitejs.dev/config/server-options.html#server-proxy
       proxy:
         VITE_API_BASE_URL && VITE_API_PROXY_TARGET

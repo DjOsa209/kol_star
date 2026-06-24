@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import echarts from "@/plugins/echarts";
+import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import {
   downloadProjectReport,
   getProjectDetail,
@@ -19,6 +20,7 @@ defineOptions({ name: "BusinessProjectDetail" });
 type SectionKey = "collaboration" | "report" | "budget" | "campaignInfo";
 type ReportScope = "campaign" | "influencer";
 type ReportMetric = "views" | "clicks" | "cpm" | "cpc";
+type CampaignTab = "overview" | "creators" | "content";
 
 const route = useRoute();
 const router = useRouter();
@@ -27,8 +29,10 @@ const project = ref<any>(null);
 const stats = ref<any>({});
 const budget = ref<any>({});
 const cooperations = ref<any[]>([]);
+const projectResources = ref<any[]>([]);
 const deliverables = ref<any[]>([]);
 const billingEvents = ref<any[]>([]);
+const contentPosts = ref<any[]>([]);
 const reportSummary = ref<any>({});
 const loading = ref(false);
 const selectedProjectId = ref<number | null>(Number(route.query.id || 0) || null);
@@ -42,6 +46,10 @@ const reportAudience = ref("all");
 const reportPlatform = ref("all");
 const reportCreative = ref("all");
 const detailTab = ref("content");
+const campaignTab = ref<CampaignTab>("overview");
+const creatorSearch = ref("");
+const contentSearch = ref("");
+const contentPlatform = ref("all");
 const chartRef = ref<HTMLDivElement>();
 let reportChart: ReturnType<typeof echarts.init> | undefined;
 
@@ -145,6 +153,106 @@ const currentDeliverables = computed(() =>
   )
 );
 
+const projectContentPosts = computed(() => {
+  const seenLinks = new Set<string>();
+  const posts = contentPosts.value.filter(post => {
+    const link = String(post.postUrl || "").trim().toLowerCase();
+    if (!link || seenLinks.has(link)) return !link;
+    seenLinks.add(link);
+    return true;
+  });
+  const importedPosts = cooperations.value.flatMap(item => {
+    const postUrl = String(item.finalLink || item.deliverableLinks || "").trim();
+    if (!postUrl || seenLinks.has(postUrl.toLowerCase())) return [];
+    seenLinks.add(postUrl.toLowerCase());
+    return [{
+      id: `cooperation-${item.id}`,
+      resourceId: item.resourceId,
+      resourceName: item.resourceName,
+      resourceAvatarUrl: item.resourceAvatarUrl,
+      platformHandle: item.platformHandle,
+      platform: item.platform || "Website",
+      title: item.creativeName || item.cooperationType || "已导入发布内容",
+      description: item.notes,
+      postUrl,
+      mediaType: "imported",
+      publishedAt: item.publishTime || item.releaseDate || item.updatedAt,
+      viewCount: item.views || item.impressions,
+      likeCount: item.engagementCount,
+      commentCount: item.commentsCount,
+      shareCount: 0
+    }];
+  });
+  return [...posts, ...importedPosts];
+});
+
+const projectCreators = computed(() => {
+  const creatorByResource = new Map<string, any>();
+  const source = projectResources.value.length
+    ? projectResources.value
+    : cooperations.value;
+  source.forEach(item => {
+    const key = String(item.resourceId || `cooperation-${item.id}`);
+    const existing = creatorByResource.get(key);
+    if (!existing || cooperationStage(item) === "published") {
+      creatorByResource.set(key, { ...item });
+    }
+  });
+  return Array.from(creatorByResource.values());
+});
+
+const filteredCreators = computed(() => {
+  const keyword = creatorSearch.value.trim().toLowerCase();
+  if (!keyword) return projectCreators.value;
+  return projectCreators.value.filter(item =>
+    [item.resourceName, item.platformHandle, item.platform, item.status]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(keyword))
+  );
+});
+
+const contentPlatforms = computed(() =>
+  Array.from(new Set(projectContentPosts.value.map(item => String(item.platform || "")).filter(Boolean)))
+);
+
+const filteredContentPosts = computed(() => {
+  const keyword = contentSearch.value.trim().toLowerCase();
+  return projectContentPosts.value.filter(item => {
+    if (contentPlatform.value !== "all" && item.platform !== contentPlatform.value) return false;
+    if (!keyword) return true;
+    return [item.title, item.description, item.resourceName, item.platformHandle]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(keyword));
+  });
+});
+
+const campaignOverview = computed(() => {
+  const posts = projectContentPosts.value;
+  const total = (key: string) => posts.reduce((sum, item) => sum + numberValue(item[key]), 0);
+  const posted = new Set(posts.map(item => Number(item.resourceId)).filter(Boolean)).size;
+  const views = total("viewCount") || numberValue(stats.value.totalReach);
+  const engagements = total("likeCount") + total("commentCount") + total("shareCount") || numberValue(stats.value.totalEngagements);
+  const impressions = numberValue(stats.value.totalReach) || views;
+  return {
+    posted,
+    today: posts.filter(item => isToday(item.publishedAt)).length,
+    posts: posts.length,
+    reels: posts.filter(item => /reel|video|short/i.test(String(item.mediaType || ""))).length,
+    stories: posts.filter(item => /story/i.test(String(item.mediaType || ""))).length,
+    likes: total("likeCount"),
+    comments: total("commentCount"),
+    engagements,
+    views,
+    impressions,
+    reach: numberValue(stats.value.totalReach) || views,
+    engagementRate: ratioPercent(engagements, impressions),
+    cpm: cpmValue(stats.value.totalCost, impressions),
+    clicks: numberValue(stats.value.totalClicks),
+    conversions: cooperations.value.reduce((sum, item) => sum + numberValue(item.conversions), 0),
+    cost: numberValue(stats.value.totalCost)
+  };
+});
+
 const segments = computed(() => reportSummary.value?.segments || []);
 const audienceOptions = computed(() => uniqueOptions(segments.value.map(item => item.audienceSegment)));
 const platformOptions = computed(() => uniqueOptions(segments.value.map(item => item.platform)));
@@ -186,7 +294,9 @@ async function loadDetail() {
     project.value = res.data.project;
     stats.value = res.data.stats || {};
     cooperations.value = res.data.cooperations || [];
+    projectResources.value = res.data.projectResources || [];
     deliverables.value = res.data.deliverables || [];
+    contentPosts.value = res.data.contentPosts || [];
     reportSummary.value = res.data.reportSummary || {};
     budget.value = res.data.budget || {};
     billingEvents.value = res.data.billingEvents || [];
@@ -237,6 +347,19 @@ function goBack() {
   router.push("/business/projects");
 }
 
+function openPost(post: any) {
+  const url = String(post?.postUrl || "").trim();
+  if (!url) {
+    ElMessage.info("该内容暂未同步发布链接");
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function showCreatorColumnsHint() {
+  ElMessage.info("当前已展示创作者、账号、状态、内容和效果等核心字段");
+}
+
 function setSection(section: SectionKey) {
   activeSection.value = section;
   if (section === "report") nextTick(renderReportChart);
@@ -267,6 +390,14 @@ function moneyText(value: unknown, currency = project.value?.currency || "USD") 
 function dateText(value: unknown) {
   if (!value) return "-";
   return String(value).slice(0, 10);
+}
+
+function isToday(value: unknown) {
+  if (!value) return false;
+  const date = new Date(Number(value) || String(value));
+  if (Number.isNaN(date.getTime())) return false;
+  const today = new Date();
+  return date.toDateString() === today.toDateString();
 }
 
 function primaryReach(row: any) {
@@ -599,7 +730,223 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-loading="loading" class="campaign-detail-page">
+  <div v-loading="loading" class="campaign-workspace">
+    <header class="campaign-header">
+      <div class="campaign-heading">
+        <el-button circle class="back-button" @click="goBack">
+          <IconifyIconOnline icon="ri:arrow-left-line" />
+        </el-button>
+        <div class="campaign-mark">
+          <IconifyIconOnline icon="ri:megaphone-line" />
+        </div>
+        <div class="campaign-name">
+          <h1>{{ project?.name || "营销项目" }}</h1>
+          <div class="campaign-meta">
+            <el-tag size="small" effect="plain">{{ project?.campaignType || "达人营销" }}</el-tag>
+            <span><IconifyIconOnline icon="ri:checkbox-circle-fill" /> 数据已同步</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="campaign-actions">
+        <el-select
+          :model-value="selectedProjectId"
+          class="project-switcher"
+          size="default"
+          @change="handleProjectChange"
+        >
+          <el-option v-for="item in projects" :key="item.id" :label="item.name" :value="item.id" />
+        </el-select>
+        <span class="cycle-label">{{ cycleLabel }}</span>
+        <el-button circle text aria-label="编辑项目" @click="openProjectDialog">
+          <IconifyIconOnline icon="ri:edit-line" />
+        </el-button>
+        <el-dropdown>
+          <el-button circle text aria-label="更多项目操作"><IconifyIconOnline icon="ri:more-2-fill" /></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="toggleProjectStatus">
+                {{ isPaused ? "恢复项目" : "暂停项目" }}
+              </el-dropdown-item>
+              <el-dropdown-item @click="renewDialog = true">更新项目周期</el-dropdown-item>
+              <el-dropdown-item @click="handleDownloadReport">导出项目报告</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button type="primary" @click="goBack">管理达人</el-button>
+      </div>
+    </header>
+
+    <nav class="campaign-tabs" aria-label="项目详情导航">
+      <button type="button" :class="{ active: campaignTab === 'overview' }" @click="campaignTab = 'overview'">
+        概览
+      </button>
+      <button type="button" :class="{ active: campaignTab === 'creators' }" @click="campaignTab = 'creators'">
+        达人 ({{ projectCreators.length }})
+      </button>
+      <button type="button" :class="{ active: campaignTab === 'content' }" @click="campaignTab = 'content'">
+        内容 ({{ projectContentPosts.length }})
+      </button>
+    </nav>
+
+    <main class="campaign-main">
+      <template v-if="campaignTab === 'overview'">
+        <section class="metric-section">
+          <div class="section-title"><h2>内容</h2></div>
+          <div class="metric-grid content-metrics">
+            <article class="metric-card featured-card">
+              <span>已发布达人</span>
+              <strong>{{ campaignOverview.posted }} <em>/ {{ projectCreators.length }}</em></strong>
+            </article>
+            <article class="metric-card split-card">
+              <div><span>今日内容</span><strong>{{ campaignOverview.today }}</strong></div>
+              <div><span>项目内容</span><strong>{{ campaignOverview.posts }}</strong></div>
+            </article>
+            <article class="metric-card"><span>帖子</span><strong>{{ campaignOverview.posts }}</strong></article>
+            <article class="metric-card"><span>Stories</span><strong>{{ campaignOverview.stories }}</strong></article>
+            <article class="metric-card"><span>Reels / 视频</span><strong>{{ campaignOverview.reels }}</strong></article>
+          </div>
+        </section>
+
+        <section class="metric-section">
+          <div class="section-title"><h2>曝光与互动</h2></div>
+          <div class="metric-grid engagement-metrics">
+            <article class="metric-card split-card">
+              <div><span>点赞</span><strong>{{ formatCount(campaignOverview.likes) }}</strong></div>
+              <div><span>评论</span><strong>{{ formatCount(campaignOverview.comments) }}</strong></div>
+            </article>
+            <article class="metric-card split-card">
+              <div><span>互动</span><strong>{{ formatCount(campaignOverview.engagements) }}</strong></div>
+              <div><span>平均互动率</span><strong>{{ campaignOverview.engagementRate }}</strong></div>
+            </article>
+            <article class="metric-card split-card wide-card">
+              <div><span>视频播放</span><strong>{{ formatCount(campaignOverview.views) }}</strong></div>
+              <div><span>预估曝光</span><strong>{{ formatCount(campaignOverview.impressions) }}</strong></div>
+            </article>
+            <article class="metric-card split-card">
+              <div><span>预估触达</span><strong>{{ formatCount(campaignOverview.reach) }}</strong></div>
+              <div><span>CPM</span><strong>{{ moneyText(campaignOverview.cpm) }}</strong></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="metric-section">
+          <div class="section-title section-title-row">
+            <h2>效果</h2>
+            <el-button link type="primary" @click="handleDownloadReport">查看完整报告</el-button>
+          </div>
+          <div class="metric-grid performance-metrics">
+            <article class="metric-card split-card">
+              <div><span>点击</span><strong>{{ formatCount(campaignOverview.clicks) }}</strong></div>
+              <div><span>转化</span><strong>{{ formatCount(campaignOverview.conversions) }}</strong></div>
+            </article>
+            <article class="metric-card split-card wide-card">
+              <div><span>达人费用</span><strong>{{ moneyText(campaignOverview.cost) }}</strong></div>
+              <div><span>总预算</span><strong>{{ moneyText(projectBudget) }}</strong></div>
+            </article>
+            <article class="metric-card split-card">
+              <div><span>预算使用率</span><strong>{{ ratioPercent(campaignOverview.cost, projectBudget) }}</strong></div>
+              <div><span>发布时间完成率</span><strong>{{ stats.completionRate || 0 }}%</strong></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="report-setup">
+          <div>
+            <h2>项目设置</h2>
+            <p>周期 {{ cycleLabel }} · {{ project?.targetMarket || "未设置市场" }} · {{ project?.platform || "全平台" }}</p>
+          </div>
+          <div class="report-tags">
+            <el-tag effect="plain">{{ project?.language || "多语言" }}</el-tag>
+            <el-tag effect="plain">{{ activeStatusLabel }}</el-tag>
+            <el-button size="small" type="primary" plain @click="openProjectDialog">编辑项目设置</el-button>
+          </div>
+        </section>
+      </template>
+
+      <section v-else-if="campaignTab === 'creators'" class="creator-page">
+        <div class="toolbar">
+          <el-input v-model="creatorSearch" clearable placeholder="搜索达人名称或账号" class="search-field">
+            <template #prefix><IconifyIconOnline icon="ri:search-line" /></template>
+          </el-input>
+          <div class="toolbar-actions">
+            <el-switch size="small" />
+            <span>合并关联账号</span>
+            <el-button text @click="showCreatorColumnsHint">编辑列</el-button>
+          </div>
+        </div>
+        <el-table :data="filteredCreators" class="creator-table" @row-click="openExecutionDetail">
+          <el-table-column type="selection" width="62" />
+          <el-table-column label="达人" min-width="240" sortable>
+            <template #default="{ row }">
+              <div class="creator-cell">
+                <el-avatar :src="row.resourceAvatarUrl" :size="34">{{ String(row.resourceName || "R").slice(0, 1) }}</el-avatar>
+                <div><strong>{{ row.resourceName || "未命名达人" }}</strong><span>{{ row.platform || "Social" }}</span></div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="账号" min-width="220" sortable>
+            <template #default="{ row }">
+              <span class="handle-cell"><IconifyIconOnline icon="ri:instagram-line" />{{ row.platformHandle ? `@${row.platformHandle}` : "未绑定账号" }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="合作状态" width="160" sortable>
+            <template #default="{ row }"><el-tag :type="cooperationStageTag(row)" effect="plain">{{ cooperationStageLabel(row) }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="内容数" width="110" align="center">
+            <template #default="{ row }">{{ projectContentPosts.filter(item => Number(item.resourceId) === Number(row.resourceId)).length }}</template>
+          </el-table-column>
+          <el-table-column label="播放 / 曝光" width="150" align="right" sortable>
+            <template #default="{ row }">{{ formatCount(primaryReach(row)) }}</template>
+          </el-table-column>
+          <el-table-column label="费用" width="140" align="right" sortable>
+            <template #default="{ row }">{{ moneyText(row.quoteAmount, row.currency) }}</template>
+          </el-table-column>
+        </el-table>
+      </section>
+
+      <section v-else class="content-page">
+        <div class="toolbar content-toolbar">
+          <el-input v-model="contentSearch" clearable placeholder="搜索达人或内容关键词" class="search-field">
+            <template #prefix><IconifyIconOnline icon="ri:search-line" /></template>
+          </el-input>
+          <el-select v-model="contentPlatform" class="platform-filter">
+            <el-option label="全部平台" value="all" />
+            <el-option v-for="platform in contentPlatforms" :key="platform" :label="platform" :value="platform" />
+          </el-select>
+          <span class="content-count">共 {{ filteredContentPosts.length }} 条内容</span>
+        </div>
+        <el-empty v-if="!filteredContentPosts.length" description="暂未同步到可展示的内容" />
+        <div v-else class="content-grid">
+          <article v-for="post in filteredContentPosts" :key="post.id" class="content-card" @click="openPost(post)">
+            <div class="content-author">
+              <el-avatar :src="post.resourceAvatarUrl" :size="28">{{ String(post.resourceName || "R").slice(0, 1) }}</el-avatar>
+              <strong>{{ post.platformHandle ? `@${post.platformHandle}` : post.resourceName || "未知达人" }}</strong>
+              <PlatformIconBadge class="content-platform-badge" :platform="post.platform" />
+            </div>
+            <img v-if="post.coverUrl" :src="post.coverUrl" :alt="post.title || post.resourceName" class="content-cover" />
+            <div v-else class="content-cover empty-cover"><IconifyIconOnline icon="ri:image-line" /></div>
+            <div class="content-info">
+              <p>{{ post.title || post.description || "已同步内容" }}</p>
+              <el-link
+                v-if="post.postUrl"
+                class="content-post-link"
+                type="primary"
+                :href="post.postUrl"
+                target="_blank"
+                @click.stop
+              >
+                {{ post.postUrl }}
+              </el-link>
+              <div><span><IconifyIconOnline icon="ri:play-circle-line" /> {{ formatCount(post.viewCount) }}</span><span><IconifyIconOnline icon="ri:heart-3-line" /> {{ formatCount(post.likeCount) }}</span><span><IconifyIconOnline icon="ri:chat-3-line" /> {{ formatCount(post.commentCount) }}</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div v-if="false" v-loading="loading" class="campaign-detail-page">
     <header class="detail-topbar">
       <div class="title-cluster">
         <el-button circle @click="goBack">
@@ -1854,4 +2201,79 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 }
+/* Simplified campaign workspace, aligned with the three-view campaign layout. */
+.campaign-workspace { min-height: 100vh; color: #24252b; background: #fff; }
+.campaign-header { display: flex; gap: 18px; align-items: center; justify-content: space-between; min-height: 66px; padding: 10px 22px; border-bottom: 1px solid #e8e8eb; }
+.campaign-heading, .campaign-actions, .campaign-meta, .toolbar, .toolbar-actions, .creator-cell, .handle-cell, .content-author, .content-info > div, .report-tags, .section-title-row { display: flex; align-items: center; }
+.campaign-heading { gap: 14px; min-width: 0; }
+.campaign-actions { gap: 10px; flex: 0 0 auto; }
+.back-button { color: #53565d; border-color: #e4e5e8; }
+.campaign-mark { display: grid; place-items: center; width: 40px; height: 40px; color: #f4a42a; background: #fff; border: 1px solid #e7e7ea; border-radius: 10px; }
+.campaign-mark svg { font-size: 20px; }
+.campaign-name { min-width: 0; }
+.campaign-name h1 { max-width: 580px; margin: 0; overflow: hidden; font-size: 18px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.02em; }
+.campaign-meta { gap: 8px; margin-top: 4px; color: #a0a2a8; font-size: 12px; }
+.campaign-meta > span { display: inline-flex; gap: 5px; align-items: center; }
+.campaign-meta svg { color: #b7bac0; }
+.project-switcher { width: 156px; }
+.cycle-label { color: #34353a; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.campaign-tabs { display: flex; gap: 24px; padding: 0 22px; border-bottom: 1px solid #e8e8eb; }
+.campaign-tabs button { padding: 13px 0 10px; color: #777a81; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; background: transparent; border: 0; border-bottom: 2px solid transparent; }
+.campaign-tabs button:hover { color: #24252b; }
+.campaign-tabs button.active { color: #24252b; border-bottom-color: #24252b; }
+.campaign-main { max-width: 1720px; padding: 24px 22px 36px; margin: 0 auto; }
+.metric-section + .metric-section { margin-top: 24px; }
+.section-title { margin-bottom: 12px; }
+.section-title h2, .report-setup h2 { margin: 0; font-size: 16px; line-height: 1.3; letter-spacing: -0.01em; }
+.section-title-row { justify-content: space-between; }
+.metric-grid { display: grid; gap: 12px; }
+.content-metrics { grid-template-columns: minmax(200px, 1.5fr) minmax(320px, 1.5fr) repeat(3, minmax(160px, 0.85fr)); }
+.engagement-metrics { grid-template-columns: repeat(2, minmax(210px, 0.8fr)) minmax(360px, 1.45fr) minmax(210px, 0.8fr); }
+.performance-metrics { grid-template-columns: minmax(280px, 0.9fr) minmax(380px, 1.35fr) minmax(280px, 0.9fr); }
+.metric-card { min-width: 0; min-height: 82px; padding: 15px; background: #fff; border: 1px solid #e3e4e8; border-radius: 12px; }
+.metric-card > span, .split-card span { display: block; color: #85878e; font-size: 14px; line-height: 1.25; text-decoration: underline dotted #b8bac0 2px; text-underline-offset: 5px; }
+.metric-card strong { display: block; margin-top: 9px; color: #24252b; font-size: 24px; line-height: 1; letter-spacing: -0.035em; }
+.metric-card em { color: #565960; font-size: 18px; font-style: normal; }
+.split-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; overflow: hidden; }
+.split-card > div { min-width: 0; padding: 15px; }
+.split-card > div + div { border-left: 1px solid #e6e7ea; }
+.split-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-setup { display: flex; gap: 14px; align-items: center; justify-content: space-between; padding-top: 24px; margin-top: 24px; border-top: 1px solid #ececef; }
+.report-setup p { margin: 8px 0 0; color: #777a81; font-size: 13px; }
+.report-tags { flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.creator-page, .content-page { min-width: 0; }
+.toolbar { gap: 12px; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid #e8e8eb; }
+.search-field { width: min(440px, 100%); }
+.toolbar-actions { gap: 10px; color: #2e3036; font-size: 14px; white-space: nowrap; }
+.creator-table { width: 100%; margin-top: 0; }
+.creator-cell { gap: 10px; }
+.creator-cell > div { display: grid; gap: 3px; }
+.creator-cell strong { color: #292b31; font-size: 14px; }
+.creator-cell span { color: #898b91; font-size: 12px; }
+.handle-cell { gap: 6px; color: #45474d; }
+.handle-cell svg { color: #24252b; }
+.platform-filter { width: 155px; }
+.content-toolbar { justify-content: flex-start; }
+.content-count { margin-left: auto; color: #85878e; font-size: 13px; }
+.content-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; margin-top: 18px; }
+.content-card { overflow: hidden; cursor: pointer; background: #fff; border: 1px solid #ececef; border-radius: 14px; transition: transform 160ms ease, box-shadow 160ms ease; }
+.content-card:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgb(31 35 42 / 10%); }
+.content-author { gap: 8px; min-width: 0; padding: 12px 13px; }
+.content-author strong { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.content-author .el-tag,
+.content-platform-badge { margin-left: auto; }
+.content-cover { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover; background: #f5f5f6; }
+.empty-cover { display: grid; place-items: center; color: #a5a7ad; font-size: 32px; }
+.content-info { padding: 12px 13px 14px; }
+.content-info p { display: -webkit-box; min-height: 34px; margin: 0; overflow: hidden; color: #32343a; font-size: 13px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.content-post-link { display: block; max-width: 100%; margin-top: 8px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.content-info > div { gap: 12px; margin-top: 11px; color: #777a81; font-size: 12px; }
+.content-info span { display: inline-flex; gap: 4px; align-items: center; }
+:deep(.campaign-workspace .el-button--primary) { --el-button-bg-color: #2f63e7; --el-button-border-color: #2f63e7; --el-button-hover-bg-color: #2558d7; --el-button-hover-border-color: #2558d7; border-radius: 9px; }
+:deep(.campaign-workspace .el-input__wrapper), :deep(.campaign-workspace .el-select__wrapper) { min-height: 40px; border-radius: 10px; box-shadow: 0 0 0 1px #e1e2e6 inset; }
+:deep(.campaign-workspace .el-table) { --el-table-border-color: #e7e8eb; --el-table-header-bg-color: #fff; --el-table-row-hover-bg-color: #f8f9fb; font-size: 14px; }
+:deep(.campaign-workspace .el-table th.el-table__cell) { height: 66px; color: #282a30; font-weight: 650; }
+:deep(.campaign-workspace .el-table td.el-table__cell) { height: 68px; }
+@media (max-width: 1180px) { .content-metrics, .engagement-metrics, .performance-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .wide-card { grid-column: span 2; } .campaign-header { align-items: flex-start; } .campaign-actions { flex-wrap: wrap; justify-content: flex-end; } }
+@media (max-width: 720px) { .campaign-header, .campaign-main { padding-right: 16px; padding-left: 16px; } .campaign-header { flex-direction: column; } .campaign-actions { width: 100%; justify-content: flex-start; } .project-switcher { width: 130px; } .campaign-tabs { gap: 20px; padding: 0 16px; overflow-x: auto; } .metric-grid, .content-metrics, .engagement-metrics, .performance-metrics { grid-template-columns: 1fr; } .wide-card { grid-column: auto; } .report-setup, .toolbar { align-items: flex-start; flex-direction: column; } .toolbar-actions { width: 100%; } .content-count { margin-left: 0; } .search-field { width: 100%; } }
 </style>

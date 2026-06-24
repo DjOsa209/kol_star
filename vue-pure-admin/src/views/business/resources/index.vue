@@ -43,6 +43,7 @@ const importDialog = ref(false);
 const importLoading = ref(false);
 const editingId = ref<number | null>(null);
 const list = ref<any[]>([]);
+const selectedResourceIds = ref<number[]>([]);
 const allCooperations = ref<any[]>([]);
 const projectOptionsForEdit = ref<any[]>([]);
 const recentPosts = ref<any[]>([]);
@@ -61,6 +62,22 @@ const syncStatus = ref<any>({});
 const avatarLoadFailed = reactive<Record<string, boolean>>({});
 const avatarLoaded = reactive<Record<string, boolean>>({});
 let syncPollTimer: ReturnType<typeof setInterval> | null = null;
+
+const selectableResourceIds = computed(() =>
+  (Array.isArray(list.value) ? list.value : [])
+    .map(row => Number(row.id))
+    .filter(Boolean)
+);
+const allVisibleResourcesSelected = computed(
+  () =>
+    selectableResourceIds.value.length > 0 &&
+    selectableResourceIds.value.every(id => selectedResourceIds.value.includes(id))
+);
+const resourceSelectionIndeterminate = computed(
+  () =>
+    !allVisibleResourcesSelected.value &&
+    selectableResourceIds.value.some(id => selectedResourceIds.value.includes(id))
+);
 const defaultPlatformOptions = [
   "YouTube",
   "TikTok",
@@ -400,41 +417,61 @@ async function ensureTagIds(names: string[]) {
 
 async function loadData() {
   loading.value = true;
-  const params = {
-    ...search,
-    currentPage: currentPage.value,
-    pageSize: pageSize.value,
-    sequenceSortOrder: sequenceSortOrder.value
-  };
-  const [resourceRes, cooperationRes, projectRes] = await Promise.all([
-    getResourceList(params),
-    getCooperationList(),
-    getProjectList({ currentPage: 1, pageSize: 200 })
-  ]);
-  if (resourceRes.code === 0) {
-    const { data } = resourceRes;
-    list.value = data.list;
-    total.value = data.total;
-    const postResults = await Promise.all(
-      data.list.map((row: any) =>
-        getResourcePosts({
-          resourceId: row.id,
-          currentPage: 1,
-          pageSize: 2
-        })
-      )
-    );
-    recentPosts.value = postResults.flatMap(result =>
-      result.code === 0 ? result.data.list || [] : []
-    );
+  try {
+    const params = {
+      ...search,
+      currentPage: currentPage.value,
+      pageSize: pageSize.value,
+      sequenceSortOrder: sequenceSortOrder.value
+    };
+    const [resourceRes, cooperationRes, projectRes] = await Promise.all([
+      getResourceList(params),
+      getCooperationList(),
+      getProjectList({ currentPage: 1, pageSize: 200 })
+    ]);
+    if (resourceRes.code === 0) {
+      const resourceRows = Array.isArray(resourceRes.data?.list)
+        ? resourceRes.data.list
+        : [];
+      list.value = resourceRows;
+      total.value = Number(resourceRes.data?.total || 0);
+      const postResults = await Promise.all(
+        resourceRows.map((row: any) =>
+          getResourcePosts({
+            resourceId: row.id,
+            currentPage: 1,
+            pageSize: 2
+          })
+        )
+      );
+      recentPosts.value = postResults.flatMap(result =>
+        result.code === 0 && Array.isArray(result.data?.list)
+          ? result.data.list
+          : []
+      );
+    } else {
+      list.value = [];
+      total.value = 0;
+      recentPosts.value = [];
+    }
+    if (cooperationRes.code === 0) {
+      allCooperations.value = Array.isArray(cooperationRes.data?.list)
+        ? cooperationRes.data.list
+        : [];
+    }
+    if (projectRes.code === 0) {
+      projectOptionsForEdit.value = Array.isArray(projectRes.data?.list)
+        ? projectRes.data.list
+        : [];
+    }
+  } catch (error) {
+    list.value = [];
+    total.value = 0;
+    recentPosts.value = [];
+    ElMessage.warning("资源列表加载失败，请稍后重试");
+  } finally {
+    loading.value = false;
   }
-  if (cooperationRes.code === 0) {
-    allCooperations.value = cooperationRes.data.list || [];
-  }
-  if (projectRes.code === 0) {
-    projectOptionsForEdit.value = projectRes.data.list || [];
-  }
-  loading.value = false;
 }
 
 function formatDateTime(value: unknown) {
@@ -881,16 +918,46 @@ async function submit() {
   }
 }
 
+function toggleResourceSelection(id: number, selected: boolean) {
+  const resourceID = Number(id);
+  selectedResourceIds.value = selected
+    ? [...new Set([...selectedResourceIds.value, resourceID])]
+    : selectedResourceIds.value.filter(item => item !== resourceID);
+}
+
+function toggleAllVisibleResources(selected: boolean) {
+  const visibleIDs = selectableResourceIds.value;
+  selectedResourceIds.value = selected
+    ? [...new Set([...selectedResourceIds.value, ...visibleIDs])]
+    : selectedResourceIds.value.filter(id => !visibleIDs.includes(id));
+}
+
+async function removeResources(ids: number[]) {
+  const resourceIDs = [...new Set(ids.map(Number).filter(Boolean))];
+  if (!resourceIDs.length) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认删除 ${resourceIDs.length} 个资源吗？关联的项目关系、合作记录和作品数据也会一并删除，且无法恢复。`,
+      "删除资源",
+      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+  const res = await deleteResource({ ids: resourceIDs });
+  if (res.code !== 0) {
+    ElMessage.warning(res.message || "删除资源失败");
+    return;
+  }
+  selectedResourceIds.value = selectedResourceIds.value.filter(
+    id => !resourceIDs.includes(id)
+  );
+  ElMessage.success(`已删除 ${res.data?.deleted || resourceIDs.length} 个资源`);
+  await loadData();
+}
+
 function remove(row: any) {
-  ElMessageBox.confirm(`确认删除 ${row.name} 吗？`, "提示", {
-    type: "warning"
-  }).then(async () => {
-    const res = await deleteResource({ id: row.id });
-    if (res.code === 0) {
-      ElMessage.success("删除成功");
-      loadData();
-    }
-  });
+  removeResources([Number(row.id)]);
 }
 
 async function syncAll() {
@@ -1215,6 +1282,14 @@ onUnmounted(() => {
           <IconifyIconOnline icon="ri:add-line" class="mr-1" />
           新增资源
         </el-button>
+        <el-button
+          type="danger"
+          plain
+          :disabled="selectedResourceIds.length === 0"
+          @click="removeResources(selectedResourceIds)"
+        >
+          删除所选{{ selectedResourceIds.length ? ` (${selectedResourceIds.length})` : "" }}
+        </el-button>
       </div>
     </section>
 
@@ -1379,13 +1454,19 @@ onUnmounted(() => {
       <section v-loading="loading" class="compact-resource-list">
         <div class="compact-list-head">
           <span class="compact-index-head">
+            <el-checkbox
+              :model-value="allVisibleResourcesSelected"
+              :indeterminate="resourceSelectionIndeterminate"
+              aria-label="全选当前页资源"
+              @click.stop
+              @change="checked => toggleAllVisibleResources(Boolean(checked))"
+            />
             <button
               type="button"
               class="sequence-sort-button"
               :aria-label="`序号${sequenceSortOrder === 'asc' ? '正序' : '倒序'}，点击切换排序`"
               @click="toggleSequenceSort"
             >
-              <span>序号</span>
               <IconifyIconOnline
                 :icon="
                   sequenceSortOrder === 'asc'
@@ -1407,6 +1488,12 @@ onUnmounted(() => {
           class="compact-resource-row"
         >
           <span class="compact-index">
+            <el-checkbox
+              :model-value="selectedResourceIds.includes(Number(row.id))"
+              :aria-label="`选择资源 ${row.name}`"
+              @click.stop
+              @change="checked => toggleResourceSelection(Number(row.id), Boolean(checked))"
+            />
             {{ sequenceNumber(index) }}
           </span>
           <div class="compact-identity">
@@ -3212,7 +3299,7 @@ onUnmounted(() => {
 .compact-resource-row {
   display: grid;
   grid-template-columns:
-    32px minmax(190px, 0.95fr) minmax(130px, 0.6fr)
+    74px minmax(190px, 0.95fr) minmax(130px, 0.6fr)
     minmax(270px, 1.35fr) minmax(180px, 0.9fr) 112px;
   gap: 10px;
   align-items: center;
@@ -3235,6 +3322,8 @@ onUnmounted(() => {
 
 .compact-index-head {
   display: flex;
+  gap: 2px;
+  align-items: center;
   justify-content: center;
 }
 
@@ -3243,7 +3332,7 @@ onUnmounted(() => {
   gap: 2px;
   align-items: center;
   justify-content: center;
-  width: 42px;
+  width: 24px;
   height: 24px;
   padding: 0;
   font: inherit;
@@ -3276,6 +3365,10 @@ onUnmounted(() => {
 }
 
 .compact-index {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
   font-size: 12px;
   font-weight: 700;
   color: #94a3b8;

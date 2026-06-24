@@ -1,0 +1,6 @@
+{
+  "collector_base_url": "http://127.0.0.1:8001/api/tiktok/web",
+  "server_url": "http://127.0.0.1:8080",
+  "token": "",
+  "post_count": 35
+}

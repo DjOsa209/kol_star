@@ -128,13 +128,13 @@ const { t, locale, translationCh, translationEn } = useTranslationLang();
 <style lang="scss" scoped>
 .navbar {
   width: 100%;
-  height: 48px;
+  height: 44px;
   overflow: hidden;
 
   .hamburger-container {
     float: left;
     height: 100%;
-    line-height: 48px;
+    line-height: 44px;
     cursor: pointer;
   }
 
@@ -143,15 +143,15 @@ const { t, locale, translationCh, translationEn } = useTranslationLang();
     align-items: center;
     justify-content: flex-end;
     min-width: 280px;
-    height: 48px;
+    height: 44px;
     color: #000000d9;
 
     .el-dropdown-link {
       display: flex;
       align-items: center;
       justify-content: space-around;
-      height: 48px;
-      padding: 10px;
+      height: 44px;
+      padding: 8px 10px;
       color: #000000d9;
       cursor: pointer;
 

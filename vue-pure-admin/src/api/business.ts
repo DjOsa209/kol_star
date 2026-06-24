@@ -96,8 +96,34 @@ export const createProject = (data?: object) => {
   return http.request<Result>("post", "/business/projects/create", { data });
 };
 
+export const importProjects = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/import", { data });
+};
+
+export const previewProjectExcelImport = (file: File) => {
+  const data = new FormData();
+  data.append("file", file);
+  return http.request<Result>(
+    "post",
+    "/business/projects/import-excel/preview",
+    {
+      data
+    },
+    {
+      timeout: 60000,
+      // 覆盖全局 JSON 默认值。false 会让 Axios 保留 FormData，随后由浏览器
+      // 自动补齐 multipart boundary；undefined 会在转换阶段回落到全局 JSON。
+      headers: { "Content-Type": false }
+    }
+  );
+};
+
 export const updateProject = (data?: object) => {
   return http.request<Result>("post", "/business/projects/update", { data });
+};
+
+export const deleteProject = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/delete", { data });
 };
 
 export const getProjectDetail = (params?: object) => {

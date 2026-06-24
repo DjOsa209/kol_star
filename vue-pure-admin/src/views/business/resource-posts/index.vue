@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { getResourcePosts } from "@/api/business";
+import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 
 defineOptions({ name: "BusinessResourcePosts" });
 
@@ -201,7 +202,7 @@ onMounted(loadData);
             <button type="button" @click="openUrl(post.postUrl)">
               {{ post.title || "未命名作品" }}
             </button>
-            <el-tag effect="plain">{{ post.platform }}</el-tag>
+            <PlatformIconBadge :platform="post.platform" />
           </div>
           <p>{{ post.description || "暂无描述" }}</p>
           <div class="post-meta">

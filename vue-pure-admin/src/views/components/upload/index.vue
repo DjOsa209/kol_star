@@ -264,7 +264,7 @@ const onDownload = () => {
         表格操作栏中的上传头像功能
       </p>
       <p class="text-[red] text-[12px] flex flex-auto items-center justify-end">
-        上传接口已接入 KOL Admin 本地服务，请勿上传无关敏感信息
+          上传接口已接入 XMP 本地服务，请勿上传无关敏感信息
       </p>
     </div>
   </el-card>

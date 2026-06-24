@@ -44,6 +44,11 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	projectResources, err := a.projectResourceRows(r.Context(), projectID)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
 	deliverables, err := a.queryMaps(r.Context(),
 		`select id, project_id as projectId, cooperation_id as cooperationId, stage_key as stageKey,
 		        title, status, date_format(submitted_at, '%Y-%m-%d %H:%i:%s') as submittedAt,
@@ -83,16 +88,66 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	contentPosts, err := a.queryMaps(r.Context(),
+		`select p.id, p.resource_id as resourceId, r.name as resourceName,
+		        r.avatar_url as resourceAvatarUrl, r.platform_handle as platformHandle,
+		        p.platform, p.platform_post_id as platformPostId, p.title, p.description,
+		        p.post_url as postUrl, p.cover_url as coverUrl, p.media_type as mediaType,
+		        cast(unix_timestamp(p.published_at) * 1000 as unsigned) as publishedAt,
+		        p.duration_seconds as durationSeconds, p.view_count as viewCount,
+		        p.like_count as likeCount, p.comment_count as commentCount, p.share_count as shareCount
+	   from biz_resource_platform_posts p
+	   join biz_cooperations c on c.resource_id = p.resource_id and c.project_id = ?
+	   left join biz_resources r on r.id = p.resource_id
+	  order by p.published_at desc, p.id desc
+	  limit 120`,
+		projectID,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
 
 	writeOK(w, map[string]any{
-		"project":       projects[0],
-		"stats":         buildCampaignDetailStats(projects[0], cooperations, segments),
-		"cooperations":  cooperations,
-		"deliverables":  deliverables,
-		"reportSummary": buildCampaignReportSummary(segments),
-		"budget":        buildCampaignBudget(projects[0], billingEvents),
-		"billingEvents": billingEvents,
+		"project":          projects[0],
+		"stats":            buildCampaignDetailStats(projects[0], cooperations, segments),
+		"cooperations":     cooperations,
+		"projectResources": projectResources,
+		"deliverables":     deliverables,
+		"reportSummary":    buildCampaignReportSummary(segments),
+		"budget":           buildCampaignBudget(projects[0], billingEvents),
+		"billingEvents":    billingEvents,
+		"contentPosts":     contentPosts,
 	})
+}
+
+func (a *app) projectResourceRows(ctx context.Context, projectID int) ([]map[string]any, error) {
+	return a.queryMaps(ctx,
+		`select relation.resource_id as resourceId, r.name as resourceName,
+		        r.avatar_url as resourceAvatarUrl, r.platform_handle as platformHandle,
+		        r.platform_url as platformUrl, r.country, r.language, r.platform, r.followers,
+		        r.engagement_rate as engagementRate, r.score, r.level,
+		        ifnull(c.id, 0) as id, ifnull(c.cooperation_type, '') as cooperationType,
+		        ifnull(c.quote_amount, 0) as quoteAmount, ifnull(c.currency, 'USD') as currency,
+		        ifnull(c.status, '候选') as status, ifnull(c.deliverable_status, '未开始') as deliverableStatus,
+		        ifnull(c.impressions, 0) as impressions, ifnull(c.views, 0) as views,
+		        ifnull(c.engagement_count, 0) as engagementCount, ifnull(c.comments_count, 0) as commentsCount,
+		        c.release_date as releaseDate, c.deliverable_links as deliverableLinks, c.final_link as finalLink
+	   from (
+		  select resource_id from biz_project_resources where project_id = ?
+		  union
+		  select resource_id from biz_cooperations where project_id = ?
+	   ) relation
+	   join biz_resources r on r.id = relation.resource_id
+	   left join biz_cooperations c on c.id = (
+		  select c2.id from biz_cooperations c2
+		   where c2.project_id = ? and c2.resource_id = relation.resource_id
+		   order by c2.updated_at desc, c2.id desc
+		   limit 1
+	   )
+	  order by r.name asc, relation.resource_id asc`,
+		projectID, projectID, projectID,
+	)
 }
 
 func (a *app) projectCooperationRows(ctx context.Context, projectID int) ([]map[string]any, error) {

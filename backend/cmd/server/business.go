@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -178,17 +179,63 @@ func (a *app) updateBusinessResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) deleteBusinessResource(w http.ResponseWriter, r *http.Request) {
-	id := intField(readBody(r), "id")
-	if id == 0 {
-		writeError(w, http.StatusOK, 10001, "资源 id 不能为空")
+	ids := deletionIDs(readBody(r))
+	if len(ids) == 0 {
+		writeError(w, http.StatusOK, 10001, "请选择要删除的资源")
 		return
 	}
-	_, err := a.DB().ExecContext(r.Context(), `delete from biz_resources where id = ?`, id)
+	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeDBError(w, err)
 		return
 	}
-	writeOK(w, map[string]any{"deleted": true})
+	defer tx.Rollback()
+	for _, id := range ids {
+		if err := deleteResourceRecords(r.Context(), tx, id); err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"deleted": len(ids)})
+}
+
+func deletionIDs(body map[string]any) []int {
+	ids := intSliceField(body, "ids")
+	if id := intField(body, "id"); id > 0 {
+		ids = append(ids, id)
+	}
+	seen := make(map[int]bool, len(ids))
+	result := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
+func deleteResourceRecords(ctx context.Context, tx *sql.Tx, resourceID int) error {
+	queries := []string{
+		`delete from biz_campaign_deliverables where cooperation_id in (select id from biz_cooperations where resource_id = ?)`,
+		`delete from biz_campaign_influencer_reports where resource_id = ?`,
+		`delete from biz_cooperations where resource_id = ?`,
+		`delete from biz_project_resources where resource_id = ?`,
+		`delete from biz_resource_platform_posts where resource_id = ?`,
+		`delete from biz_resource_extra_values where resource_id = ?`,
+		`delete from biz_resource_tags where resource_id = ?`,
+		`delete from biz_resources where id = ?`,
+	}
+	for _, query := range queries {
+		if _, err := tx.ExecContext(ctx, query, resourceID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *app) businessResourceExtraFields(w http.ResponseWriter, r *http.Request) {
@@ -755,9 +802,17 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	if apiKey == "" {
 		return nil, fmt.Errorf("未配置 YouTube API Key，请在系统管理/抓取控制中配置")
 	}
-	paramName, identifier, err := youtubeChannelIdentifier(name, platformURL)
+	client, err := youtubeHTTPClient(cfg)
 	if err != nil {
 		return nil, err
+	}
+	paramName, identifier, err := youtubeChannelIdentifier(name, platformURL)
+	if err != nil {
+		identifier, err = findExactYouTubeChannelByName(ctx, client, apiKey, name)
+		if err != nil {
+			return nil, err
+		}
+		paramName = "id"
 	}
 
 	params := url.Values{}
@@ -766,10 +821,6 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	params.Set(paramName, identifier)
 	apiURL := "https://www.googleapis.com/youtube/v3/channels?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	client, err := youtubeHTTPClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -861,6 +912,65 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		"posts":          posts,
 		"syncedAt":       time.Now().Format(time.RFC3339),
 	}, nil
+}
+
+func findExactYouTubeChannelByName(ctx context.Context, client *http.Client, apiKey, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("请先填写 YouTube 频道链接、频道 ID、@handle 或资源名称")
+	}
+	params := url.Values{}
+	params.Set("part", "snippet")
+	params.Set("key", apiKey)
+	params.Set("type", "channel")
+	params.Set("q", name)
+	params.Set("maxResults", "5")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/youtube/v3/search?"+params.Encode(), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		Items []struct {
+			ID struct {
+				ChannelID string `json:"channelId"`
+			} `json:"id"`
+			Snippet struct {
+				Title string `json:"title"`
+			} `json:"snippet"`
+		} `json:"items"`
+	}
+	if err := decodePlatformResponse(resp, "YouTube", &payload); err != nil {
+		return "", err
+	}
+	matched := ""
+	for _, item := range payload.Items {
+		if normalizePlatformResourceName(item.Snippet.Title) != normalizePlatformResourceName(name) || item.ID.ChannelID == "" {
+			continue
+		}
+		if matched != "" && matched != item.ID.ChannelID {
+			return "", fmt.Errorf("YouTube 按资源名称匹配到多个频道，请补充频道链接或 @handle")
+		}
+		matched = item.ID.ChannelID
+	}
+	if matched == "" {
+		return "", fmt.Errorf("YouTube 未找到与资源名称精确匹配的频道，请补充频道链接或 @handle")
+	}
+	return matched, nil
+}
+
+func normalizePlatformResourceName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || (r >= 0x4e00 && r <= 0x9fff) {
+			return r
+		}
+		return -1
+	}, value)
 }
 
 func youtubeHTTPClient(cfg PlatformAPIConfig) (*http.Client, error) {
@@ -2958,7 +3068,7 @@ func (a *app) businessProjects(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) createBusinessProject(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
-	_, err := a.DB().ExecContext(r.Context(),
+	result, err := a.DB().ExecContext(r.Context(),
 		`insert into biz_projects
 		 (name, target_market, language, platform, campaign_type, budget, currency, status, owner, brief,
 		  cycle_start_date, cycle_end_date, report_update_date)
@@ -2973,7 +3083,81 @@ func (a *app) createBusinessProject(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
-	writeOK(w, map[string]any{"created": true})
+	id, err := result.LastInsertId()
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"created": true, "id": id})
+}
+
+func (a *app) importBusinessProjects(w http.ResponseWriter, r *http.Request) {
+	body := readBody(r)
+	rawRows, ok := body["rows"].([]any)
+	if !ok || len(rawRows) == 0 {
+		writeError(w, http.StatusOK, 10001, "请提供至少一条项目数据")
+		return
+	}
+	if len(rawRows) > 500 {
+		writeError(w, http.StatusOK, 10001, "单次最多导入 500 个项目")
+		return
+	}
+
+	tx, err := a.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	defer tx.Rollback()
+
+	imported, skipped := 0, 0
+	for _, rawRow := range rawRows {
+		row, ok := rawRow.(map[string]any)
+		if !ok {
+			writeError(w, http.StatusOK, 10001, "导入数据格式不正确")
+			return
+		}
+		name := strings.TrimSpace(str(row, "name"))
+		if name == "" {
+			writeError(w, http.StatusOK, 10001, "项目名称不能为空")
+			return
+		}
+		targetMarket := strings.TrimSpace(str(row, "targetMarket"))
+		var existingID int
+		err := tx.QueryRowContext(r.Context(),
+			`select id from biz_projects where name = ? and target_market = ? limit 1`,
+			name, targetMarket,
+		).Scan(&existingID)
+		if err == nil {
+			skipped++
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeDBError(w, err)
+			return
+		}
+
+		_, err = tx.ExecContext(r.Context(),
+			`insert into biz_projects
+			 (name, target_market, language, platform, campaign_type, budget, currency, status, owner, brief,
+			  cycle_start_date, cycle_end_date)
+			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			name, targetMarket, str(row, "language"), str(row, "platform"), str(row, "campaignType"),
+			floatField(row, "budget"), defaultString(strings.ToUpper(str(row, "currency")), "USD"),
+			defaultString(str(row, "status"), "需求创建"), str(row, "owner"), str(row, "brief"),
+			nullableDate(str(row, "cycleStartDate")), nullableDate(str(row, "cycleEndDate")),
+		)
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
+		imported++
+	}
+	if err := tx.Commit(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"imported": imported, "skipped": skipped})
 }
 
 func (a *app) updateBusinessProject(w http.ResponseWriter, r *http.Request) {
@@ -3000,6 +3184,49 @@ func (a *app) updateBusinessProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeOK(w, map[string]any{"updated": true})
+}
+
+func (a *app) deleteBusinessProject(w http.ResponseWriter, r *http.Request) {
+	ids := deletionIDs(readBody(r))
+	if len(ids) == 0 {
+		writeError(w, http.StatusOK, 10001, "请选择要删除的项目")
+		return
+	}
+	tx, err := a.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if err := deleteProjectRecords(r.Context(), tx, id); err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"deleted": len(ids)})
+}
+
+func deleteProjectRecords(ctx context.Context, tx *sql.Tx, projectID int) error {
+	queries := []string{
+		`delete from biz_campaign_deliverables where project_id = ?`,
+		`delete from biz_campaign_influencer_reports where project_id = ?`,
+		`delete from biz_campaign_report_segments where project_id = ?`,
+		`delete from biz_campaign_billing_events where project_id = ?`,
+		`delete from biz_cooperations where project_id = ?`,
+		`delete from biz_project_resources where project_id = ?`,
+		`delete from biz_projects where id = ?`,
+	}
+	for _, query := range queries {
+		if _, err := tx.ExecContext(ctx, query, projectID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Request) {
@@ -3301,7 +3528,10 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 
 	batchID := fmt.Sprintf("IMP%s", time.Now().Format("20060102150405"))
 	imported := 0
+	importedContent := 0
+	importedProfiles := 0
 	createdResources := 0
+	updatedCooperations := 0
 	var errors []map[string]any
 	for index, raw := range rows {
 		row, ok := raw.(map[string]any)
@@ -3309,10 +3539,17 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 			errors = append(errors, map[string]any{"row": index + 2, "message": "行数据格式错误"})
 			continue
 		}
-		influencer := strings.TrimSpace(fmt.Sprint(row["influencer"]))
-		if influencer == "" || influencer == "<nil>" {
-			errors = append(errors, map[string]any{"row": index + 2, "message": "姓名/Influencer 不能为空"})
+		influencer := cleanImportString(str(row, "influencer"))
+		if influencer == "" {
+			errors = append(errors, map[string]any{"row": intField(row, "rowNo"), "message": "资源名称不能为空"})
 			continue
+		}
+		hasPublishedLink := cleanImportString(str(row, "deliverableLinks")) != ""
+		if link := cleanImportString(str(row, "deliverableLinks")); link != "" {
+			if _, err := normalizeImportedCooperationLink(link); err != nil {
+				errors = append(errors, map[string]any{"row": intField(row, "rowNo"), "message": err.Error()})
+				continue
+			}
 		}
 		resourceID, created, err := upsertImportResource(r.Context(), tx, row)
 		if err != nil {
@@ -3322,11 +3559,24 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		if created {
 			createdResources++
 		}
-		if err := insertImportCooperation(r.Context(), tx, projectID, resourceID, batchID, row); err != nil {
+		if err := ensureImportProjectResource(r.Context(), tx, projectID, resourceID); err != nil {
 			errors = append(errors, map[string]any{"row": index + 2, "message": err.Error()})
 			continue
 		}
+		createdCooperation, err := insertImportCooperation(r.Context(), tx, projectID, resourceID, batchID, row)
+		if err != nil {
+			errors = append(errors, map[string]any{"row": index + 2, "message": err.Error()})
+			continue
+		}
+		if !createdCooperation {
+			updatedCooperations++
+		}
 		imported++
+		if hasPublishedLink {
+			importedContent++
+		} else {
+			importedProfiles++
+		}
 	}
 
 	if imported == 0 {
@@ -3337,25 +3587,54 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		writeDBError(w, err)
 		return
 	}
-	synced, syncWarnings := a.syncImportedCooperations(r.Context(), batchID)
+	go func() {
+		synced, warnings := a.syncImportedCooperations(context.Background(), batchID)
+		if len(warnings) > 0 {
+			log.Printf("import batch %s platform sync completed: synced=%d warnings=%s", batchID, synced, redactSensitiveText(strings.Join(warnings, "; ")))
+			return
+		}
+		log.Printf("import batch %s platform sync completed: synced=%d", batchID, synced)
+	}()
 	writeOK(w, map[string]any{
-		"batchId":          batchID,
-		"imported":         imported,
-		"failed":           len(errors),
-		"createdResources": createdResources,
-		"syncedPosts":      synced,
-		"syncWarnings":     syncWarnings,
-		"errors":           errors,
+		"batchId":             batchID,
+		"imported":            imported,
+		"importedContent":     importedContent,
+		"importedProfiles":    importedProfiles,
+		"updatedCooperations": updatedCooperations,
+		"failed":              len(errors),
+		"createdResources":    createdResources,
+		"platformSyncStarted": true,
+		"errors":              errors,
 	})
 }
 
+func ensureImportProjectResource(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64) error {
+	_, err := tx.ExecContext(ctx,
+		`insert into biz_project_resources (project_id, resource_id, status, source)
+		 values (?, ?, '已关联', '表格导入')
+		 on duplicate key update updated_at = now()`,
+		projectID, resourceID,
+	)
+	return err
+}
+
 func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (int64, bool, error) {
-	name := strings.TrimSpace(fmt.Sprint(row["influencer"]))
-	category := strings.TrimSpace(fmt.Sprint(row["category"]))
-	platform := strings.TrimSpace(fmt.Sprint(row["platform"]))
+	name := cleanImportString(str(row, "influencer"))
+	category := cleanImportString(str(row, "category"))
+	platform := cleanImportString(str(row, "platform"))
+	country := cleanImportString(str(row, "country"))
+	resourceType := cleanImportString(str(row, "resourceType"))
+	if resourceType != "媒体" {
+		resourceType = "KOL"
+	}
+	mediaOutlet := cleanImportString(str(row, "mediaOutlet"))
+	if resourceType == "媒体" && mediaOutlet == "" {
+		mediaOutlet = name
+	}
 	followers := intField(row, "followerNumber")
 	views := intField(row, "views")
-	score, level, hasRating := ratingScoreLevel(strings.TrimSpace(fmt.Sprint(row["rating"])))
+	score, level, hasRating := ratingScoreLevel(cleanImportString(str(row, "rating")))
+	website := importedLinkWebsite(str(row, "deliverableLinks"))
 
 	var id int64
 	var query string
@@ -3371,15 +3650,23 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (
 	if err == nil {
 		if hasRating {
 			_, err = tx.ExecContext(ctx,
-				`update biz_resources set industry = ?, category = ?, platform = ?, followers = ?,
-				 avg_views = ?, score = ?, level = ? where id = ?`,
-				category, category, platform, followers, views, score, level, id,
+				`update biz_resources set resource_type = ?, media_outlet = if(? <> '', ?, media_outlet),
+				 country = if(? <> '', ?, country), industry = if(? <> '', ?, industry),
+				 category = if(? <> '', ?, category), platform = if(? <> '', ?, platform),
+				 followers = if(? > 0, ?, followers), avg_views = if(? > 0, ?, avg_views),
+				 website = if(? <> '', ?, website), score = ?, level = ? where id = ?`,
+				resourceType, mediaOutlet, mediaOutlet, country, country, category, category, category, category,
+				platform, platform, followers, followers, views, views, website, website, score, level, id,
 			)
 		} else {
 			_, err = tx.ExecContext(ctx,
-				`update biz_resources set industry = ?, category = ?, platform = ?, followers = ?,
-				 avg_views = ? where id = ?`,
-				category, category, platform, followers, views, id,
+				`update biz_resources set resource_type = ?, media_outlet = if(? <> '', ?, media_outlet),
+				 country = if(? <> '', ?, country), industry = if(? <> '', ?, industry),
+				 category = if(? <> '', ?, category), platform = if(? <> '', ?, platform),
+				 followers = if(? > 0, ?, followers), avg_views = if(? > 0, ?, avg_views),
+				 website = if(? <> '', ?, website) where id = ?`,
+				resourceType, mediaOutlet, mediaOutlet, country, country, category, category, category, category,
+				platform, platform, followers, followers, views, views, website, website, id,
 			)
 		}
 		return id, false, err
@@ -3394,9 +3681,11 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (
 	}
 	result, err := tx.ExecContext(ctx,
 		`insert into biz_resources
-		 (name, resource_type, platform, industry, category, followers, avg_views, score, level, status, risk_level)
-		 values (?, 'KOL', ?, ?, ?, ?, ?, ?, ?, '可合作', '低')`,
-		name, platform, category, category, followers, views, score, level,
+		 (name, resource_type, media_outlet, country, platform, industry, category, followers, avg_views,
+		  website, score, level, status, risk_level)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '可合作', '低')`,
+		name, resourceType, mediaOutlet, country, platform, category, category, followers, views,
+		website, score, level,
 	)
 	if err != nil {
 		return 0, false, err
@@ -3405,19 +3694,156 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (
 	return id, true, err
 }
 
-func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64, batchID string, row map[string]any) error {
+func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64, batchID string, row map[string]any) (bool, error) {
 	views := intField(row, "views")
-	_, err := tx.ExecContext(ctx,
+	rawLink := cleanImportString(str(row, "deliverableLinks"))
+	link := ""
+	if rawLink != "" {
+		var err error
+		link, err = normalizeImportedCooperationLink(rawLink)
+		if err != nil {
+			return false, err
+		}
+	}
+	if link == "" {
+		var existingID int64
+		err := tx.QueryRowContext(ctx,
+			`select id from biz_cooperations
+			  where project_id = ? and resource_id = ?
+			    and coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '') = ''
+			  limit 1`,
+			projectID, resourceID,
+		).Scan(&existingID)
+		if err == nil {
+			_, err = tx.ExecContext(ctx,
+				`update biz_cooperations set import_batch_id = ?, notes = ? where id = ?`,
+				batchID, "通用达人表格导入", existingID,
+			)
+			return false, err
+		}
+		if err != sql.ErrNoRows {
+			return false, err
+		}
+		_, err = tx.ExecContext(ctx,
+			`insert into biz_cooperations
+			 (project_id, resource_id, cooperation_type, quote_amount, currency, status, deliverable_status,
+			  import_batch_id, notes)
+			 values (?, ?, ?, ?, 'USD', '邀约中', '未开始', ?, ?)`,
+			projectID, resourceID, defaultString(str(row, "category"), "达人合作"), floatField(row, "quoteAmount"),
+			batchID, "通用达人表格导入",
+		)
+		return true, err
+	}
+	var existingID int64
+	var err error
+	err = tx.QueryRowContext(ctx,
+		`select id from biz_cooperations
+		  where project_id = ? and resource_id = ? and lower(coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '')) = lower(?)
+		  limit 1`,
+		projectID, resourceID, link,
+	).Scan(&existingID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx,
+			`update biz_cooperations set cooperation_type = ?, status = '已发布', deliverable_status = '已完成',
+			 impressions = ?, views = ?, engagement_count = ?, comments_count = ?, release_date = ?,
+			 deliverable_links = ?, final_link = ?, import_batch_id = ?, notes = ? where id = ?`,
+			defaultString(str(row, "category"), "内容合作"), views, views, intField(row, "engagementCount"),
+			intField(row, "commentsCount"), importedReleaseDate(str(row, "releaseDate")), link, link, batchID,
+			"通用内容表格导入", existingID,
+		)
+		return false, err
+	}
+	if err != sql.ErrNoRows {
+		return false, err
+	}
+	// The first published link completes a profile-only project association;
+	// later links remain separate content records for the same creator.
+	err = tx.QueryRowContext(ctx,
+		`select id from biz_cooperations
+		  where project_id = ? and resource_id = ?
+		    and coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '') = ''
+		  limit 1`,
+		projectID, resourceID,
+	).Scan(&existingID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx,
+			`update biz_cooperations set cooperation_type = ?, status = '已发布', deliverable_status = '已完成',
+			 impressions = ?, views = ?, engagement_count = ?, comments_count = ?, release_date = ?,
+			 deliverable_links = ?, final_link = ?, import_batch_id = ?, notes = ? where id = ?`,
+			defaultString(str(row, "category"), "内容合作"), views, views, intField(row, "engagementCount"),
+			intField(row, "commentsCount"), importedReleaseDate(str(row, "releaseDate")), link, link, batchID,
+			"通用内容表格导入", existingID,
+		)
+		return false, err
+	}
+	if err != sql.ErrNoRows {
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx,
 		`insert into biz_cooperations
 		 (project_id, resource_id, cooperation_type, quote_amount, currency, status, deliverable_status,
 		  impressions, views, engagement_count, comments_count, release_date, deliverable_links,
-		  import_batch_id, notes)
-		 values (?, ?, ?, ?, 'USD', '已发布', '已完成', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  final_link, import_batch_id, notes)
+		 values (?, ?, ?, ?, 'USD', '已发布', '已完成', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		projectID, resourceID, str(row, "category"), floatField(row, "quoteAmount"), views, views, intField(row, "engagementCount"),
-		intField(row, "commentsCount"), nullableDate(str(row, "releaseDate")),
-		str(row, "deliverableLinks"), batchID, defaultString(str(row, "rating"), "表格导入"),
+		intField(row, "commentsCount"), importedReleaseDate(str(row, "releaseDate")),
+		link, link, batchID, defaultString(str(row, "rating"), "通用内容表格导入"),
 	)
-	return err
+	return true, err
+}
+
+func normalizeImportedCooperationLink(value string) (string, error) {
+	value = cleanImportString(value)
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", fmt.Errorf("发布链接必须是有效 URL")
+	}
+	query := parsed.Query()
+	for key := range query {
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "utm_") || lowerKey == "fbclid" || lowerKey == "gclid" || lowerKey == "igsh" || lowerKey == "t" {
+			query.Del(key)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func importedLinkWebsite(value string) string {
+	link, err := normalizeImportedCooperationLink(value)
+	if err != nil {
+		return ""
+	}
+	parsed, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+func importedReleaseDate(value string) any {
+	if normalized := normalizeImportedDate(value); normalized != "" {
+		return normalized
+	}
+	return nil
+}
+
+func normalizeImportedDate(value string) string {
+	value = cleanImportString(value)
+	if value == "" {
+		return ""
+	}
+	for _, layout := range []string{
+		"2006-01-02", "2006/01/02", "2006.01.02",
+		"01/02/06", "1/2/06", "01/02/2006", "1/2/2006",
+		"01-02-06", "1-2-06", "01-02-2006", "1-2-2006",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.Format("2006-01-02")
+		}
+	}
+	return ""
 }
 
 func (a *app) businessBriefTemplates(w http.ResponseWriter, r *http.Request) {
