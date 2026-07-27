@@ -1,17 +1,30 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import echarts from "@/plugins/echarts";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import {
-  downloadProjectReport,
+  addProjectResource,
+  deleteProjectResource,
+  downloadProjectData,
   getProjectDetail,
   getProjectList,
+  getProjectResourceOptions,
   renewProject,
   reportProjectInfluencer,
+  searchOnlineProjectResource,
   updateProject,
   updateProjectBudget,
+  updateProjectResource,
   updateProjectStatus
 } from "@/api/business";
 
@@ -21,6 +34,7 @@ type SectionKey = "collaboration" | "report" | "budget" | "campaignInfo";
 type ReportScope = "campaign" | "influencer";
 type ReportMetric = "views" | "clicks" | "cpm" | "cpc";
 type CampaignTab = "overview" | "creators" | "content";
+type PlatformMetric = "exposure" | "engagement";
 
 const route = useRoute();
 const router = useRouter();
@@ -35,7 +49,9 @@ const billingEvents = ref<any[]>([]);
 const contentPosts = ref<any[]>([]);
 const reportSummary = ref<any>({});
 const loading = ref(false);
-const selectedProjectId = ref<number | null>(Number(route.query.id || 0) || null);
+const selectedProjectId = ref<number | null>(
+  Number(route.query.id || 0) || null
+);
 const activeSection = ref<SectionKey>("collaboration");
 const activePipelineStage = ref("all");
 const activeCooperation = ref<any>(null);
@@ -46,18 +62,38 @@ const reportAudience = ref("all");
 const reportPlatform = ref("all");
 const reportCreative = ref("all");
 const detailTab = ref("content");
-const campaignTab = ref<CampaignTab>("overview");
+const campaignTab = ref<CampaignTab>(
+  route.query.contentId ? "content" : "creators"
+);
 const creatorSearch = ref("");
+const creatorCategory = ref("all");
+const creatorPlatform = ref("all");
+const creatorTier = ref("all");
 const contentSearch = ref("");
 const contentPlatform = ref("all");
+const contentSort = ref("latest");
 const chartRef = ref<HTMLDivElement>();
+const platformDistributionChartRef = ref<HTMLDivElement>();
+const platformPerformanceChartRef = ref<HTMLDivElement>();
+const platformMetric = ref<PlatformMetric>("exposure");
 let reportChart: ReturnType<typeof echarts.init> | undefined;
+let platformDistributionChart: ReturnType<typeof echarts.init> | undefined;
+let platformPerformanceChart: ReturnType<typeof echarts.init> | undefined;
 
 const projectDialog = ref(false);
 const budgetDialog = ref(false);
 const renewDialog = ref(false);
 const reportDialog = ref(false);
+const creatorDialog = ref(false);
+const creatorDialogMode = ref<"create" | "edit">("create");
+const creatorOptions = ref<any[]>([]);
+const creatorOptionsLoading = ref(false);
+const creatorLibraryKeyword = ref("");
+const onlineSearchExpanded = ref(false);
+const onlineSearchLoading = ref(false);
+const onlineSearchResult = ref<any>(null);
 const submitting = ref(false);
+const onlineSearchOptionValue = -1;
 
 const projectForm = reactive({
   name: "",
@@ -77,7 +113,35 @@ const projectForm = reactive({
 
 const budgetForm = reactive({ budget: 0 });
 const renewForm = reactive({ cycleStartDate: "", cycleEndDate: "" });
-const influencerReportForm = reactive({ reason: "内容质量或数据异常", detail: "" });
+const influencerReportForm = reactive({
+  reason: "内容质量或数据异常",
+  detail: ""
+});
+const creatorForm = reactive({
+  resourceId: null as number | null,
+  resourceName: "",
+  resourceType: "KOL",
+  category: "",
+  market: "",
+  platform: "YouTube",
+  platformUrl: "",
+  primaryContact: "",
+  followers: 0,
+  collaboratorTier: ""
+});
+const onlineSearchForm = reactive({
+  platform: "Instagram",
+  query: "",
+  resourceType: "KOL"
+});
+
+const visibleCreatorOptions = computed(() => {
+  const keyword = creatorLibraryKeyword.value.trim().toLowerCase();
+  if (!keyword) return creatorOptions.value;
+  return creatorOptions.value.filter(item =>
+    creatorOptionLabel(item).toLowerCase().includes(keyword)
+  );
+});
 
 const navItems = [
   { key: "collaboration", label: "协作执行", icon: "ri:team-line" },
@@ -121,14 +185,18 @@ const pipelineStages = computed(() => {
   ];
   return stageDefinitions.map(stage => ({
     ...stage,
-    count: cooperations.value.filter(item => cooperationStage(item) === stage.key).length
+    count: cooperations.value.filter(
+      item => cooperationStage(item) === stage.key
+    ).length
   }));
 });
 
 const pipelineRows = computed(() =>
   activePipelineStage.value === "all"
     ? cooperations.value
-    : cooperations.value.filter(item => cooperationStage(item) === activePipelineStage.value)
+    : cooperations.value.filter(
+        item => cooperationStage(item) === activePipelineStage.value
+      )
 );
 
 const pendingActions = computed(() =>
@@ -141,47 +209,63 @@ const pendingActions = computed(() =>
 const focusedCooperation = computed(() => {
   const activeId = Number(activeCooperation.value?.id || 0);
   if (activeId) {
-    const current = cooperations.value.find(item => Number(item.id) === activeId);
+    const current = cooperations.value.find(
+      item => Number(item.id) === activeId
+    );
     if (current) return current;
   }
-  return pendingActions.value[0] || pipelineRows.value[0] || cooperations.value[0] || null;
+  return (
+    pendingActions.value[0] ||
+    pipelineRows.value[0] ||
+    cooperations.value[0] ||
+    null
+  );
 });
 
 const currentDeliverables = computed(() =>
   deliverables.value.filter(
-    item => Number(item.cooperationId) === Number(focusedCooperation.value?.id || 0)
+    item =>
+      Number(item.cooperationId) === Number(focusedCooperation.value?.id || 0)
   )
 );
 
 const projectContentPosts = computed(() => {
   const seenLinks = new Set<string>();
   const posts = contentPosts.value.filter(post => {
-    const link = String(post.postUrl || "").trim().toLowerCase();
+    const link = String(post.postUrl || "")
+      .trim()
+      .toLowerCase();
     if (!link || seenLinks.has(link)) return !link;
     seenLinks.add(link);
     return true;
   });
   const importedPosts = cooperations.value.flatMap(item => {
-    const postUrl = String(item.finalLink || item.deliverableLinks || "").trim();
+    const postUrl = String(
+      item.finalLink || item.deliverableLinks || ""
+    ).trim();
     if (!postUrl || seenLinks.has(postUrl.toLowerCase())) return [];
     seenLinks.add(postUrl.toLowerCase());
-    return [{
-      id: `cooperation-${item.id}`,
-      resourceId: item.resourceId,
-      resourceName: item.resourceName,
-      resourceAvatarUrl: item.resourceAvatarUrl,
-      platformHandle: item.platformHandle,
-      platform: item.platform || "Website",
-      title: item.creativeName || item.cooperationType || "已导入发布内容",
-      description: item.notes,
-      postUrl,
-      mediaType: "imported",
-      publishedAt: item.publishTime || item.releaseDate || item.updatedAt,
-      viewCount: item.views || item.impressions,
-      likeCount: item.engagementCount,
-      commentCount: item.commentsCount,
-      shareCount: 0
-    }];
+    return [
+      {
+        id: `cooperation-${item.id}`,
+        resourceId: item.resourceId,
+        resourceName: item.resourceName,
+        resourceAvatarUrl: item.resourceAvatarUrl,
+        platformHandle: item.platformHandle,
+        platform: item.platform || "Website",
+        title: item.creativeName || item.cooperationType || "已导入发布内容",
+        description: item.notes,
+        postUrl,
+        mediaType: "imported",
+        publishedAt: item.publishTime || item.releaseDate || item.updatedAt,
+        viewCount: item.views || item.impressions,
+        engagementCount: item.engagementCount,
+        likeCount: item.engagementCount,
+        commentCount: item.commentsCount,
+        shareCount: 0,
+        saveCount: 0
+      }
+    ];
   });
   return [...posts, ...importedPosts];
 });
@@ -201,78 +285,259 @@ const projectCreators = computed(() => {
   return Array.from(creatorByResource.values());
 });
 
-const filteredCreators = computed(() => {
-  const keyword = creatorSearch.value.trim().toLowerCase();
-  if (!keyword) return projectCreators.value;
-  return projectCreators.value.filter(item =>
-    [item.resourceName, item.platformHandle, item.platform, item.status]
-      .filter(Boolean)
-      .some(value => String(value).toLowerCase().includes(keyword))
-  );
-});
-
-const contentPlatforms = computed(() =>
-  Array.from(new Set(projectContentPosts.value.map(item => String(item.platform || "")).filter(Boolean)))
+const creatorCategoryOptions = computed(() =>
+  uniqueOptions(projectCreators.value.map(item => item.category))
+);
+const creatorPlatformOptions = computed(() =>
+  uniqueOptions(projectCreators.value.map(item => item.platform))
+);
+const creatorTierOptions = computed(() =>
+  uniqueOptions(projectCreators.value.map(item => item.collaboratorTier))
 );
 
-const filteredContentPosts = computed(() => {
-  const keyword = contentSearch.value.trim().toLowerCase();
-  return projectContentPosts.value.filter(item => {
-    if (contentPlatform.value !== "all" && item.platform !== contentPlatform.value) return false;
+const filteredCreators = computed(() => {
+  const keyword = creatorSearch.value.trim().toLowerCase();
+  return projectCreators.value.filter(item => {
+    if (
+      creatorCategory.value !== "all" &&
+      item.category !== creatorCategory.value
+    )
+      return false;
+    if (
+      creatorPlatform.value !== "all" &&
+      item.platform !== creatorPlatform.value
+    )
+      return false;
+    if (
+      creatorTier.value !== "all" &&
+      item.collaboratorTier !== creatorTier.value
+    )
+      return false;
     if (!keyword) return true;
-    return [item.title, item.description, item.resourceName, item.platformHandle]
+    return [item.resourceName, item.platform, item.resourceType, item.category]
       .filter(Boolean)
       .some(value => String(value).toLowerCase().includes(keyword));
   });
 });
 
+const influencerRows = computed(() =>
+  filteredCreators.value.filter(item => !isMediaResource(item))
+);
+const mediaRows = computed(() =>
+  filteredCreators.value.filter(item => isMediaResource(item))
+);
+
+const contentPlatforms = computed(() =>
+  Array.from(
+    new Set(
+      projectContentPosts.value
+        .map(item => String(item.platform || ""))
+        .filter(Boolean)
+    )
+  )
+);
+
+const filteredContentPosts = computed(() => {
+  const keyword = contentSearch.value.trim().toLowerCase();
+  const rows = projectContentPosts.value.filter(item => {
+    if (
+      contentPlatform.value !== "all" &&
+      item.platform !== contentPlatform.value
+    )
+      return false;
+    if (!keyword) return true;
+    return [
+      item.title,
+      item.description,
+      item.resourceName,
+      item.platformHandle
+    ]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(keyword));
+  });
+  return [...rows].sort((left, right) => {
+    if (contentSort.value === "views")
+      return postExposure(right) - postExposure(left);
+    if (contentSort.value === "engagement")
+      return postEngagement(right) - postEngagement(left);
+    return contentDateRank(right) - contentDateRank(left);
+  });
+});
+
+const selectedContentPost = computed(() => {
+  const contentId = String(route.query.contentId || "");
+  if (!contentId) return null;
+  return (
+    projectContentPosts.value.find(item => String(item.id) === contentId) ||
+    null
+  );
+});
+
 const campaignOverview = computed(() => {
   const posts = projectContentPosts.value;
-  const total = (key: string) => posts.reduce((sum, item) => sum + numberValue(item[key]), 0);
-  const posted = new Set(posts.map(item => Number(item.resourceId)).filter(Boolean)).size;
-  const views = total("viewCount") || numberValue(stats.value.totalReach);
-  const engagements = total("likeCount") + total("commentCount") + total("shareCount") || numberValue(stats.value.totalEngagements);
-  const impressions = numberValue(stats.value.totalReach) || views;
+  const creatorNames = new Set(
+    projectCreators.value
+      .map(item =>
+        String(item.resourceName || item.platformHandle || "")
+          .trim()
+          .toLowerCase()
+      )
+      .filter(Boolean)
+  );
+  const publishedCreators = new Set(
+    posts
+      .map(item =>
+        String(
+          item.resourceName || item.platformHandle || item.resourceId || ""
+        )
+          .trim()
+          .toLowerCase()
+      )
+      .filter(Boolean)
+  );
+  const views =
+    posts.reduce((sum, item) => sum + postExposure(item), 0) ||
+    numberValue(stats.value.totalReach);
+  const engagements =
+    posts.reduce((sum, item) => sum + postEngagement(item), 0) ||
+    numberValue(stats.value.totalEngagements);
+  const paidRows = cooperations.value.filter(isPaidKOLCooperation);
+  const paidResourceIds = new Set(
+    paidRows.map(item => Number(item.resourceId)).filter(Boolean)
+  );
+  const paidPosts = posts.filter(item =>
+    paidResourceIds.has(Number(item.resourceId))
+  );
+  const paidCost = paidRows.reduce(
+    (sum, item) => sum + numberValue(item.quoteAmount),
+    0
+  );
+  const paidExposure =
+    paidPosts.reduce((sum, item) => sum + postExposure(item), 0) ||
+    paidRows.reduce((sum, item) => sum + primaryReach(item), 0);
+  const paidEngagement =
+    paidPosts.reduce((sum, item) => sum + postEngagement(item), 0) ||
+    paidRows.reduce((sum, item) => sum + numberValue(item.engagementCount), 0);
+  const stories = posts.filter(item =>
+    /story/i.test(String(item.mediaType || ""))
+  ).length;
+  const videos = posts.filter(item =>
+    /reel|video|short/i.test(String(item.mediaType || ""))
+  ).length;
   return {
-    posted,
+    collaborators: creatorNames.size,
+    publishedCreators: publishedCreators.size,
     today: posts.filter(item => isToday(item.publishedAt)).length,
     posts: posts.length,
-    reels: posts.filter(item => /reel|video|short/i.test(String(item.mediaType || ""))).length,
-    stories: posts.filter(item => /story/i.test(String(item.mediaType || ""))).length,
-    likes: total("likeCount"),
-    comments: total("commentCount"),
+    standardPosts: Math.max(posts.length - stories - videos, 0),
+    stories,
+    videos,
     engagements,
     views,
-    impressions,
-    reach: numberValue(stats.value.totalReach) || views,
-    engagementRate: ratioPercent(engagements, impressions),
-    cpm: cpmValue(stats.value.totalCost, impressions),
-    clicks: numberValue(stats.value.totalClicks),
-    conversions: cooperations.value.reduce((sum, item) => sum + numberValue(item.conversions), 0),
-    cost: numberValue(stats.value.totalCost)
+    engagementRate: ratioPercent(engagements, views),
+    paidCost,
+    cpm: paidExposure > 0 ? (paidCost * 1000) / paidExposure : 0,
+    cpe: paidEngagement > 0 ? paidCost / paidEngagement : 0
   };
 });
 
+const platformPerformance = computed(() => {
+  const grouped = new Map<
+    string,
+    {
+      platform: string;
+      contentCount: number;
+      exposure: number;
+      engagement: number;
+      color: string;
+    }
+  >();
+  projectContentPosts.value.forEach(post => {
+    const platform = normalizePlatformName(post.platform);
+    const current = grouped.get(platform) || {
+      platform,
+      contentCount: 0,
+      exposure: 0,
+      engagement: 0,
+      color: platformColor(platform)
+    };
+    current.contentCount += 1;
+    current.exposure += postExposure(post);
+    current.engagement += postEngagement(post);
+    grouped.set(platform, current);
+  });
+  return Array.from(grouped.values()).sort(
+    (left, right) =>
+      right.contentCount - left.contentCount ||
+      right.exposure - left.exposure ||
+      left.platform.localeCompare(right.platform)
+  );
+});
+
+const platformTotals = computed(() =>
+  platformPerformance.value.reduce(
+    (summary, item) => {
+      summary.content += item.contentCount;
+      summary.exposure += item.exposure;
+      summary.engagement += item.engagement;
+      return summary;
+    },
+    { content: 0, exposure: 0, engagement: 0 }
+  )
+);
+
 const segments = computed(() => reportSummary.value?.segments || []);
-const audienceOptions = computed(() => uniqueOptions(segments.value.map(item => item.audienceSegment)));
-const platformOptions = computed(() => uniqueOptions(segments.value.map(item => item.platform)));
-const creativeOptions = computed(() => uniqueOptions(segments.value.map(item => item.creativeName)));
+const audienceOptions = computed(() =>
+  uniqueOptions(segments.value.map(item => item.audienceSegment))
+);
+const platformOptions = computed(() =>
+  uniqueOptions(segments.value.map(item => item.platform))
+);
+const creativeOptions = computed(() =>
+  uniqueOptions(segments.value.map(item => item.creativeName))
+);
 
 const filteredSegments = computed(() =>
   segments.value.filter(item => {
-    if (reportAudience.value !== "all" && item.audienceSegment !== reportAudience.value) return false;
-    if (reportPlatform.value !== "all" && item.platform !== reportPlatform.value) return false;
-    if (reportCreative.value !== "all" && item.creativeName !== reportCreative.value) return false;
+    if (
+      reportAudience.value !== "all" &&
+      item.audienceSegment !== reportAudience.value
+    )
+      return false;
+    if (
+      reportPlatform.value !== "all" &&
+      item.platform !== reportPlatform.value
+    )
+      return false;
+    if (
+      reportCreative.value !== "all" &&
+      item.creativeName !== reportCreative.value
+    )
+      return false;
     return true;
   })
 );
 
-const visibleReportSummary = computed(() => buildReportSummary(filteredSegments.value));
-const isPaused = computed(() => /paused|暂停/i.test(String(project.value?.status || "")) || Boolean(project.value?.pausedAt));
-const cycleLabel = computed(() => `${project.value?.cycleStartDate || "-"} - ${project.value?.cycleEndDate || "-"}`);
+const visibleReportSummary = computed(() =>
+  buildReportSummary(filteredSegments.value)
+);
+const isPaused = computed(
+  () =>
+    /paused|暂停/i.test(String(project.value?.status || "")) ||
+    Boolean(project.value?.pausedAt)
+);
+const cycleLabel = computed(
+  () =>
+    `${project.value?.cycleStartDate || "-"} - ${project.value?.cycleEndDate || "-"}`
+);
+const createdDateLabel = computed(() => dateText(project.value?.createdAt));
 const costToDate = computed(() => numberValue(budget.value?.costToDate));
-const projectBudget = computed(() => numberValue(budget.value?.budget ?? project.value?.budget));
-const activeStatusLabel = computed(() => (isPaused.value ? "已暂停" : "进行中"));
+const projectBudget = computed(() =>
+  numberValue(budget.value?.budget ?? project.value?.budget)
+);
+const activeStatusLabel = computed(() =>
+  isPaused.value ? "已暂停" : "进行中"
+);
 const activeStatusType = computed(() => (isPaused.value ? "info" : "success"));
 
 async function loadProjects() {
@@ -335,7 +600,10 @@ function handleProjectChange(value: number) {
   selectedProjectId.value = value;
   activePipelineStage.value = "all";
   activeCooperation.value = null;
-  router.replace({ path: "/business/projects/detail", query: { id: String(value) } });
+  router.replace({
+    path: "/business/projects/detail",
+    query: { id: String(value) }
+  });
   loadDetail();
 }
 
@@ -356,8 +624,369 @@ function openPost(post: any) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-function showCreatorColumnsHint() {
-  ElMessage.info("当前已展示创作者、账号、状态、内容和效果等核心字段");
+function useLocalPostCover(event: Event, post: any) {
+  const image = event.currentTarget as HTMLImageElement | null;
+  const fallbackURL = String(post?.coverLocalUrl || "").trim();
+  if (!image || !fallbackURL || image.dataset.localFallbackApplied === "1") {
+    return;
+  }
+  image.dataset.localFallbackApplied = "1";
+  image.src = fallbackURL;
+}
+
+function selectCampaignTab(tab: CampaignTab) {
+  campaignTab.value = tab;
+  if (route.query.contentId) {
+    const query = { ...route.query };
+    delete query.contentId;
+    router.replace({ path: route.path, query });
+  }
+}
+
+function openContentDetail(post: any) {
+  if (post?.id === undefined || post?.id === null) return;
+  router.push({
+    path: route.path,
+    query: { ...route.query, contentId: String(post.id) }
+  });
+}
+
+function closeContentDetail() {
+  const query = { ...route.query };
+  delete query.contentId;
+  router.replace({ path: route.path, query });
+}
+
+function contentResource(post: any) {
+  return projectCreators.value.find(
+    item => Number(item.resourceId) === Number(post?.resourceId)
+  );
+}
+
+function contentFollowers(post: any) {
+  const resource = contentResource(post);
+  return (
+    numberValue(resource?.audienceSize) || numberValue(resource?.followers)
+  );
+}
+
+function contentAvatar(post: any) {
+  return (
+    post?.resourceAvatarUrl || contentResource(post)?.resourceAvatarUrl || ""
+  );
+}
+
+function contentCooperation(post: any) {
+  const postURL = normalizedContentUrl(post?.postUrl);
+  if (!postURL) return null;
+  return (
+    cooperations.value.find(item => {
+      if (Number(item.resourceId) !== Number(post?.resourceId)) return false;
+      return [item.finalLink, item.deliverableLinks].some(value => {
+        const raw = String(value || "");
+        const links = raw.match(/https?:\/\/[^\s,，;；]+/g) || [raw];
+        return links.some(link => normalizedContentUrl(link) === postURL);
+      });
+    }) || null
+  );
+}
+
+function contentCPM(post: any) {
+  return cpmValue(contentCooperation(post)?.quoteAmount, postExposure(post));
+}
+
+function isViralContent(post: any) {
+  return postExposure(post) > 10_000_000;
+}
+
+function isMediaResource(row: any) {
+  return /媒体|media/i.test(String(row?.resourceType || ""));
+}
+
+function normalizedContentUrl(value: unknown) {
+  return String(value || "")
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/$/, "")
+    .toLowerCase();
+}
+
+function cooperationContentUrls(resourceId: unknown) {
+  const urls = new Set<string>();
+  cooperations.value
+    .filter(item => Number(item.resourceId) === Number(resourceId))
+    .forEach(item => {
+      [item.finalLink, item.deliverableLinks].forEach(value => {
+        const raw = String(value || "").trim();
+        const matches = raw.match(/https?:\/\/[^\s,，;；]+/g) || [];
+        (matches.length ? matches : raw ? [raw] : []).forEach(url => {
+          const normalized = normalizedContentUrl(url);
+          if (normalized) urls.add(normalized);
+        });
+      });
+    });
+  return urls;
+}
+
+function projectPostsForResource(row: any) {
+  const resourceId = Number(row?.resourceId || 0);
+  const projectLinks = cooperationContentUrls(resourceId);
+  if (!projectLinks.size) return [];
+  return projectContentPosts.value.filter(post => {
+    if (Number(post.resourceId) !== resourceId) return false;
+    return projectLinks.has(normalizedContentUrl(post.postUrl));
+  });
+}
+
+function projectContentCount(row: any) {
+  return projectPostsForResource(row).length;
+}
+
+function projectAudience(row: any) {
+  return numberValue(row.audienceSize) || numberValue(row.followers);
+}
+
+function projectExposure(row: any) {
+  const total = projectPostsForResource(row).reduce(
+    (sum, post) => sum + postExposure(post),
+    0
+  );
+  return total || primaryReach(row);
+}
+
+function projectEngagement(row: any) {
+  const total = projectPostsForResource(row).reduce(
+    (sum, post) => sum + postEngagement(post),
+    0
+  );
+  return total || numberValue(row.engagementCount);
+}
+
+function latestProjectPost(row: any) {
+  return [...projectPostsForResource(row)].sort(
+    (left, right) => contentDateRank(right) - contentDateRank(left)
+  )[0];
+}
+
+function contentDateRank(post: any) {
+  const value = post?.publishedAt || post?.releaseDate || post?.updatedAt;
+  const date = new Date(Number(value) || String(value || ""));
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function openResourceProfile(row: any) {
+  const resourceId = Number(row?.resourceId || 0);
+  if (!resourceId) return;
+  router.push({
+    path: "/business/resources",
+    query: { resourceId: String(resourceId) }
+  });
+}
+
+function sortByContentCount(left: any, right: any) {
+  return projectContentCount(left) - projectContentCount(right);
+}
+
+function sortByAudience(left: any, right: any) {
+  return projectAudience(left) - projectAudience(right);
+}
+
+function sortByExposure(left: any, right: any) {
+  return projectExposure(left) - projectExposure(right);
+}
+
+function sortByEngagement(left: any, right: any) {
+  return projectEngagement(left) - projectEngagement(right);
+}
+
+function resetCreatorForm() {
+  Object.assign(creatorForm, {
+    resourceId: null,
+    resourceName: "",
+    resourceType: "KOL",
+    category: "",
+    market: "",
+    platform: "YouTube",
+    platformUrl: "",
+    primaryContact: "",
+    followers: 0,
+    collaboratorTier: ""
+  });
+  creatorLibraryKeyword.value = "";
+  onlineSearchExpanded.value = false;
+  onlineSearchResult.value = null;
+  Object.assign(onlineSearchForm, {
+    platform: "Instagram",
+    query: "",
+    resourceType: "KOL"
+  });
+}
+
+async function openCreateProjectResource() {
+  if (!project.value) return;
+  resetCreatorForm();
+  creatorDialogMode.value = "create";
+  creatorDialog.value = true;
+  creatorOptionsLoading.value = true;
+  try {
+    const res = await getProjectResourceOptions({
+      projectId: project.value.id
+    });
+    creatorOptions.value =
+      res.code === 0 && Array.isArray(res.data) ? res.data : [];
+  } finally {
+    creatorOptionsLoading.value = false;
+  }
+}
+
+function openEditProjectResource(row: any) {
+  resetCreatorForm();
+  creatorDialogMode.value = "edit";
+  Object.assign(creatorForm, {
+    resourceId: Number(row.resourceId || 0) || null,
+    resourceName: row.resourceName || "",
+    resourceType: row.resourceType || "KOL",
+    category: row.category || "",
+    market: row.market || row.country || "",
+    platform: row.platform || "YouTube",
+    platformUrl: row.platformUrl || "",
+    primaryContact: row.primaryContact || "",
+    followers: numberValue(row.followers),
+    collaboratorTier: row.collaboratorTier || ""
+  });
+  creatorDialog.value = true;
+}
+
+function creatorOptionLabel(row: any) {
+  return [row.resourceName, row.resourceType, row.platform]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function filterCreatorOptions(value: string) {
+  creatorLibraryKeyword.value = value;
+}
+
+function handleCreatorOptionChange(value: number | null) {
+  if (value !== onlineSearchOptionValue) {
+    onlineSearchExpanded.value = false;
+    onlineSearchResult.value = null;
+    return;
+  }
+  creatorForm.resourceId = null;
+  onlineSearchForm.query = creatorLibraryKeyword.value.trim();
+  onlineSearchExpanded.value = true;
+}
+
+async function runOnlineCreatorSearch() {
+  if (!project.value) return;
+  if (!onlineSearchForm.platform || !onlineSearchForm.query.trim()) {
+    ElMessage.warning("请选择平台并输入主页链接、@handle 或账号");
+    return;
+  }
+  onlineSearchLoading.value = true;
+  onlineSearchResult.value = null;
+  try {
+    const res = await searchOnlineProjectResource({
+      projectId: project.value.id,
+      ...onlineSearchForm
+    });
+    if (res.code !== 0) {
+      ElMessage.warning(res.message || "全网搜索失败");
+      return;
+    }
+    const resource = res.data?.resource;
+    if (!resource?.resourceId) {
+      ElMessage.warning("平台接口未返回有效账号");
+      return;
+    }
+    if (
+      !creatorOptions.value.some(
+        item => Number(item.resourceId) === Number(resource.resourceId)
+      )
+    ) {
+      creatorOptions.value.unshift(resource);
+    }
+    creatorForm.resourceId = Number(resource.resourceId);
+    onlineSearchResult.value = resource;
+    ElMessage.success(
+      res.data?.created
+        ? "已从平台找到账号并同步到全球资源库"
+        : "已在全球资源库中找到该账号"
+    );
+  } finally {
+    onlineSearchLoading.value = false;
+  }
+}
+
+async function submitProjectResource() {
+  if (!project.value) return;
+  if (!creatorForm.resourceId) {
+    ElMessage.warning("请选择达人或媒体");
+    return;
+  }
+  if (
+    creatorDialogMode.value === "edit" &&
+    (!creatorForm.resourceName.trim() || !creatorForm.resourceType)
+  ) {
+    ElMessage.warning("请填写达人/媒体名称和类型");
+    return;
+  }
+  submitting.value = true;
+  try {
+    const res =
+      creatorDialogMode.value === "create"
+        ? await addProjectResource({
+            projectId: project.value.id,
+            resourceId: creatorForm.resourceId,
+            source: "项目手动添加",
+            status: "已关联"
+          })
+        : await updateProjectResource({
+            projectId: project.value.id,
+            ...creatorForm
+          });
+    if (res.code !== 0) {
+      ElMessage.warning(res.message || "保存失败");
+      return;
+    }
+    ElMessage.success(
+      creatorDialogMode.value === "create"
+        ? "达人/媒体已添加"
+        : "达人/媒体已更新"
+    );
+    creatorDialog.value = false;
+    await loadDetail();
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function removeProjectResource(row: any) {
+  if (!project.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认从当前项目删除「${row.resourceName || "该达人/媒体"}」吗？其项目合作记录和关联内容也会一并删除，但不会从全球资源库删除。`,
+      "删除达人/媒体",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消"
+      }
+    );
+  } catch {
+    return;
+  }
+  const res = await deleteProjectResource({
+    projectId: project.value.id,
+    resourceId: row.resourceId
+  });
+  if (res.code !== 0) {
+    ElMessage.warning(res.message || "删除失败");
+    return;
+  }
+  ElMessage.success("已从项目删除达人/媒体");
+  await loadDetail();
 }
 
 function setSection(section: SectionKey) {
@@ -378,7 +1007,10 @@ function formatCount(value: unknown) {
   return number.toLocaleString("zh-CN");
 }
 
-function moneyText(value: unknown, currency = project.value?.currency || "USD") {
+function moneyText(
+  value: unknown,
+  currency = project.value?.currency || "USD"
+) {
   const number = numberValue(value);
   if (number <= 0) return "-";
   const formatted = number.toLocaleString("en-US", {
@@ -389,7 +1021,15 @@ function moneyText(value: unknown, currency = project.value?.currency || "USD") 
 
 function dateText(value: unknown) {
   if (!value) return "-";
-  return String(value).slice(0, 10);
+  const raw = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const date = new Date(Number(value) || raw);
+  if (Number.isNaN(date.getTime())) return "-";
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
 }
 
 function isToday(value: unknown) {
@@ -402,6 +1042,61 @@ function isToday(value: unknown) {
 
 function primaryReach(row: any) {
   return numberValue(row.impressions) || numberValue(row.views);
+}
+
+function postExposure(row: any) {
+  return (
+    numberValue(row.viewCount) ||
+    numberValue(row.impressions) ||
+    numberValue(row.views)
+  );
+}
+
+function postEngagement(row: any) {
+  const totalEngagement = numberValue(row.engagementCount);
+  if (totalEngagement > 0) return totalEngagement;
+  return [
+    "likeCount",
+    "commentCount",
+    "shareCount",
+    "saveCount",
+    "favoriteCount"
+  ].reduce((sum, key) => sum + numberValue(row[key]), 0);
+}
+
+function isPaidKOLCooperation(row: any) {
+  const resourceType = String(row.resourceType || "");
+  return numberValue(row.quoteAmount) > 0 && !/媒体|media/i.test(resourceType);
+}
+
+function normalizePlatformName(value: unknown) {
+  const platform = String(value || "Website").trim();
+  const normalized = platform.toLowerCase();
+  if (/tik\s?tok/.test(normalized)) return "TikTok";
+  if (/you\s?tube/.test(normalized)) return "YouTube";
+  if (/instagram|\big\b/.test(normalized)) return "Instagram";
+  if (/facebook|\bfb\b/.test(normalized)) return "Facebook";
+  if (/twitter|^x$/.test(normalized)) return "X";
+  if (/linkedin/.test(normalized)) return "LinkedIn";
+  if (/reddit/.test(normalized)) return "Reddit";
+  if (/podcast|播客/.test(normalized)) return "Podcast";
+  if (/website|web|网站/.test(normalized)) return "Website";
+  return platform || "Website";
+}
+
+function platformColor(platform: string) {
+  const colors: Record<string, string> = {
+    TikTok: "#111827",
+    YouTube: "#ef4444",
+    Instagram: "#c026d3",
+    Facebook: "#2563eb",
+    X: "#64748b",
+    LinkedIn: "#0a66c2",
+    Reddit: "#f97316",
+    Podcast: "#7c3aed",
+    Website: "#0f9f8f"
+  };
+  return colors[platform] || "#5b8def";
 }
 
 function ratioPercent(numerator: unknown, denominator: unknown) {
@@ -428,15 +1123,26 @@ function cpcValue(cost: unknown, clicks: unknown) {
 
 function cooperationStage(row: any) {
   const status = `${row.status || ""} ${row.deliverableStatus || ""}`;
-  if (/已发布|已完成|完成发布|数据回收|completed|approved|ads published/i.test(status)) return "published";
-  if (/待发布|排期|发布中|pending publish/i.test(status)) return "pending_publish";
-  if (/制作|脚本|稿件|审核|修改|交付中|production|review/i.test(status)) return "production";
-  if (/确认合作|已确认|合作建立|待启动|confirmed/i.test(status)) return "confirmed";
+  if (
+    /已发布|已完成|完成发布|数据回收|completed|approved|ads published/i.test(
+      status
+    )
+  )
+    return "published";
+  if (/待发布|排期|发布中|pending publish/i.test(status))
+    return "pending_publish";
+  if (/制作|脚本|稿件|审核|修改|交付中|production|review/i.test(status))
+    return "production";
+  if (/确认合作|已确认|合作建立|待启动|confirmed/i.test(status))
+    return "confirmed";
   return "inviting";
 }
 
 function cooperationStageLabel(row: any) {
-  return pipelineStages.value.find(item => item.key === cooperationStage(row))?.label || "Review campaign";
+  return (
+    pipelineStages.value.find(item => item.key === cooperationStage(row))
+      ?.label || "Review campaign"
+  );
 }
 
 function cooperationStageTag(row: any) {
@@ -454,7 +1160,12 @@ function cooperationAction(row: any) {
   if (stage === "confirmed") return "启动内容制作与交付";
   if (stage === "production") return "审核内容或跟进修改";
   if (stage === "pending_publish") return "确认发布排期与链接";
-  if (stage === "published" && primaryReach(row) <= 0 && numberValue(row.clicks) <= 0) return "回收发布效果数据";
+  if (
+    stage === "published" &&
+    primaryReach(row) <= 0 &&
+    numberValue(row.clicks) <= 0
+  )
+    return "回收发布效果数据";
   return "";
 }
 
@@ -463,7 +1174,10 @@ function updatedTimeText(row: any) {
   if (!value) return "等待跟进";
   const timestamp = Number(value) || new Date(value).getTime();
   if (!Number.isFinite(timestamp)) return "等待跟进";
-  const days = Math.max(0, Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000)));
+  const days = Math.max(
+    0,
+    Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000))
+  );
   if (days === 0) return "今天有更新";
   return `已等待 ${days} 天`;
 }
@@ -482,7 +1196,8 @@ function cleanDisplayText(value: unknown) {
 function deliverableTitleText(item: any) {
   const key = String(item.stageKey || "").toLowerCase();
   const title = String(item.title || "").toLowerCase();
-  if (key === "final_link" || title.includes("final link")) return "最终发布链接";
+  if (key === "final_link" || title.includes("final link"))
+    return "最终发布链接";
   if (title.includes("video draft")) return "视频草稿";
   if (title.includes("idea") || title.includes("script")) return "创意/脚本";
   if (title.includes("kickoff")) return "启动制作";
@@ -507,11 +1222,15 @@ function openExecutionDetail(row: any) {
 }
 
 function executionRowClassName({ row }: any) {
-  return Number(row.id) === Number(focusedCooperation.value?.id) ? "execution-selected-row" : "";
+  return Number(row.id) === Number(focusedCooperation.value?.id)
+    ? "execution-selected-row"
+    : "";
 }
 
 function uniqueOptions(values: any[]) {
-  return Array.from(new Set(values.map(value => String(value || "").trim()).filter(Boolean)));
+  return Array.from(
+    new Set(values.map(value => String(value || "").trim()).filter(Boolean))
+  );
 }
 
 function buildReportSummary(rows: any[]) {
@@ -544,8 +1263,10 @@ function buildReportSummary(rows: any[]) {
 }
 
 function metricPair(row: any) {
-  if (reportMetric.value === "views") return [numberValue(row.forecastViews), numberValue(row.actualViews)];
-  if (reportMetric.value === "clicks") return [numberValue(row.forecastClicks), numberValue(row.actualClicks)];
+  if (reportMetric.value === "views")
+    return [numberValue(row.forecastViews), numberValue(row.actualViews)];
+  if (reportMetric.value === "clicks")
+    return [numberValue(row.forecastClicks), numberValue(row.actualClicks)];
   if (reportMetric.value === "cpc") {
     return [
       cpcValue(row.forecastCost, row.forecastClicks),
@@ -577,7 +1298,14 @@ function chartRows() {
       forecastCost: 0,
       actualCost: 0
     };
-    ["forecastViews", "actualViews", "forecastClicks", "actualClicks", "forecastCost", "actualCost"].forEach(key => {
+    [
+      "forecastViews",
+      "actualViews",
+      "forecastClicks",
+      "actualClicks",
+      "forecastCost",
+      "actualCost"
+    ].forEach(key => {
       current[key] += numberValue(row[key]);
     });
     grouped.set(name, current);
@@ -586,7 +1314,12 @@ function chartRows() {
 }
 
 function renderReportChart() {
-  if (activeSection.value !== "report" || reportScope.value !== "campaign" || !chartRef.value) return;
+  if (
+    activeSection.value !== "report" ||
+    reportScope.value !== "campaign" ||
+    !chartRef.value
+  )
+    return;
   reportChart ||= echarts.init(chartRef.value, undefined, { renderer: "svg" });
   const rows = chartRows();
   reportChart.setOption({
@@ -603,15 +1336,251 @@ function renderReportChart() {
       type: "value",
       axisLabel: {
         color: "#8a919c",
-        formatter: value => (reportMetric.value === "views" || reportMetric.value === "clicks" ? formatCount(value) : `$${value}`)
+        formatter: value =>
+          reportMetric.value === "views" || reportMetric.value === "clicks"
+            ? formatCount(value)
+            : `$${value}`
       },
       splitLine: { lineStyle: { type: "dashed", color: "#e5e7eb" } }
     },
     series: [
-      { name: "预测", type: "bar", data: rows.map(row => metricPair(row)[0]), barMaxWidth: 18 },
-      { name: "实际", type: "bar", data: rows.map(row => metricPair(row)[1]), barMaxWidth: 18 }
+      {
+        name: "预测",
+        type: "bar",
+        data: rows.map(row => metricPair(row)[0]),
+        barMaxWidth: 18
+      },
+      {
+        name: "实际",
+        type: "bar",
+        data: rows.map(row => metricPair(row)[1]),
+        barMaxWidth: 18
+      }
     ]
   });
+}
+
+function platformTooltip(name: string) {
+  const row = platformPerformance.value.find(item => item.platform === name);
+  if (!row) return name;
+  const exposureShare = ratioPercent(
+    row.exposure,
+    platformTotals.value.exposure
+  );
+  const engagementShare = ratioPercent(
+    row.engagement,
+    platformTotals.value.engagement
+  );
+  return [
+    `<strong>${escapeHTML(row.platform)}</strong>`,
+    `内容：${row.contentCount} 条`,
+    `曝光 / 播放：${formatCount(row.exposure)}（${exposureShare}）`,
+    `互动：${formatCount(row.engagement)}（${engagementShare}）`
+  ].join("<br/>");
+}
+
+function emptyPlatformChartOption(message: string) {
+  return {
+    animation: false,
+    tooltip: { show: false },
+    series: [],
+    graphic: [
+      {
+        type: "text",
+        left: "center",
+        top: "middle",
+        style: {
+          text: message,
+          fill: "#9aa0aa",
+          fontSize: 13,
+          textAlign: "center"
+        }
+      }
+    ]
+  };
+}
+
+function renderPlatformDistributionChart() {
+  if (!platformDistributionChartRef.value) return;
+  if (
+    !platformDistributionChart ||
+    platformDistributionChart.getDom() !== platformDistributionChartRef.value
+  ) {
+    platformDistributionChart?.dispose();
+    platformDistributionChart = echarts.init(
+      platformDistributionChartRef.value,
+      undefined,
+      { renderer: "svg" }
+    );
+  }
+  const rows = platformPerformance.value.filter(item => item.contentCount > 0);
+  platformDistributionChart.clear();
+  if (!rows.length) {
+    platformDistributionChart.setOption(
+      emptyPlatformChartOption("暂无可统计的发布内容")
+    );
+    return;
+  }
+  platformDistributionChart.setOption({
+    color: rows.map(item => item.color),
+    aria: { enabled: true, description: "各平台合作内容数量分布" },
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      formatter: (params: any) => platformTooltip(String(params.name || ""))
+    },
+    graphic: [
+      {
+        type: "text",
+        left: "center",
+        top: "42%",
+        style: {
+          text: "内容总数",
+          fill: "#7a808a",
+          fontSize: 12,
+          textAlign: "center"
+        }
+      },
+      {
+        type: "text",
+        left: "center",
+        top: "51%",
+        style: {
+          text: String(platformTotals.value.content),
+          fill: "#20242a",
+          fontSize: 24,
+          fontWeight: 700,
+          textAlign: "center"
+        }
+      }
+    ],
+    series: [
+      {
+        name: "平台内容分布",
+        type: "pie",
+        radius: ["56%", "78%"],
+        center: ["50%", "50%"],
+        minAngle: 4,
+        avoidLabelOverlap: true,
+        itemStyle: { borderColor: "#fff", borderWidth: 3 },
+        label: { show: false },
+        emphasis: {
+          scale: true,
+          scaleSize: 8,
+          itemStyle: { shadowBlur: 14, shadowColor: "rgba(15, 23, 42, .18)" }
+        },
+        data: rows.map(item => ({
+          name: item.platform,
+          value: item.contentCount,
+          itemStyle: { color: item.color }
+        }))
+      }
+    ]
+  });
+}
+
+function renderPlatformPerformanceChart() {
+  if (!platformPerformanceChartRef.value) return;
+  if (
+    !platformPerformanceChart ||
+    platformPerformanceChart.getDom() !== platformPerformanceChartRef.value
+  ) {
+    platformPerformanceChart?.dispose();
+    platformPerformanceChart = echarts.init(
+      platformPerformanceChartRef.value,
+      undefined,
+      { renderer: "svg" }
+    );
+  }
+  const metric = platformMetric.value;
+  const rows = platformPerformance.value.filter(item => item[metric] > 0);
+  platformPerformanceChart.clear();
+  if (!rows.length) {
+    platformPerformanceChart.setOption(
+      emptyPlatformChartOption(
+        metric === "exposure" ? "暂无平台曝光数据" : "暂无平台互动数据"
+      )
+    );
+    return;
+  }
+  const total =
+    metric === "exposure"
+      ? platformTotals.value.exposure
+      : platformTotals.value.engagement;
+  platformPerformanceChart.setOption({
+    color: rows.map(item => item.color),
+    aria: {
+      enabled: true,
+      description:
+        metric === "exposure" ? "各平台曝光量占比" : "各平台互动量占比"
+    },
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      formatter: (params: any) => platformTooltip(String(params.name || ""))
+    },
+    graphic: [
+      {
+        type: "text",
+        left: "center",
+        top: "42%",
+        style: {
+          text: metric === "exposure" ? "总曝光 / 播放" : "总互动",
+          fill: "#7a808a",
+          fontSize: 12,
+          textAlign: "center"
+        }
+      },
+      {
+        type: "text",
+        left: "center",
+        top: "51%",
+        style: {
+          text: formatCount(total),
+          fill: "#20242a",
+          fontSize: 24,
+          fontWeight: 700,
+          textAlign: "center"
+        }
+      }
+    ],
+    series: [
+      {
+        name: metric === "exposure" ? "平台曝光" : "平台互动",
+        type: "pie",
+        radius: ["56%", "78%"],
+        center: ["50%", "50%"],
+        minAngle: 4,
+        itemStyle: { borderColor: "#fff", borderWidth: 3 },
+        label: { show: false },
+        emphasis: {
+          scale: true,
+          scaleSize: 8,
+          itemStyle: { shadowBlur: 14, shadowColor: "rgba(15, 23, 42, .18)" }
+        },
+        data: rows.map(item => ({
+          name: item.platform,
+          value: item[metric],
+          itemStyle: { color: item.color }
+        }))
+      }
+    ]
+  });
+}
+
+function renderOverviewCharts() {
+  if (campaignTab.value !== "overview") return;
+  renderPlatformDistributionChart();
+  renderPlatformPerformanceChart();
+}
+
+function escapeHTML(value: unknown) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function openProjectDialog() {
@@ -651,7 +1620,10 @@ function openBudgetDialog() {
 
 async function submitBudget() {
   if (!project.value) return;
-  const res = await updateProjectBudget({ id: project.value.id, budget: budgetForm.budget });
+  const res = await updateProjectBudget({
+    id: project.value.id,
+    budget: budgetForm.budget
+  });
   if (res.code === 0) {
     ElMessage.success("预算已更新");
     budgetDialog.value = false;
@@ -690,24 +1662,35 @@ async function submitInfluencerReport() {
   }
 }
 
-async function handleDownloadReport() {
+async function handleExportProjectData() {
   if (!project.value) return;
-  const blob = await downloadProjectReport({
-    projectId: project.value.id,
-    scope: reportScope.value
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `campaign-${project.value.id}-${reportScope.value}-report.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
+  try {
+    const blob = await downloadProjectData({
+      projectId: project.value.id,
+      scope: "project"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const safeName = String(project.value.name || `project-${project.value.id}`)
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .trim();
+    link.download = `${safeName || `project-${project.value.id}`}_标准项目数据.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    ElMessage.success("项目标准数据已导出");
+  } catch {
+    ElMessage.error("项目数据导出失败，请稍后重试");
+  }
 }
 
 function showBillingHistory() {
   const lines = billingEvents.value
     .slice(0, 10)
-    .map(item => `${item.occurredAt || "-"}  ${item.description || item.eventType}: ${moneyText(item.amount, item.currency)}`)
+    .map(
+      item =>
+        `${item.occurredAt || "-"}  ${item.description || item.eventType}: ${moneyText(item.amount, item.currency)}`
+    )
     .join("<br/>");
   ElMessageBox.alert(lines || "暂无账单流水", "Billing history", {
     dangerouslyUseHTMLString: true,
@@ -715,17 +1698,30 @@ function showBillingHistory() {
   });
 }
 
-watch([activeSection, reportScope, reportMetric, reportViewBy, filteredSegments], () => nextTick(renderReportChart));
+watch(
+  [activeSection, reportScope, reportMetric, reportViewBy, filteredSegments],
+  () => nextTick(renderReportChart)
+);
+
+watch(
+  [campaignTab, platformMetric, platformPerformance],
+  () => nextTick(renderOverviewCharts),
+  { deep: true }
+);
 
 onMounted(async () => {
   await loadProjects();
   await loadDetail();
   window.addEventListener("resize", renderReportChart);
+  window.addEventListener("resize", renderOverviewCharts);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", renderReportChart);
+  window.removeEventListener("resize", renderOverviewCharts);
   reportChart?.dispose();
+  platformDistributionChart?.dispose();
+  platformPerformanceChart?.dispose();
 });
 </script>
 
@@ -737,13 +1733,18 @@ onBeforeUnmount(() => {
           <IconifyIconOnline icon="ri:arrow-left-line" />
         </el-button>
         <div class="campaign-mark">
-          <IconifyIconOnline icon="ri:megaphone-line" />
+          <IconifyIconOnline icon="ri:folder-user-line" />
         </div>
         <div class="campaign-name">
-          <h1>{{ project?.name || "营销项目" }}</h1>
+          <h1>{{ project?.name || "项目" }}</h1>
           <div class="campaign-meta">
-            <el-tag size="small" effect="plain">{{ project?.campaignType || "达人营销" }}</el-tag>
-            <span><IconifyIconOnline icon="ri:checkbox-circle-fill" /> 数据已同步</span>
+            <el-tag size="small" effect="plain">{{
+              project?.campaignType || "合作项目"
+            }}</el-tag>
+            <span
+              ><IconifyIconOnline icon="ri:checkbox-circle-fill" />
+              数据已同步</span
+            >
           </div>
         </div>
       </div>
@@ -755,196 +1756,1002 @@ onBeforeUnmount(() => {
           size="default"
           @change="handleProjectChange"
         >
-          <el-option v-for="item in projects" :key="item.id" :label="item.name" :value="item.id" />
+          <el-option
+            v-for="item in projects"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
         </el-select>
-        <span class="cycle-label">{{ cycleLabel }}</span>
+        <span class="cycle-label">创建于 {{ createdDateLabel }}</span>
         <el-button circle text aria-label="编辑项目" @click="openProjectDialog">
           <IconifyIconOnline icon="ri:edit-line" />
         </el-button>
         <el-dropdown>
-          <el-button circle text aria-label="更多项目操作"><IconifyIconOnline icon="ri:more-2-fill" /></el-button>
+          <el-button circle text aria-label="更多项目操作"
+            ><IconifyIconOnline icon="ri:more-2-fill"
+          /></el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item @click="toggleProjectStatus">
                 {{ isPaused ? "恢复项目" : "暂停项目" }}
               </el-dropdown-item>
-              <el-dropdown-item @click="renewDialog = true">更新项目周期</el-dropdown-item>
-              <el-dropdown-item @click="handleDownloadReport">导出项目报告</el-dropdown-item>
+              <el-dropdown-item @click="handleExportProjectData"
+                >导出项目数据</el-dropdown-item
+              >
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button type="primary" @click="goBack">管理达人</el-button>
       </div>
     </header>
 
     <nav class="campaign-tabs" aria-label="项目详情导航">
-      <button type="button" :class="{ active: campaignTab === 'overview' }" @click="campaignTab = 'overview'">
-        概览
+      <button
+        type="button"
+        :class="{ active: campaignTab === 'creators' }"
+        @click="selectCampaignTab('creators')"
+      >
+        达人/媒体 ({{ projectCreators.length }})
       </button>
-      <button type="button" :class="{ active: campaignTab === 'creators' }" @click="campaignTab = 'creators'">
-        达人 ({{ projectCreators.length }})
+      <button
+        type="button"
+        :class="{ active: campaignTab === 'content' }"
+        @click="selectCampaignTab('content')"
+      >
+        合作内容 ({{ projectContentPosts.length }})
       </button>
-      <button type="button" :class="{ active: campaignTab === 'content' }" @click="campaignTab = 'content'">
-        内容 ({{ projectContentPosts.length }})
+      <button
+        type="button"
+        :class="{ active: campaignTab === 'overview' }"
+        @click="selectCampaignTab('overview')"
+      >
+        项目概览
       </button>
     </nav>
 
     <main class="campaign-main">
-      <template v-if="campaignTab === 'overview'">
-        <section class="metric-section">
-          <div class="section-title"><h2>内容</h2></div>
-          <div class="metric-grid content-metrics">
-            <article class="metric-card featured-card">
-              <span>已发布达人</span>
-              <strong>{{ campaignOverview.posted }} <em>/ {{ projectCreators.length }}</em></strong>
+      <template v-if="campaignTab === 'content' && selectedContentPost">
+        <section class="content-detail-page">
+          <button
+            type="button"
+            class="content-detail-back"
+            @click="closeContentDetail"
+          >
+            <IconifyIconOnline icon="ri:arrow-left-line" />
+            返回合作内容
+          </button>
+
+          <div class="content-detail-hero">
+            <button
+              type="button"
+              class="content-detail-cover"
+              aria-label="前往平台查看该内容"
+              @click="openPost(selectedContentPost)"
+            >
+              <img
+                v-if="selectedContentPost.coverUrl"
+                :src="selectedContentPost.coverUrl"
+                :alt="
+                  selectedContentPost.title || selectedContentPost.resourceName
+                "
+                @error="useLocalPostCover($event, selectedContentPost)"
+              />
+              <span v-else class="content-detail-cover-empty">
+                <PlatformIconBadge :platform="selectedContentPost.platform" />
+                <strong>该内容暂未同步封面</strong>
+                <small>点击前往平台查看</small>
+              </span>
+              <span class="content-detail-play">
+                <IconifyIconOnline icon="ri:play-fill" />
+              </span>
+              <span
+                v-if="isViralContent(selectedContentPost)"
+                class="viral-badge detail-viral-badge"
+                >爆 🔥</span
+              >
+            </button>
+
+            <div class="content-detail-summary">
+              <div class="content-detail-title-row">
+                <div>
+                  <span>{{ selectedContentPost.platform || "合作内容" }}</span>
+                  <h2>
+                    {{
+                      selectedContentPost.title ||
+                      selectedContentPost.description ||
+                      "已发布合作内容"
+                    }}
+                  </h2>
+                </div>
+                <el-button
+                  type="primary"
+                  @click="openPost(selectedContentPost)"
+                >
+                  前往平台查看
+                  <IconifyIconOnline icon="ri:external-link-line" />
+                </el-button>
+              </div>
+              <div class="content-detail-author">
+                <el-avatar
+                  :src="contentAvatar(selectedContentPost)"
+                  :size="48"
+                  >{{
+                    String(selectedContentPost.resourceName || "R").slice(0, 1)
+                  }}</el-avatar
+                >
+                <div>
+                  <strong>{{
+                    selectedContentPost.resourceName || "未知合作方"
+                  }}</strong>
+                  <span>
+                    {{ formatCount(contentFollowers(selectedContentPost)) }}
+                    粉丝 · {{ dateText(selectedContentPost.publishedAt) }} 发布
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="content-detail-metrics">
+            <article>
+              <span>播放量</span>
+              <strong>{{
+                formatCount(postExposure(selectedContentPost))
+              }}</strong>
+              <small>当前内容累计播放 / 曝光</small>
             </article>
-            <article class="metric-card split-card">
-              <div><span>今日内容</span><strong>{{ campaignOverview.today }}</strong></div>
-              <div><span>项目内容</span><strong>{{ campaignOverview.posts }}</strong></div>
+            <article>
+              <span>互动量</span>
+              <strong>{{
+                formatCount(postEngagement(selectedContentPost))
+              }}</strong>
+              <small>点赞、评论、分享与收藏</small>
             </article>
-            <article class="metric-card"><span>帖子</span><strong>{{ campaignOverview.posts }}</strong></article>
-            <article class="metric-card"><span>Stories</span><strong>{{ campaignOverview.stories }}</strong></article>
-            <article class="metric-card"><span>Reels / 视频</span><strong>{{ campaignOverview.reels }}</strong></article>
+            <article>
+              <span>互动率</span>
+              <strong>{{
+                ratioPercent(
+                  postEngagement(selectedContentPost),
+                  postExposure(selectedContentPost)
+                )
+              }}</strong>
+              <small>互动量 / 播放量</small>
+            </article>
+            <article>
+              <span>CPM</span>
+              <strong>{{ moneyText(contentCPM(selectedContentPost)) }}</strong>
+              <small>该内容合作费用 / 播放量 × 1000</small>
+            </article>
+          </div>
+
+          <div class="content-detail-link-row">
+            <span>内容链接</span>
+            <el-link
+              :href="selectedContentPost.postUrl"
+              target="_blank"
+              type="primary"
+            >
+              {{ selectedContentPost.postUrl || "暂无链接" }}
+            </el-link>
+          </div>
+        </section>
+      </template>
+
+      <template v-else-if="campaignTab === 'overview'">
+        <section class="overview-section">
+          <div class="overview-section-heading">
+            <div>
+              <h2>内容概览</h2>
+              <p>合作方按名称去重，内容按发布链接去重统计。</p>
+            </div>
+            <span>今日新增 {{ campaignOverview.today }} 条</span>
+          </div>
+          <div class="overview-metric-grid content-overview-grid">
+            <article class="overview-metric-card primary-metric-card">
+              <span>内容总数</span>
+              <strong>{{ campaignOverview.posts }}</strong>
+              <small>当前项目已识别的全部合作内容</small>
+            </article>
+            <article class="overview-metric-card">
+              <span>合作达人 / 媒体总数</span>
+              <strong>{{ campaignOverview.collaborators }}</strong>
+              <small>同名合作方仅计算一次</small>
+            </article>
+            <article class="overview-metric-card">
+              <span>已发布合作方</span>
+              <strong>
+                {{ campaignOverview.publishedCreators }}
+                <em>/ {{ campaignOverview.collaborators }}</em>
+              </strong>
+              <small>已有内容链接的合作方</small>
+            </article>
+            <article class="overview-metric-card compact-metric-card">
+              <span>图文 / 帖子</span>
+              <strong>{{ campaignOverview.standardPosts }}</strong>
+            </article>
+            <article class="overview-metric-card compact-metric-card">
+              <span>Stories</span>
+              <strong>{{ campaignOverview.stories }}</strong>
+            </article>
+            <article class="overview-metric-card compact-metric-card">
+              <span>Reels / 视频</span>
+              <strong>{{ campaignOverview.videos }}</strong>
+            </article>
           </div>
         </section>
 
-        <section class="metric-section">
-          <div class="section-title"><h2>曝光与互动</h2></div>
-          <div class="metric-grid engagement-metrics">
-            <article class="metric-card split-card">
-              <div><span>点赞</span><strong>{{ formatCount(campaignOverview.likes) }}</strong></div>
-              <div><span>评论</span><strong>{{ formatCount(campaignOverview.comments) }}</strong></div>
+        <section class="overview-section">
+          <div class="overview-section-heading">
+            <div>
+              <h2>曝光与互动</h2>
+              <p>互动量包含点赞、评论、分享与收藏，以平台同步结果为准。</p>
+            </div>
+          </div>
+          <div class="overview-metric-grid performance-overview-grid">
+            <article class="overview-metric-card primary-metric-card">
+              <span>总曝光 / 播放量</span>
+              <strong>{{ formatCount(campaignOverview.views) }}</strong>
+              <small>所有合作内容累计数据</small>
             </article>
-            <article class="metric-card split-card">
-              <div><span>互动</span><strong>{{ formatCount(campaignOverview.engagements) }}</strong></div>
-              <div><span>平均互动率</span><strong>{{ campaignOverview.engagementRate }}</strong></div>
+            <article class="overview-metric-card">
+              <span>总互动量</span>
+              <strong>{{ formatCount(campaignOverview.engagements) }}</strong>
+              <small>点赞 + 评论 + 分享 + 收藏</small>
             </article>
-            <article class="metric-card split-card wide-card">
-              <div><span>视频播放</span><strong>{{ formatCount(campaignOverview.views) }}</strong></div>
-              <div><span>预估曝光</span><strong>{{ formatCount(campaignOverview.impressions) }}</strong></div>
+            <article class="overview-metric-card">
+              <span>平均互动率</span>
+              <strong>{{ campaignOverview.engagementRate }}</strong>
+              <small>总互动量 / 总曝光量</small>
             </article>
-            <article class="metric-card split-card">
-              <div><span>预估触达</span><strong>{{ formatCount(campaignOverview.reach) }}</strong></div>
-              <div><span>CPM</span><strong>{{ moneyText(campaignOverview.cpm) }}</strong></div>
+            <article class="overview-metric-card">
+              <span>付费 KOL 成本</span>
+              <strong>{{ moneyText(campaignOverview.paidCost) }}</strong>
+              <small>仅统计有实际合作费用的非媒体资源</small>
+            </article>
+            <article class="overview-metric-card">
+              <span>CPM</span>
+              <strong>{{ moneyText(campaignOverview.cpm) }}</strong>
+              <small>付费成本 / 曝光 × 1000</small>
+            </article>
+            <article class="overview-metric-card">
+              <span>CPE</span>
+              <strong>{{ moneyText(campaignOverview.cpe) }}</strong>
+              <small>付费成本 / 互动量</small>
             </article>
           </div>
         </section>
 
-        <section class="metric-section">
-          <div class="section-title section-title-row">
-            <h2>效果</h2>
-            <el-button link type="primary" @click="handleDownloadReport">查看完整报告</el-button>
+        <section class="overview-section platform-overview-section">
+          <div class="overview-section-heading">
+            <div>
+              <h2>平台表现</h2>
+              <p>悬停图表可查看对应平台的内容、曝光、互动及占比。</p>
+            </div>
+            <span>{{ platformPerformance.length }} 个平台</span>
           </div>
-          <div class="metric-grid performance-metrics">
-            <article class="metric-card split-card">
-              <div><span>点击</span><strong>{{ formatCount(campaignOverview.clicks) }}</strong></div>
-              <div><span>转化</span><strong>{{ formatCount(campaignOverview.conversions) }}</strong></div>
+          <div class="platform-chart-grid">
+            <article class="platform-chart-card">
+              <header>
+                <div>
+                  <h3>平台内容分布</h3>
+                  <p>各平台发布内容数量及占比</p>
+                </div>
+              </header>
+              <div class="platform-chart-body">
+                <div
+                  ref="platformDistributionChartRef"
+                  class="platform-pie-chart"
+                  role="img"
+                  aria-label="各平台合作内容数量分布饼图"
+                />
+                <div class="platform-legend" aria-label="平台内容图例">
+                  <div
+                    v-for="item in platformPerformance"
+                    :key="`content-${item.platform}`"
+                    class="platform-legend-row"
+                  >
+                    <span
+                      class="legend-color"
+                      :style="{ backgroundColor: item.color }"
+                    />
+                    <PlatformIconBadge :platform="item.platform" />
+                    <strong>{{ item.platform }}</strong>
+                    <span>{{ item.contentCount }} 条</span>
+                    <em>{{
+                      ratioPercent(item.contentCount, platformTotals.content)
+                    }}</em>
+                  </div>
+                  <el-empty
+                    v-if="!platformPerformance.length"
+                    description="暂无平台内容"
+                    :image-size="52"
+                  />
+                </div>
+              </div>
             </article>
-            <article class="metric-card split-card wide-card">
-              <div><span>达人费用</span><strong>{{ moneyText(campaignOverview.cost) }}</strong></div>
-              <div><span>总预算</span><strong>{{ moneyText(projectBudget) }}</strong></div>
-            </article>
-            <article class="metric-card split-card">
-              <div><span>预算使用率</span><strong>{{ ratioPercent(campaignOverview.cost, projectBudget) }}</strong></div>
-              <div><span>发布时间完成率</span><strong>{{ stats.completionRate || 0 }}%</strong></div>
+
+            <article class="platform-chart-card">
+              <header>
+                <div>
+                  <h3>各平台效果占比</h3>
+                  <p>切换查看曝光量或互动量构成</p>
+                </div>
+                <div class="platform-metric-switch" aria-label="平台效果指标">
+                  <button
+                    type="button"
+                    :class="{ active: platformMetric === 'exposure' }"
+                    @click="platformMetric = 'exposure'"
+                  >
+                    曝光量
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: platformMetric === 'engagement' }"
+                    @click="platformMetric = 'engagement'"
+                  >
+                    互动量
+                  </button>
+                </div>
+              </header>
+              <div class="platform-chart-body">
+                <div
+                  ref="platformPerformanceChartRef"
+                  class="platform-pie-chart"
+                  role="img"
+                  :aria-label="
+                    platformMetric === 'exposure'
+                      ? '各平台曝光量占比饼图'
+                      : '各平台互动量占比饼图'
+                  "
+                />
+                <div class="platform-legend" aria-label="平台效果图例">
+                  <div
+                    v-for="item in platformPerformance"
+                    :key="`performance-${item.platform}`"
+                    class="platform-legend-row performance-legend-row"
+                  >
+                    <span
+                      class="legend-color"
+                      :style="{ backgroundColor: item.color }"
+                    />
+                    <PlatformIconBadge :platform="item.platform" />
+                    <strong>{{ item.platform }}</strong>
+                    <span>{{
+                      formatCount(
+                        platformMetric === "exposure"
+                          ? item.exposure
+                          : item.engagement
+                      )
+                    }}</span>
+                    <em>{{
+                      ratioPercent(
+                        platformMetric === "exposure"
+                          ? item.exposure
+                          : item.engagement,
+                        platformMetric === "exposure"
+                          ? platformTotals.exposure
+                          : platformTotals.engagement
+                      )
+                    }}</em>
+                  </div>
+                  <el-empty
+                    v-if="!platformPerformance.length"
+                    description="暂无平台效果数据"
+                    :image-size="52"
+                  />
+                </div>
+              </div>
             </article>
           </div>
         </section>
 
-        <section class="report-setup">
-          <div>
-            <h2>项目设置</h2>
-            <p>周期 {{ cycleLabel }} · {{ project?.targetMarket || "未设置市场" }} · {{ project?.platform || "全平台" }}</p>
+        <section class="project-info-card">
+          <div class="project-info-heading">
+            <div>
+              <h2>项目基本信息</h2>
+              <p>用于识别项目及明确项目归属，不参与效果数据计算。</p>
+            </div>
+            <el-button size="small" plain @click="openProjectDialog">
+              <IconifyIconOnline icon="ri:edit-line" />
+              编辑基本信息
+            </el-button>
           </div>
-          <div class="report-tags">
-            <el-tag effect="plain">{{ project?.language || "多语言" }}</el-tag>
-            <el-tag effect="plain">{{ activeStatusLabel }}</el-tag>
-            <el-button size="small" type="primary" plain @click="openProjectDialog">编辑项目设置</el-button>
+          <div class="project-info-grid">
+            <div class="project-info-item">
+              <span>创建日期</span>
+              <strong>{{ createdDateLabel }}</strong>
+            </div>
+            <div class="project-info-item">
+              <span>项目状态</span>
+              <el-tag :type="activeStatusType" effect="light">{{
+                activeStatusLabel
+              }}</el-tag>
+            </div>
+            <div class="project-info-item">
+              <span>目标市场</span>
+              <strong>{{ project?.targetMarket || "未设置" }}</strong>
+            </div>
+            <div class="project-info-item">
+              <span>主要平台</span>
+              <strong>{{ project?.platform || "全平台" }}</strong>
+            </div>
+            <div class="project-info-item">
+              <span>项目语言</span>
+              <strong>{{ project?.language || "多语言" }}</strong>
+            </div>
+            <div class="project-info-item">
+              <span>负责人</span>
+              <strong>{{ project?.owner || "未设置" }}</strong>
+            </div>
           </div>
         </section>
       </template>
 
       <section v-else-if="campaignTab === 'creators'" class="creator-page">
-        <div class="toolbar">
-          <el-input v-model="creatorSearch" clearable placeholder="搜索达人名称或账号" class="search-field">
-            <template #prefix><IconifyIconOnline icon="ri:search-line" /></template>
+        <div class="toolbar creator-toolbar">
+          <el-input
+            v-model="creatorSearch"
+            clearable
+            placeholder="搜索达人或媒体名称"
+            class="search-field"
+          >
+            <template #prefix
+              ><IconifyIconOnline icon="ri:search-line"
+            /></template>
           </el-input>
+          <el-select v-model="creatorCategory" class="creator-filter">
+            <el-option label="全部领域" value="all" />
+            <el-option
+              v-for="category in creatorCategoryOptions"
+              :key="category"
+              :label="category"
+              :value="category"
+            />
+          </el-select>
+          <el-select v-model="creatorPlatform" class="creator-filter">
+            <el-option label="全部平台" value="all" />
+            <el-option
+              v-for="platform in creatorPlatformOptions"
+              :key="platform"
+              :label="platform"
+              :value="platform"
+            />
+          </el-select>
+          <el-select v-model="creatorTier" class="creator-filter">
+            <el-option label="全部层级" value="all" />
+            <el-option
+              v-for="tier in creatorTierOptions"
+              :key="tier"
+              :label="tier"
+              :value="tier"
+            />
+          </el-select>
           <div class="toolbar-actions">
-            <el-switch size="small" />
-            <span>合并关联账号</span>
-            <el-button text @click="showCreatorColumnsHint">编辑列</el-button>
+            <el-button type="primary" @click="openCreateProjectResource">
+              <IconifyIconOnline icon="ri:add-line" />
+              添加达人 / 媒体
+            </el-button>
           </div>
         </div>
-        <el-table :data="filteredCreators" class="creator-table" @row-click="openExecutionDetail">
-          <el-table-column type="selection" width="62" />
-          <el-table-column label="达人" min-width="240" sortable>
+
+        <div class="creator-part-heading">
+          <div>
+            <h2>达人</h2>
+            <p>粉丝量采用达人账号数据，曝光与互动仅统计当前项目合作内容。</p>
+          </div>
+          <span>{{ influencerRows.length }} 位达人</span>
+        </div>
+        <el-table :data="influencerRows" class="creator-table">
+          <el-table-column label="达人" min-width="210" sortable>
             <template #default="{ row }">
-              <div class="creator-cell">
-                <el-avatar :src="row.resourceAvatarUrl" :size="34">{{ String(row.resourceName || "R").slice(0, 1) }}</el-avatar>
-                <div><strong>{{ row.resourceName || "未命名达人" }}</strong><span>{{ row.platform || "Social" }}</span></div>
-              </div>
+              <button
+                type="button"
+                class="creator-cell creator-profile-link"
+                @click="openResourceProfile(row)"
+              >
+                <el-avatar :src="row.resourceAvatarUrl" :size="34">{{
+                  String(row.resourceName || "R").slice(0, 1)
+                }}</el-avatar>
+                <div>
+                  <strong>{{ row.resourceName || "未命名达人" }}</strong>
+                  <span>查看资源档案</span>
+                </div>
+              </button>
             </template>
           </el-table-column>
-          <el-table-column label="账号" min-width="220" sortable>
+          <el-table-column prop="category" label="领域" min-width="120" />
+          <el-table-column prop="platform" label="平台" min-width="120">
             <template #default="{ row }">
-              <span class="handle-cell"><IconifyIconOnline icon="ri:instagram-line" />{{ row.platformHandle ? `@${row.platformHandle}` : "未绑定账号" }}</span>
+              <span class="creator-platform">
+                <PlatformIconBadge :platform="row.platform" />
+                {{ row.platform || "未设置" }}
+              </span>
             </template>
           </el-table-column>
-          <el-table-column label="合作状态" width="160" sortable>
-            <template #default="{ row }"><el-tag :type="cooperationStageTag(row)" effect="plain">{{ cooperationStageLabel(row) }}</el-tag></template>
+          <el-table-column
+            label="内容数量"
+            width="110"
+            align="right"
+            sortable
+            :sort-method="sortByContentCount"
+          >
+            <template #default="{ row }">
+              {{ projectContentCount(row) }}
+            </template>
           </el-table-column>
-          <el-table-column label="内容数" width="110" align="center">
-            <template #default="{ row }">{{ projectContentPosts.filter(item => Number(item.resourceId) === Number(row.resourceId)).length }}</template>
+          <el-table-column
+            label="粉丝量"
+            width="125"
+            align="right"
+            sortable
+            :sort-method="sortByAudience"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectAudience(row))
+            }}</template>
           </el-table-column>
-          <el-table-column label="播放 / 曝光" width="150" align="right" sortable>
-            <template #default="{ row }">{{ formatCount(primaryReach(row)) }}</template>
+          <el-table-column
+            label="曝光量"
+            width="125"
+            align="right"
+            sortable
+            :sort-method="sortByExposure"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectExposure(row))
+            }}</template>
           </el-table-column>
-          <el-table-column label="费用" width="140" align="right" sortable>
-            <template #default="{ row }">{{ moneyText(row.quoteAmount, row.currency) }}</template>
+          <el-table-column
+            label="互动量"
+            width="125"
+            align="right"
+            sortable
+            :sort-method="sortByEngagement"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectEngagement(row))
+            }}</template>
+          </el-table-column>
+          <el-table-column prop="collaboratorTier" label="层级" width="100">
+            <template #default="{ row }">
+              <el-tag effect="plain">{{
+                row.collaboratorTier || "待同步"
+              }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="最新合作内容" width="140" align="center">
+            <template #default="{ row }">
+              <button
+                v-if="latestProjectPost(row)"
+                type="button"
+                class="latest-content-thumb"
+                :aria-label="`打开 ${row.resourceName} 的最新合作内容`"
+                @click="openPost(latestProjectPost(row))"
+              >
+                <img
+                  v-if="latestProjectPost(row)?.coverUrl"
+                  :src="latestProjectPost(row).coverUrl"
+                  :alt="latestProjectPost(row).title || row.resourceName"
+                  @error="useLocalPostCover($event, latestProjectPost(row))"
+                />
+                <span v-else>
+                  <PlatformIconBadge
+                    :platform="latestProjectPost(row).platform"
+                  />
+                  <small>查看内容</small>
+                </span>
+              </button>
+              <span v-else class="latest-content-empty">暂无内容</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                @click.stop="openEditProjectResource(row)"
+                >编辑</el-button
+              >
+              <el-button
+                link
+                type="danger"
+                @click.stop="removeProjectResource(row)"
+                >删除</el-button
+              >
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div class="creator-part-heading media-part-heading">
+          <div>
+            <h2>媒体</h2>
+            <p>月访问量采用媒体 UVM 口径；Similarweb 数据源暂为预置。</p>
+          </div>
+          <span>{{ mediaRows.length }} 家媒体</span>
+        </div>
+        <el-table :data="mediaRows" class="creator-table media-table">
+          <el-table-column label="媒体" min-width="210" sortable>
+            <template #default="{ row }">
+              <button
+                type="button"
+                class="creator-cell creator-profile-link"
+                @click="openResourceProfile(row)"
+              >
+                <el-avatar :src="row.resourceAvatarUrl" :size="34">{{
+                  String(row.resourceName || "M").slice(0, 1)
+                }}</el-avatar>
+                <div>
+                  <strong>{{ row.resourceName || "未命名媒体" }}</strong
+                  ><span>查看资源档案</span>
+                </div>
+              </button>
+            </template>
+          </el-table-column>
+          <el-table-column prop="category" label="领域" min-width="120" />
+          <el-table-column prop="platform" label="平台" min-width="120">
+            <template #default="{ row }"
+              ><span class="creator-platform"
+                ><PlatformIconBadge :platform="row.platform" />{{
+                  row.platform || "未设置"
+                }}</span
+              ></template
+            >
+          </el-table-column>
+          <el-table-column
+            label="内容数量"
+            width="110"
+            align="right"
+            sortable
+            :sort-method="sortByContentCount"
+          >
+            <template #default="{ row }">{{
+              projectContentCount(row)
+            }}</template>
+          </el-table-column>
+          <el-table-column
+            label="月访问量"
+            width="125"
+            align="right"
+            sortable
+            :sort-method="sortByAudience"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectAudience(row))
+            }}</template>
+          </el-table-column>
+          <el-table-column
+            label="播放量"
+            width="125"
+            align="right"
+            sortable
+            :sort-method="sortByExposure"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectExposure(row))
+            }}</template>
+          </el-table-column>
+          <el-table-column
+            label="互动量"
+            width="125"
+            align="right"
+            sortable
+            :sort-method="sortByEngagement"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectEngagement(row))
+            }}</template>
+          </el-table-column>
+          <el-table-column prop="collaboratorTier" label="层级" width="100">
+            <template #default="{ row }"
+              ><el-tag effect="plain">{{
+                row.collaboratorTier || "待同步"
+              }}</el-tag></template
+            >
+          </el-table-column>
+          <el-table-column label="最新合作内容" width="140" align="center">
+            <template #default="{ row }">
+              <button
+                v-if="latestProjectPost(row)"
+                type="button"
+                class="latest-content-thumb"
+                :aria-label="`打开 ${row.resourceName} 的最新合作内容`"
+                @click="openPost(latestProjectPost(row))"
+              >
+                <img
+                  v-if="latestProjectPost(row)?.coverUrl"
+                  :src="latestProjectPost(row).coverUrl"
+                  :alt="latestProjectPost(row).title || row.resourceName"
+                  @error="useLocalPostCover($event, latestProjectPost(row))"
+                />
+                <span v-else
+                  ><PlatformIconBadge
+                    :platform="latestProjectPost(row).platform"
+                  /><small>查看内容</small></span
+                >
+              </button>
+              <span v-else class="latest-content-empty">暂无内容</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                @click.stop="openEditProjectResource(row)"
+                >编辑</el-button
+              >
+              <el-button
+                link
+                type="danger"
+                @click.stop="removeProjectResource(row)"
+                >删除</el-button
+              >
+            </template>
           </el-table-column>
         </el-table>
       </section>
 
       <section v-else class="content-page">
         <div class="toolbar content-toolbar">
-          <el-input v-model="contentSearch" clearable placeholder="搜索达人或内容关键词" class="search-field">
-            <template #prefix><IconifyIconOnline icon="ri:search-line" /></template>
+          <el-input
+            v-model="contentSearch"
+            clearable
+            placeholder="搜索达人或内容关键词"
+            class="search-field"
+          >
+            <template #prefix
+              ><IconifyIconOnline icon="ri:search-line"
+            /></template>
           </el-input>
           <el-select v-model="contentPlatform" class="platform-filter">
             <el-option label="全部平台" value="all" />
-            <el-option v-for="platform in contentPlatforms" :key="platform" :label="platform" :value="platform" />
+            <el-option
+              v-for="platform in contentPlatforms"
+              :key="platform"
+              :label="platform"
+              :value="platform"
+            />
           </el-select>
-          <span class="content-count">共 {{ filteredContentPosts.length }} 条内容</span>
+          <el-select v-model="contentSort" class="content-sort-filter">
+            <el-option label="最新发布" value="latest" />
+            <el-option label="播放量从高到低" value="views" />
+            <el-option label="互动量从高到低" value="engagement" />
+          </el-select>
+          <span class="content-count"
+            >共 {{ filteredContentPosts.length }} 条内容</span
+          >
         </div>
-        <el-empty v-if="!filteredContentPosts.length" description="暂未同步到可展示的内容" />
+        <el-empty
+          v-if="!filteredContentPosts.length"
+          description="暂未同步到可展示的内容"
+        />
         <div v-else class="content-grid">
-          <article v-for="post in filteredContentPosts" :key="post.id" class="content-card" @click="openPost(post)">
+          <article
+            v-for="post in filteredContentPosts"
+            :key="post.id"
+            class="content-card"
+            @click="openContentDetail(post)"
+          >
             <div class="content-author">
-              <el-avatar :src="post.resourceAvatarUrl" :size="28">{{ String(post.resourceName || "R").slice(0, 1) }}</el-avatar>
-              <strong>{{ post.platformHandle ? `@${post.platformHandle}` : post.resourceName || "未知达人" }}</strong>
-              <PlatformIconBadge class="content-platform-badge" :platform="post.platform" />
+              <el-avatar :src="contentAvatar(post)" :size="34">{{
+                String(post.resourceName || "R").slice(0, 1)
+              }}</el-avatar>
+              <div class="content-author-copy">
+                <strong>{{ post.resourceName || "未知达人 / 媒体" }}</strong>
+                <span>{{ formatCount(contentFollowers(post)) }} 粉丝</span>
+              </div>
+              <PlatformIconBadge
+                class="content-platform-badge"
+                :platform="post.platform"
+              />
             </div>
-            <img v-if="post.coverUrl" :src="post.coverUrl" :alt="post.title || post.resourceName" class="content-cover" />
-            <div v-else class="content-cover empty-cover"><IconifyIconOnline icon="ri:image-line" /></div>
+            <div class="content-cover-wrap">
+              <img
+                v-if="post.coverUrl"
+                :src="post.coverUrl"
+                :alt="post.title || post.resourceName"
+                class="content-cover"
+                @error="useLocalPostCover($event, post)"
+              />
+              <div v-else class="content-cover empty-cover">
+                <PlatformIconBadge :platform="post.platform" />
+              </div>
+              <span v-if="isViralContent(post)" class="viral-badge">爆 🔥</span>
+            </div>
             <div class="content-info">
               <p>{{ post.title || post.description || "已同步内容" }}</p>
-              <el-link
-                v-if="post.postUrl"
-                class="content-post-link"
-                type="primary"
-                :href="post.postUrl"
-                target="_blank"
-                @click.stop
-              >
-                {{ post.postUrl }}
-              </el-link>
-              <div><span><IconifyIconOnline icon="ri:play-circle-line" /> {{ formatCount(post.viewCount) }}</span><span><IconifyIconOnline icon="ri:heart-3-line" /> {{ formatCount(post.likeCount) }}</span><span><IconifyIconOnline icon="ri:chat-3-line" /> {{ formatCount(post.commentCount) }}</span></div>
+              <div>
+                <span
+                  ><IconifyIconOnline icon="ri:play-circle-line" />
+                  {{ formatCount(postExposure(post)) }}</span
+                ><span
+                  ><IconifyIconOnline icon="ri:heart-3-line" />
+                  {{ formatCount(postEngagement(post)) }}</span
+                >
+              </div>
             </div>
           </article>
         </div>
       </section>
     </main>
   </div>
+
+  <el-dialog
+    v-model="creatorDialog"
+    :title="
+      creatorDialogMode === 'create' ? '添加达人 / 媒体' : '编辑达人 / 媒体'
+    "
+    width="620px"
+  >
+    <el-form :model="creatorForm" label-position="top">
+      <template v-if="creatorDialogMode === 'create'">
+        <el-form-item label="从全球资源库选择" required>
+          <el-select
+            v-model="creatorForm.resourceId"
+            filterable
+            :filter-method="filterCreatorOptions"
+            :loading="creatorOptionsLoading"
+            placeholder="搜索达人、媒体或平台"
+            class="w-full!"
+            @change="handleCreatorOptionChange"
+          >
+            <el-option
+              v-for="item in visibleCreatorOptions"
+              :key="item.resourceId"
+              :label="creatorOptionLabel(item)"
+              :value="item.resourceId"
+            />
+            <el-option
+              v-if="creatorLibraryKeyword.trim()"
+              :value="onlineSearchOptionValue"
+              :label="`未找到目标？全网搜索“${creatorLibraryKeyword.trim()}”`"
+              class="online-search-option"
+            >
+              <div class="online-search-option-content">
+                <IconifyIconOnline icon="ri:global-line" />
+                <span>未找到目标？全网搜索</span>
+                <small>{{ creatorLibraryKeyword.trim() }}</small>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <section v-if="onlineSearchExpanded" class="online-search-panel">
+          <header>
+            <div>
+              <strong>从指定平台查询</strong>
+              <span>查询成功后会同步进入全球资源库</span>
+            </div>
+            <IconifyIconOnline icon="ri:global-line" />
+          </header>
+          <div class="online-search-grid">
+            <el-form-item label="平台" required>
+              <el-select v-model="onlineSearchForm.platform" class="w-full!">
+                <el-option label="Instagram" value="Instagram" />
+                <el-option label="TikTok" value="TikTok" />
+                <el-option label="YouTube" value="YouTube" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="类型">
+              <el-select
+                v-model="onlineSearchForm.resourceType"
+                class="w-full!"
+              >
+                <el-option label="达人（KOL）" value="KOL" />
+                <el-option label="媒体" value="媒体" />
+                <el-option label="艺术家" value="艺术家" />
+              </el-select>
+            </el-form-item>
+          </div>
+          <el-form-item label="主页链接 / @handle / 平台账号" required>
+            <el-input
+              v-model="onlineSearchForm.query"
+              clearable
+              placeholder="例如 @username 或完整主页链接"
+              @keyup.enter="runOnlineCreatorSearch"
+            >
+              <template #append>
+                <el-button
+                  :loading="onlineSearchLoading"
+                  @click="runOnlineCreatorSearch"
+                  >查询</el-button
+                >
+              </template>
+            </el-input>
+          </el-form-item>
+          <div v-if="onlineSearchResult" class="online-search-result">
+            <el-avatar :src="onlineSearchResult.resourceAvatarUrl" :size="42">
+              {{ String(onlineSearchResult.resourceName || "R").slice(0, 1) }}
+            </el-avatar>
+            <div>
+              <strong>{{ onlineSearchResult.resourceName }}</strong>
+              <span>
+                {{ onlineSearchResult.platform }}
+                {{
+                  onlineSearchResult.platformHandle
+                    ? `@${onlineSearchResult.platformHandle}`
+                    : ""
+                }}
+                · {{ formatCount(onlineSearchResult.followers) }} 粉丝
+              </span>
+            </div>
+            <el-tag type="success" effect="light">已选中</el-tag>
+          </div>
+        </section>
+        <el-alert
+          v-if="!creatorOptionsLoading && creatorOptions.length === 0"
+          title="全球资源库暂无可添加账号，可在上方输入账号后选择“全网搜索”。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+      </template>
+      <template v-else>
+        <el-alert
+          title="修改会同步更新全球资源库中的该达人/媒体资料。"
+          type="info"
+          :closable="false"
+          show-icon
+          class="creator-edit-alert"
+        />
+        <div class="creator-form-grid">
+          <el-form-item label="名称" required>
+            <el-input v-model="creatorForm.resourceName" />
+          </el-form-item>
+          <el-form-item label="类型" required>
+            <el-select v-model="creatorForm.resourceType" class="w-full!">
+              <el-option
+                v-for="item in ['KOL', '媒体', '艺术家']"
+                :key="item"
+                :label="item"
+                :value="item"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="领域">
+            <el-input v-model="creatorForm.category" />
+          </el-form-item>
+          <el-form-item label="市场">
+            <el-input v-model="creatorForm.market" />
+          </el-form-item>
+          <el-form-item label="平台">
+            <el-input v-model="creatorForm.platform" />
+          </el-form-item>
+          <el-form-item label="本平台粉丝数 / UVM">
+            <el-input-number
+              v-model="creatorForm.followers"
+              :min="0"
+              class="w-full!"
+            />
+          </el-form-item>
+          <el-form-item label="主页链接" class="creator-form-grid__wide">
+            <el-input v-model="creatorForm.platformUrl" />
+          </el-form-item>
+          <el-form-item label="联系方式" class="creator-form-grid__wide">
+            <el-input v-model="creatorForm.primaryContact" />
+          </el-form-item>
+          <el-form-item
+            label="层级（系统自动）"
+            class="creator-form-grid__wide"
+          >
+            <el-input
+              :model-value="creatorForm.collaboratorTier || '保存后自动计算'"
+              disabled
+            />
+          </el-form-item>
+        </div>
+      </template>
+    </el-form>
+    <template #footer>
+      <el-button @click="creatorDialog = false">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="submitting"
+        @click="submitProjectResource"
+      >
+        {{ creatorDialogMode === "create" ? "添加" : "保存" }}
+      </el-button>
+    </template>
+  </el-dialog>
 
   <div v-if="false" v-loading="loading" class="campaign-detail-page">
     <header class="detail-topbar">
@@ -956,8 +2763,18 @@ onBeforeUnmount(() => {
           <IconifyIconOnline icon="ri:megaphone-line" />
         </div>
         <div>
-          <el-select :model-value="selectedProjectId" filterable placeholder="选择营销项目" @change="handleProjectChange">
-            <el-option v-for="item in projects" :key="item.id" :label="item.name" :value="item.id" />
+          <el-select
+            :model-value="selectedProjectId"
+            filterable
+            placeholder="选择营销项目"
+            @change="handleProjectChange"
+          >
+            <el-option
+              v-for="item in projects"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
           </el-select>
           <h1>{{ project?.name || "项目执行页" }}</h1>
           <p>
@@ -974,7 +2791,9 @@ onBeforeUnmount(() => {
           编辑项目
         </el-button>
         <el-button @click="toggleProjectStatus">
-          <IconifyIconOnline :icon="isPaused ? 'ri:play-line' : 'ri:pause-line'" />
+          <IconifyIconOnline
+            :icon="isPaused ? 'ri:play-line' : 'ri:pause-line'"
+          />
           {{ isPaused ? "恢复" : "暂停" }}
         </el-button>
         <el-button circle>
@@ -1005,11 +2824,18 @@ onBeforeUnmount(() => {
               v-for="(stage, index) in pipelineStages"
               :key="stage.key"
               type="button"
-              :class="{ active: activePipelineStage === stage.key, done: stage.count > 0 || index < 2 }"
+              :class="{
+                active: activePipelineStage === stage.key,
+                done: stage.count > 0 || index < 2
+              }"
               @click="activePipelineStage = stage.key"
             >
               <span>
-                <IconifyIconOnline :icon="stage.count > 0 || index < 2 ? 'ri:check-line' : stage.icon" />
+                <IconifyIconOnline
+                  :icon="
+                    stage.count > 0 || index < 2 ? 'ri:check-line' : stage.icon
+                  "
+                />
               </span>
               <div>
                 <strong>{{ stage.label }}</strong>
@@ -1022,7 +2848,10 @@ onBeforeUnmount(() => {
             <div class="collaboration-heading">
               <div>
                 <h2>协作执行</h2>
-                <p>{{ project?.platform || "全平台" }} · {{ stats.cooperationCount || 0 }} 条合作执行记录</p>
+                <p>
+                  {{ project?.platform || "全平台" }} ·
+                  {{ stats.cooperationCount || 0 }} 条合作执行记录
+                </p>
               </div>
               <el-tag effect="plain">全部 {{ cooperations.length }}</el-tag>
             </div>
@@ -1041,13 +2870,20 @@ onBeforeUnmount(() => {
               <div>
                 <IconifyIconOnline icon="ri:line-chart-line" />
                 <strong>当前 CPM</strong>
-                <span>{{ moneyText(cpmValue(stats.totalCost, stats.totalReach)) }} CPM</span>
+                <span
+                  >{{
+                    moneyText(cpmValue(stats.totalCost, stats.totalReach))
+                  }}
+                  CPM</span
+                >
               </div>
             </div>
 
             <section class="tip-bar">
               <strong>提示</strong>
-              <span>建议优先处理待确认报价、内容审核和发布链接回收，避免项目节点堆积。</span>
+              <span
+                >建议优先处理待确认报价、内容审核和发布链接回收，避免项目节点堆积。</span
+              >
             </section>
 
             <section class="pending-section">
@@ -1062,10 +2898,14 @@ onBeforeUnmount(() => {
                   v-for="item in pendingActions"
                   :key="item.id"
                   type="button"
-                  :class="{ active: Number(item.id) === Number(focusedCooperation?.id) }"
+                  :class="{
+                    active: Number(item.id) === Number(focusedCooperation?.id)
+                  }"
                   @click="openExecutionDetail(item)"
                 >
-                  <div class="creator-avatar">{{ String(item.resourceName || "R").slice(0, 1) }}</div>
+                  <div class="creator-avatar">
+                    {{ String(item.resourceName || "R").slice(0, 1) }}
+                  </div>
                   <div>
                     <span>{{ item.action }}</span>
                     <strong>{{ item.resourceName || "未命名资源" }}</strong>
@@ -1086,7 +2926,11 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="stage-filter">
-                  <button type="button" :class="{ active: activePipelineStage === 'all' }" @click="activePipelineStage = 'all'">
+                  <button
+                    type="button"
+                    :class="{ active: activePipelineStage === 'all' }"
+                    @click="activePipelineStage = 'all'"
+                  >
                     全部 {{ cooperations.length }}
                   </button>
                   <button
@@ -1106,45 +2950,87 @@ onBeforeUnmount(() => {
                   :row-class-name="executionRowClassName"
                   @row-click="openExecutionDetail"
                 >
-                  <el-table-column prop="resourceName" label="资源" min-width="170" />
+                  <el-table-column
+                    prop="resourceName"
+                    label="资源"
+                    min-width="170"
+                  />
                   <el-table-column label="状态" width="160">
                     <template #default="{ row }">
-                      <el-tag :type="cooperationStageTag(row)" effect="light">{{ cooperationStageLabel(row) }}</el-tag>
+                      <el-tag :type="cooperationStageTag(row)" effect="light">{{
+                        cooperationStageLabel(row)
+                      }}</el-tag>
                     </template>
                   </el-table-column>
                   <el-table-column label="报价" width="130">
-                    <template #default="{ row }">{{ moneyText(row.quoteAmount, row.currency) }}</template>
+                    <template #default="{ row }">{{
+                      moneyText(row.quoteAmount, row.currency)
+                    }}</template>
                   </el-table-column>
                   <el-table-column label="CPM" width="130">
-                    <template #default="{ row }">{{ moneyText(cpmValue(row.quoteAmount, primaryReach(row)), row.currency) }}</template>
+                    <template #default="{ row }">{{
+                      moneyText(
+                        cpmValue(row.quoteAmount, primaryReach(row)),
+                        row.currency
+                      )
+                    }}</template>
                   </el-table-column>
                 </el-table>
               </div>
 
               <article v-if="focusedCooperation" class="creator-detail-panel">
                 <header class="creator-header">
-                  <el-avatar :src="focusedCooperation.resourceAvatarUrl" :size="64">
-                    {{ String(focusedCooperation.resourceName || "R").slice(0, 1) }}
+                  <el-avatar
+                    :src="focusedCooperation.resourceAvatarUrl"
+                    :size="64"
+                  >
+                    {{
+                      String(focusedCooperation.resourceName || "R").slice(0, 1)
+                    }}
                   </el-avatar>
                   <div>
                     <h3>
                       {{ focusedCooperation.resourceName || "未命名资源" }}
-                      <el-tag :type="cooperationStageTag(focusedCooperation)" round>{{ cooperationStageLabel(focusedCooperation) }}</el-tag>
+                      <el-tag
+                        :type="cooperationStageTag(focusedCooperation)"
+                        round
+                        >{{ cooperationStageLabel(focusedCooperation) }}</el-tag
+                      >
                     </h3>
                     <p>
-                      <span v-for="star in 5" :key="star" class="rating-star"><IconifyIconOnline icon="ri:star-fill" /></span>
-                      {{ focusedCooperation.teamRating || focusedCooperation.level || 5 }}
+                      <span v-for="star in 5" :key="star" class="rating-star"
+                        ><IconifyIconOnline icon="ri:star-fill"
+                      /></span>
+                      {{
+                        focusedCooperation.teamRating ||
+                        focusedCooperation.level ||
+                        5
+                      }}
                       <span />
-                      {{ focusedCooperation.platformHandle ? `@${focusedCooperation.platformHandle}` : focusedCooperation.platform || "全平台" }}
+                      {{
+                        focusedCooperation.platformHandle
+                          ? `@${focusedCooperation.platformHandle}`
+                          : focusedCooperation.platform || "全平台"
+                      }}
                       <span />
-                      {{ focusedCooperation.language || project?.language || "全部语言" }}
+                      {{
+                        focusedCooperation.language ||
+                        project?.language ||
+                        "全部语言"
+                      }}
                       <span />
-                      {{ focusedCooperation.cooperationType || "未设置合作形式" }}
+                      {{
+                        focusedCooperation.cooperationType || "未设置合作形式"
+                      }}
                     </p>
                   </div>
                   <div class="creator-actions">
-                    <el-button circle><IconifyIconOnline icon="ri:star-line" /></el-button>
-                    <el-button @click="openInfluencerReport">反馈异常</el-button>
+                    <el-button circle
+                      ><IconifyIconOnline icon="ri:star-line"
+                    /></el-button>
+                    <el-button @click="openInfluencerReport"
+                      >反馈异常</el-button
+                    >
                   </div>
                 </header>
 
@@ -1161,35 +3047,86 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <section v-if="cooperationStage(focusedCooperation) === 'published'" class="success-banner">
+                <section
+                  v-if="cooperationStage(focusedCooperation) === 'published'"
+                  class="success-banner"
+                >
                   <strong>合作已完成</strong>
-                  <p>
-                    如发现内容质量、异常播放或互动问题，可提交异常反馈。
-                  </p>
-                  <el-button link type="primary" @click="openInfluencerReport">提交异常反馈</el-button>
+                  <p>如发现内容质量、异常播放或互动问题，可提交异常反馈。</p>
+                  <el-button link type="primary" @click="openInfluencerReport"
+                    >提交异常反馈</el-button
+                  >
                 </section>
 
                 <div class="detail-tabs">
-                  <button type="button" :class="{ active: detailTab === 'overview' }" @click="detailTab = 'overview'">概览</button>
-                  <button type="button" :class="{ active: detailTab === 'content' }" @click="detailTab = 'content'">内容交付</button>
-                  <button type="button" :class="{ active: detailTab === 'reviews' }" @click="detailTab = 'reviews'">评价</button>
+                  <button
+                    type="button"
+                    :class="{ active: detailTab === 'overview' }"
+                    @click="detailTab = 'overview'"
+                  >
+                    概览
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: detailTab === 'content' }"
+                    @click="detailTab = 'content'"
+                  >
+                    内容交付
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: detailTab === 'reviews' }"
+                    @click="detailTab = 'reviews'"
+                  >
+                    评价
+                  </button>
                 </div>
 
                 <section v-if="detailTab === 'overview'" class="overview-grid">
-                  <div><span>粉丝数</span><strong>{{ formatCount(focusedCooperation.followers) }}</strong></div>
-                  <div><span>互动率</span><strong>{{ ratioPercent(focusedCooperation.engagementRate, 1) }}</strong></div>
-                  <div><span>播放/曝光</span><strong>{{ formatCount(primaryReach(focusedCooperation)) }}</strong></div>
-                  <div><span>点击</span><strong>{{ formatCount(focusedCooperation.clicks) }}</strong></div>
+                  <div>
+                    <span>粉丝数</span
+                    ><strong>{{
+                      formatCount(focusedCooperation.followers)
+                    }}</strong>
+                  </div>
+                  <div>
+                    <span>互动率</span
+                    ><strong>{{
+                      ratioPercent(focusedCooperation.engagementRate, 1)
+                    }}</strong>
+                  </div>
+                  <div>
+                    <span>播放/曝光</span
+                    ><strong>{{
+                      formatCount(primaryReach(focusedCooperation))
+                    }}</strong>
+                  </div>
+                  <div>
+                    <span>点击</span
+                    ><strong>{{
+                      formatCount(focusedCooperation.clicks)
+                    }}</strong>
+                  </div>
                 </section>
 
                 <template v-if="detailTab === 'content'">
                   <section class="content-block">
                     <h3>内容信息</h3>
                     <div class="tracking-link">
-                      <span>为该资源生成的专属追踪链接，用于发布内容中追踪点击和效果。</span>
-                      <el-link type="primary" :href="focusedCooperation.trackingLink || focusedCooperation.finalLink" target="_blank">
+                      <span
+                        >为该资源生成的专属追踪链接，用于发布内容中追踪点击和效果。</span
+                      >
+                      <el-link
+                        type="primary"
+                        :href="
+                          focusedCooperation.trackingLink ||
+                          focusedCooperation.finalLink
+                        "
+                        target="_blank"
+                      >
                         {{
-                          focusedCooperation.trackingLink || focusedCooperation.finalLink
+                          focusedCooperation.trackingLink ||
+                          focusedCooperation.finalLink
                             ? "打开追踪链接"
                             : "等待达人提交内容链接"
                         }}
@@ -1198,21 +3135,54 @@ onBeforeUnmount(() => {
                   </section>
 
                   <section class="delivery-timeline">
-                    <div v-for="item in currentDeliverables" :key="item.id" class="completed">
+                    <div
+                      v-for="item in currentDeliverables"
+                      :key="item.id"
+                      class="completed"
+                    >
                       <span />
                       <article>
                         <div>
                           <strong>{{ deliverableTitleText(item) }}</strong>
-                          <el-tag size="small" effect="plain">{{ deliverableStatusText(item.status) }}</el-tag>
+                          <el-tag size="small" effect="plain">{{
+                            deliverableStatusText(item.status)
+                          }}</el-tag>
                         </div>
-                        <p>{{ item.submittedAt || cleanDisplayText(item.note) || "等待提交" }}</p>
+                        <p>
+                          {{
+                            item.submittedAt ||
+                            cleanDisplayText(item.note) ||
+                            "等待提交"
+                          }}
+                        </p>
                         <div class="timeline-note">
-                          <el-link v-if="item.link" type="primary" :href="item.link" target="_blank">打开交付链接</el-link>
-                          <p v-if="item.caption">文案：{{ cleanDisplayText(item.caption) }}</p>
-                          <p v-if="item.note">{{ cleanDisplayText(item.note) }}</p>
-                          <p v-if="item.rejectionReason">驳回原因：{{ cleanDisplayText(item.rejectionReason) }}</p>
-                          <p v-if="item.stageKey === 'final_link' && focusedCooperation.adAuthorizationCode">
-                            广告授权码：{{ focusedCooperation.adAuthorizationCode }}
+                          <el-link
+                            v-if="item.link"
+                            type="primary"
+                            :href="item.link"
+                            target="_blank"
+                            >打开交付链接</el-link
+                          >
+                          <p v-if="item.caption">
+                            文案：{{ cleanDisplayText(item.caption) }}
+                          </p>
+                          <p v-if="item.note">
+                            {{ cleanDisplayText(item.note) }}
+                          </p>
+                          <p v-if="item.rejectionReason">
+                            驳回原因：{{
+                              cleanDisplayText(item.rejectionReason)
+                            }}
+                          </p>
+                          <p
+                            v-if="
+                              item.stageKey === 'final_link' &&
+                              focusedCooperation.adAuthorizationCode
+                            "
+                          >
+                            广告授权码：{{
+                              focusedCooperation.adAuthorizationCode
+                            }}
                           </p>
                         </div>
                       </article>
@@ -1233,18 +3203,24 @@ onBeforeUnmount(() => {
           </section>
         </template>
 
-        <section v-if="activeSection === 'report'" class="section-card report-panel">
+        <section
+          v-if="activeSection === 'report'"
+          class="section-card report-panel"
+        >
           <div class="section-headline">
             <h2>效果报告</h2>
             <div class="headline-actions">
-              <el-segmented v-model="reportScope" :options="['campaign', 'influencer']" />
+              <el-segmented
+                v-model="reportScope"
+                :options="['campaign', 'influencer']"
+              />
               <el-date-picker
                 :model-value="[project?.cycleStartDate, project?.cycleEndDate]"
                 type="daterange"
                 disabled
                 range-separator="-"
               />
-              <el-button @click="handleDownloadReport">
+              <el-button @click="handleExportProjectData">
                 <IconifyIconOnline icon="ri:download-line" />
                 下载
               </el-button>
@@ -1252,25 +3228,50 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="report-meta">
-            <span>项目周期 <strong>{{ cycleLabel }}</strong></span>
-            <span>项目目标 <strong>{{ project?.campaignType || "-" }}</strong></span>
-            <span>报告更新时间 <strong>{{ project?.reportUpdateDate || "-" }}</strong></span>
-            <span>已发生费用 <strong>{{ moneyText(costToDate) }}</strong></span>
+            <span
+              >项目周期 <strong>{{ cycleLabel }}</strong></span
+            >
+            <span
+              >项目目标
+              <strong>{{ project?.campaignType || "-" }}</strong></span
+            >
+            <span
+              >报告更新时间
+              <strong>{{ project?.reportUpdateDate || "-" }}</strong></span
+            >
+            <span
+              >已发生费用 <strong>{{ moneyText(costToDate) }}</strong></span
+            >
           </div>
 
           <template v-if="reportScope === 'campaign'">
             <div class="report-filters">
               <el-select v-model="reportAudience">
                 <el-option label="全部受众" value="all" />
-                <el-option v-for="item in audienceOptions" :key="item" :label="item" :value="item" />
+                <el-option
+                  v-for="item in audienceOptions"
+                  :key="item"
+                  :label="item"
+                  :value="item"
+                />
               </el-select>
               <el-select v-model="reportPlatform">
                 <el-option label="全部平台" value="all" />
-                <el-option v-for="item in platformOptions" :key="item" :label="item" :value="item" />
+                <el-option
+                  v-for="item in platformOptions"
+                  :key="item"
+                  :label="item"
+                  :value="item"
+                />
               </el-select>
               <el-select v-model="reportCreative">
                 <el-option label="全部创意" value="all" />
-                <el-option v-for="item in creativeOptions" :key="item" :label="item" :value="item" />
+                <el-option
+                  v-for="item in creativeOptions"
+                  :key="item"
+                  :label="item"
+                  :value="item"
+                />
               </el-select>
             </div>
 
@@ -1294,10 +3295,34 @@ onBeforeUnmount(() => {
 
             <div class="chart-toolbar">
               <div class="metric-tabs">
-                <button type="button" :class="{ active: reportMetric === 'views' }" @click="reportMetric = 'views'">播放</button>
-                <button type="button" :class="{ active: reportMetric === 'clicks' }" @click="reportMetric = 'clicks'">点击</button>
-                <button type="button" :class="{ active: reportMetric === 'cpm' }" @click="reportMetric = 'cpm'">CPM</button>
-                <button type="button" :class="{ active: reportMetric === 'cpc' }" @click="reportMetric = 'cpc'">CPC</button>
+                <button
+                  type="button"
+                  :class="{ active: reportMetric === 'views' }"
+                  @click="reportMetric = 'views'"
+                >
+                  播放
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: reportMetric === 'clicks' }"
+                  @click="reportMetric = 'clicks'"
+                >
+                  点击
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: reportMetric === 'cpm' }"
+                  @click="reportMetric = 'cpm'"
+                >
+                  CPM
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: reportMetric === 'cpc' }"
+                  @click="reportMetric = 'cpc'"
+                >
+                  CPC
+                </button>
               </div>
               <div class="view-by">
                 <span>查看维度</span>
@@ -1315,37 +3340,75 @@ onBeforeUnmount(() => {
             <el-table-column label="资源" min-width="220" sortable>
               <template #default="{ row }">
                 <div class="influencer-cell">
-                  <el-avatar :src="row.resourceAvatarUrl">{{ String(row.resourceName || "R").slice(0, 1) }}</el-avatar>
+                  <el-avatar :src="row.resourceAvatarUrl">{{
+                    String(row.resourceName || "R").slice(0, 1)
+                  }}</el-avatar>
                   <div>
                     <strong>{{ row.resourceName || "未命名资源" }}</strong>
-                    <span>{{ row.platformHandle ? `@${row.platformHandle}` : row.platform || "-" }}</span>
+                    <span>{{
+                      row.platformHandle
+                        ? `@${row.platformHandle}`
+                        : row.platform || "-"
+                    }}</span>
                   </div>
                 </div>
               </template>
             </el-table-column>
             <el-table-column label="最终链接" min-width="220">
               <template #default="{ row }">
-                <el-link v-if="row.finalLink || row.deliverableLinks" type="primary" :href="row.finalLink || row.deliverableLinks" target="_blank">
+                <el-link
+                  v-if="row.finalLink || row.deliverableLinks"
+                  type="primary"
+                  :href="row.finalLink || row.deliverableLinks"
+                  target="_blank"
+                >
                   打开链接
                 </el-link>
                 <span v-else>-</span>
               </template>
             </el-table-column>
             <el-table-column label="订单价格" width="140" sortable>
-              <template #default="{ row }">{{ moneyText(row.quoteAmount, row.currency) }}</template>
+              <template #default="{ row }">{{
+                moneyText(row.quoteAmount, row.currency)
+              }}</template>
             </el-table-column>
-            <el-table-column prop="language" label="语言" width="130" sortable />
-            <el-table-column prop="topGeographies" label="主要地区" min-width="220" sortable />
-            <el-table-column prop="publishTime" label="发布时间" width="180" sortable />
+            <el-table-column
+              prop="language"
+              label="语言"
+              width="130"
+              sortable
+            />
+            <el-table-column
+              prop="topGeographies"
+              label="主要地区"
+              min-width="220"
+              sortable
+            />
+            <el-table-column
+              prop="publishTime"
+              label="发布时间"
+              width="180"
+              sortable
+            />
           </el-table>
         </section>
 
-        <section v-if="activeSection === 'budget'" class="section-card budget-panel">
+        <section
+          v-if="activeSection === 'budget'"
+          class="section-card budget-panel"
+        >
           <div class="section-headline">
             <h2>预算</h2>
             <div class="headline-actions">
-              <el-date-picker :model-value="[project?.cycleStartDate, project?.cycleEndDate]" type="daterange" disabled range-separator="-" />
-              <el-button type="primary" @click="renewDialog = true">Renew campaign</el-button>
+              <el-date-picker
+                :model-value="[project?.cycleStartDate, project?.cycleEndDate]"
+                type="daterange"
+                disabled
+                range-separator="-"
+              />
+              <el-button type="primary" @click="renewDialog = true"
+                >Renew campaign</el-button
+              >
             </div>
           </div>
           <div class="budget-card">
@@ -1357,13 +3420,20 @@ onBeforeUnmount(() => {
             <div>
               <span>总预算</span>
               <strong>{{ moneyText(projectBudget) }}</strong>
-              <el-button circle text @click="openBudgetDialog"><IconifyIconOnline icon="ri:edit-line" /></el-button>
+              <el-button circle text @click="openBudgetDialog"
+                ><IconifyIconOnline icon="ri:edit-line"
+              /></el-button>
             </div>
-            <el-button link type="primary" @click="showBillingHistory">查看账单流水</el-button>
+            <el-button link type="primary" @click="showBillingHistory"
+              >查看账单流水</el-button
+            >
           </div>
         </section>
 
-        <section v-if="activeSection === 'campaignInfo'" class="section-card info-panel">
+        <section
+          v-if="activeSection === 'campaignInfo'"
+          class="section-card info-panel"
+        >
           <div class="section-headline">
             <h2>项目信息</h2>
             <el-button @click="openProjectDialog">
@@ -1372,16 +3442,46 @@ onBeforeUnmount(() => {
             </el-button>
           </div>
           <dl class="info-list">
-            <div><dt>名称</dt><dd>{{ project?.name || "-" }}</dd></div>
-            <div><dt>目标</dt><dd>{{ project?.campaignType || "-" }}</dd></div>
-            <div><dt>周期</dt><dd>{{ cycleLabel }}</dd></div>
-            <div><dt>市场</dt><dd>{{ project?.targetMarket || "-" }}</dd></div>
-            <div><dt>语言</dt><dd>{{ project?.language || "-" }}</dd></div>
-            <div><dt>平台</dt><dd>{{ project?.platform || "-" }}</dd></div>
-            <div><dt>负责人</dt><dd>{{ project?.owner || "-" }}</dd></div>
-            <div><dt>状态</dt><dd>{{ activeStatusLabel }}</dd></div>
-            <div><dt>预算</dt><dd>{{ moneyText(projectBudget) }}</dd></div>
-            <div class="wide"><dt>需求摘要</dt><dd>{{ cleanDisplayText(project?.brief) || "暂无需求摘要" }}</dd></div>
+            <div>
+              <dt>名称</dt>
+              <dd>{{ project?.name || "-" }}</dd>
+            </div>
+            <div>
+              <dt>目标</dt>
+              <dd>{{ project?.campaignType || "-" }}</dd>
+            </div>
+            <div>
+              <dt>周期</dt>
+              <dd>{{ cycleLabel }}</dd>
+            </div>
+            <div>
+              <dt>市场</dt>
+              <dd>{{ project?.targetMarket || "-" }}</dd>
+            </div>
+            <div>
+              <dt>语言</dt>
+              <dd>{{ project?.language || "-" }}</dd>
+            </div>
+            <div>
+              <dt>平台</dt>
+              <dd>{{ project?.platform || "-" }}</dd>
+            </div>
+            <div>
+              <dt>负责人</dt>
+              <dd>{{ project?.owner || "-" }}</dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>{{ activeStatusLabel }}</dd>
+            </div>
+            <div>
+              <dt>预算</dt>
+              <dd>{{ moneyText(projectBudget) }}</dd>
+            </div>
+            <div class="wide">
+              <dt>需求摘要</dt>
+              <dd>{{ cleanDisplayText(project?.brief) || "暂无需求摘要" }}</dd>
+            </div>
           </dl>
         </section>
       </main>
@@ -1389,23 +3489,52 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="projectDialog" title="编辑项目" width="680px">
       <el-form :model="projectForm" label-width="120px">
-        <el-form-item label="项目名称"><el-input v-model="projectForm.name" /></el-form-item>
-        <el-form-item label="目标市场"><el-input v-model="projectForm.targetMarket" /></el-form-item>
-        <el-form-item label="语言"><el-input v-model="projectForm.language" /></el-form-item>
-        <el-form-item label="平台"><el-input v-model="projectForm.platform" /></el-form-item>
-        <el-form-item label="目标"><el-input v-model="projectForm.campaignType" /></el-form-item>
+        <el-form-item label="项目名称"
+          ><el-input v-model="projectForm.name"
+        /></el-form-item>
+        <el-form-item label="目标市场"
+          ><el-input v-model="projectForm.targetMarket"
+        /></el-form-item>
+        <el-form-item label="语言"
+          ><el-input v-model="projectForm.language"
+        /></el-form-item>
+        <el-form-item label="平台"
+          ><el-input v-model="projectForm.platform"
+        /></el-form-item>
+        <el-form-item label="目标"
+          ><el-input v-model="projectForm.campaignType"
+        /></el-form-item>
         <el-form-item label="周期">
-          <el-date-picker v-model="projectForm.cycleStartDate" value-format="YYYY-MM-DD" type="date" />
+          <el-date-picker
+            v-model="projectForm.cycleStartDate"
+            value-format="YYYY-MM-DD"
+            type="date"
+          />
           <span class="date-separator">至</span>
-          <el-date-picker v-model="projectForm.cycleEndDate" value-format="YYYY-MM-DD" type="date" />
+          <el-date-picker
+            v-model="projectForm.cycleEndDate"
+            value-format="YYYY-MM-DD"
+            type="date"
+          />
         </el-form-item>
-        <el-form-item label="预算"><el-input-number v-model="projectForm.budget" :min="0" class="w-full!" /></el-form-item>
-        <el-form-item label="负责人"><el-input v-model="projectForm.owner" /></el-form-item>
-        <el-form-item label="Brief"><el-input v-model="projectForm.brief" type="textarea" :rows="4" /></el-form-item>
+        <el-form-item label="预算"
+          ><el-input-number
+            v-model="projectForm.budget"
+            :min="0"
+            class="w-full!"
+        /></el-form-item>
+        <el-form-item label="负责人"
+          ><el-input v-model="projectForm.owner"
+        /></el-form-item>
+        <el-form-item label="Brief"
+          ><el-input v-model="projectForm.brief" type="textarea" :rows="4"
+        /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="projectDialog = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitProject">保存</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitProject"
+          >保存</el-button
+        >
       </template>
     </el-dialog>
 
@@ -1419,8 +3548,18 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="renewDialog" title="续期项目" width="480px">
       <el-form :model="renewForm" label-width="96px">
-        <el-form-item label="开始日期"><el-date-picker v-model="renewForm.cycleStartDate" value-format="YYYY-MM-DD" type="date" /></el-form-item>
-        <el-form-item label="结束日期"><el-date-picker v-model="renewForm.cycleEndDate" value-format="YYYY-MM-DD" type="date" /></el-form-item>
+        <el-form-item label="开始日期"
+          ><el-date-picker
+            v-model="renewForm.cycleStartDate"
+            value-format="YYYY-MM-DD"
+            type="date"
+        /></el-form-item>
+        <el-form-item label="结束日期"
+          ><el-date-picker
+            v-model="renewForm.cycleEndDate"
+            value-format="YYYY-MM-DD"
+            type="date"
+        /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="renewDialog = false">取消</el-button>
@@ -1430,12 +3569,21 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="reportDialog" title="提交异常反馈" width="520px">
       <el-form :model="influencerReportForm" label-width="96px">
-        <el-form-item label="原因"><el-input v-model="influencerReportForm.reason" /></el-form-item>
-        <el-form-item label="说明"><el-input v-model="influencerReportForm.detail" type="textarea" :rows="4" /></el-form-item>
+        <el-form-item label="原因"
+          ><el-input v-model="influencerReportForm.reason"
+        /></el-form-item>
+        <el-form-item label="说明"
+          ><el-input
+            v-model="influencerReportForm.detail"
+            type="textarea"
+            :rows="4"
+        /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reportDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitInfluencerReport">提交</el-button>
+        <el-button type="primary" @click="submitInfluencerReport"
+          >提交</el-button
+        >
       </template>
     </el-dialog>
   </div>
@@ -2202,78 +4350,1134 @@ onBeforeUnmount(() => {
   }
 }
 /* Simplified campaign workspace, aligned with the three-view campaign layout. */
-.campaign-workspace { min-height: 100vh; color: #24252b; background: #fff; }
-.campaign-header { display: flex; gap: 18px; align-items: center; justify-content: space-between; min-height: 66px; padding: 10px 22px; border-bottom: 1px solid #e8e8eb; }
-.campaign-heading, .campaign-actions, .campaign-meta, .toolbar, .toolbar-actions, .creator-cell, .handle-cell, .content-author, .content-info > div, .report-tags, .section-title-row { display: flex; align-items: center; }
-.campaign-heading { gap: 14px; min-width: 0; }
-.campaign-actions { gap: 10px; flex: 0 0 auto; }
-.back-button { color: #53565d; border-color: #e4e5e8; }
-.campaign-mark { display: grid; place-items: center; width: 40px; height: 40px; color: #f4a42a; background: #fff; border: 1px solid #e7e7ea; border-radius: 10px; }
-.campaign-mark svg { font-size: 20px; }
-.campaign-name { min-width: 0; }
-.campaign-name h1 { max-width: 580px; margin: 0; overflow: hidden; font-size: 18px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.02em; }
-.campaign-meta { gap: 8px; margin-top: 4px; color: #a0a2a8; font-size: 12px; }
-.campaign-meta > span { display: inline-flex; gap: 5px; align-items: center; }
-.campaign-meta svg { color: #b7bac0; }
-.project-switcher { width: 156px; }
-.cycle-label { color: #34353a; font-size: 14px; font-weight: 600; white-space: nowrap; }
-.campaign-tabs { display: flex; gap: 24px; padding: 0 22px; border-bottom: 1px solid #e8e8eb; }
-.campaign-tabs button { padding: 13px 0 10px; color: #777a81; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; background: transparent; border: 0; border-bottom: 2px solid transparent; }
-.campaign-tabs button:hover { color: #24252b; }
-.campaign-tabs button.active { color: #24252b; border-bottom-color: #24252b; }
-.campaign-main { max-width: 1720px; padding: 24px 22px 36px; margin: 0 auto; }
-.metric-section + .metric-section { margin-top: 24px; }
-.section-title { margin-bottom: 12px; }
-.section-title h2, .report-setup h2 { margin: 0; font-size: 16px; line-height: 1.3; letter-spacing: -0.01em; }
-.section-title-row { justify-content: space-between; }
-.metric-grid { display: grid; gap: 12px; }
-.content-metrics { grid-template-columns: minmax(200px, 1.5fr) minmax(320px, 1.5fr) repeat(3, minmax(160px, 0.85fr)); }
-.engagement-metrics { grid-template-columns: repeat(2, minmax(210px, 0.8fr)) minmax(360px, 1.45fr) minmax(210px, 0.8fr); }
-.performance-metrics { grid-template-columns: minmax(280px, 0.9fr) minmax(380px, 1.35fr) minmax(280px, 0.9fr); }
-.metric-card { min-width: 0; min-height: 82px; padding: 15px; background: #fff; border: 1px solid #e3e4e8; border-radius: 12px; }
-.metric-card > span, .split-card span { display: block; color: #85878e; font-size: 14px; line-height: 1.25; text-decoration: underline dotted #b8bac0 2px; text-underline-offset: 5px; }
-.metric-card strong { display: block; margin-top: 9px; color: #24252b; font-size: 24px; line-height: 1; letter-spacing: -0.035em; }
-.metric-card em { color: #565960; font-size: 18px; font-style: normal; }
-.split-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; overflow: hidden; }
-.split-card > div { min-width: 0; padding: 15px; }
-.split-card > div + div { border-left: 1px solid #e6e7ea; }
-.split-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.report-setup { display: flex; gap: 14px; align-items: center; justify-content: space-between; padding-top: 24px; margin-top: 24px; border-top: 1px solid #ececef; }
-.report-setup p { margin: 8px 0 0; color: #777a81; font-size: 13px; }
-.report-tags { flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-.creator-page, .content-page { min-width: 0; }
-.toolbar { gap: 12px; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid #e8e8eb; }
-.search-field { width: min(440px, 100%); }
-.toolbar-actions { gap: 10px; color: #2e3036; font-size: 14px; white-space: nowrap; }
-.creator-table { width: 100%; margin-top: 0; }
-.creator-cell { gap: 10px; }
-.creator-cell > div { display: grid; gap: 3px; }
-.creator-cell strong { color: #292b31; font-size: 14px; }
-.creator-cell span { color: #898b91; font-size: 12px; }
-.handle-cell { gap: 6px; color: #45474d; }
-.handle-cell svg { color: #24252b; }
-.platform-filter { width: 155px; }
-.content-toolbar { justify-content: flex-start; }
-.content-count { margin-left: auto; color: #85878e; font-size: 13px; }
-.content-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; margin-top: 18px; }
-.content-card { overflow: hidden; cursor: pointer; background: #fff; border: 1px solid #ececef; border-radius: 14px; transition: transform 160ms ease, box-shadow 160ms ease; }
-.content-card:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgb(31 35 42 / 10%); }
-.content-author { gap: 8px; min-width: 0; padding: 12px 13px; }
-.content-author strong { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-workspace {
+  min-height: 100vh;
+  color: #24252b;
+  background: #fff;
+}
+.campaign-header {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 66px;
+  padding: 10px 22px;
+  border-bottom: 1px solid #e8e8eb;
+}
+.campaign-heading,
+.campaign-actions,
+.campaign-meta,
+.toolbar,
+.toolbar-actions,
+.creator-cell,
+.handle-cell,
+.content-author,
+.content-info > div,
+.section-title-row {
+  display: flex;
+  align-items: center;
+}
+.campaign-heading {
+  gap: 14px;
+  min-width: 0;
+}
+.campaign-actions {
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.back-button {
+  color: #53565d;
+  border-color: #e4e5e8;
+}
+.campaign-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  color: #f4a42a;
+  background: #fff;
+  border: 1px solid #e7e7ea;
+  border-radius: 10px;
+}
+.campaign-mark svg {
+  font-size: 20px;
+}
+.campaign-name {
+  min-width: 0;
+}
+.campaign-name h1 {
+  max-width: 580px;
+  margin: 0;
+  overflow: hidden;
+  font-size: 18px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+}
+.campaign-meta {
+  gap: 8px;
+  margin-top: 4px;
+  color: #a0a2a8;
+  font-size: 12px;
+}
+.campaign-meta > span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.campaign-meta svg {
+  color: #b7bac0;
+}
+.project-switcher {
+  width: 156px;
+}
+.cycle-label {
+  color: #34353a;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.campaign-tabs {
+  display: flex;
+  gap: 24px;
+  padding: 0 22px;
+  border-bottom: 1px solid #e8e8eb;
+}
+.campaign-tabs button {
+  padding: 13px 0 10px;
+  color: #777a81;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+}
+.campaign-tabs button:hover {
+  color: #24252b;
+}
+.campaign-tabs button.active {
+  color: #24252b;
+  border-bottom-color: #24252b;
+}
+.campaign-main {
+  max-width: 1720px;
+  padding: 24px 22px 36px;
+  margin: 0 auto;
+}
+.metric-section + .metric-section {
+  margin-top: 24px;
+}
+.section-title {
+  margin-bottom: 12px;
+}
+.section-title h2,
+.project-info-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.section-title-row {
+  justify-content: space-between;
+}
+.metric-grid {
+  display: grid;
+  gap: 12px;
+}
+.content-metrics {
+  grid-template-columns: minmax(200px, 1.5fr) minmax(320px, 1.5fr) repeat(
+      3,
+      minmax(160px, 0.85fr)
+    );
+}
+.engagement-metrics {
+  grid-template-columns:
+    repeat(2, minmax(210px, 0.8fr)) minmax(360px, 1.45fr)
+    minmax(210px, 0.8fr);
+}
+.performance-metrics {
+  grid-template-columns: minmax(280px, 0.9fr) minmax(380px, 1.35fr) minmax(
+      280px,
+      0.9fr
+    );
+}
+.metric-card {
+  min-width: 0;
+  min-height: 82px;
+  padding: 15px;
+  background: #fff;
+  border: 1px solid #e3e4e8;
+  border-radius: 12px;
+}
+.metric-card > span,
+.split-card span {
+  display: block;
+  color: #85878e;
+  font-size: 14px;
+  line-height: 1.25;
+  text-decoration: underline dotted #b8bac0 2px;
+  text-underline-offset: 5px;
+}
+.metric-card strong {
+  display: block;
+  margin-top: 9px;
+  color: #24252b;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+.metric-card em {
+  color: #565960;
+  font-size: 18px;
+  font-style: normal;
+}
+.split-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0;
+  overflow: hidden;
+}
+.split-card > div {
+  min-width: 0;
+  padding: 15px;
+}
+.split-card > div + div {
+  border-left: 1px solid #e6e7ea;
+}
+.split-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-section + .overview-section {
+  margin-top: 26px;
+}
+.overview-section-heading,
+.platform-chart-card > header,
+.platform-metric-switch,
+.platform-legend-row {
+  display: flex;
+  align-items: center;
+}
+.overview-section-heading {
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 13px;
+}
+.overview-section-heading h2,
+.platform-chart-card h3 {
+  margin: 0;
+  color: #24252b;
+  letter-spacing: -0.015em;
+}
+.overview-section-heading h2 {
+  font-size: 17px;
+}
+.overview-section-heading p,
+.platform-chart-card p {
+  margin: 5px 0 0;
+  color: #858991;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.overview-section-heading > span {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  color: #5f6672;
+  font-size: 12px;
+  background: #f5f6f8;
+  border-radius: 6px;
+}
+.overview-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+.overview-metric-card {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 116px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e3e6eb;
+  border-radius: 11px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+}
+.overview-metric-card.primary-metric-card {
+  background: #f7f9ff;
+  border-color: #cedafb;
+}
+.overview-metric-card > span {
+  display: block;
+  overflow: hidden;
+  color: #737983;
+  font-size: 13px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-metric-card strong {
+  display: block;
+  margin-top: 13px;
+  overflow: hidden;
+  color: #20242a;
+  font-size: 27px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.035em;
+}
+.overview-metric-card.primary-metric-card strong {
+  color: #2f63e7;
+}
+.overview-metric-card em {
+  color: #747a85;
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 600;
+}
+.overview-metric-card small {
+  display: block;
+  margin-top: 10px;
+  overflow: hidden;
+  color: #9a9ea6;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.platform-overview-section {
+  padding-top: 2px;
+}
+.platform-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.platform-chart-card {
+  min-width: 0;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #e3e6eb;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
+}
+.platform-chart-card > header {
+  gap: 14px;
+  justify-content: space-between;
+  min-height: 40px;
+}
+.platform-chart-card h3 {
+  font-size: 15px;
+}
+.platform-chart-body {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(250px, 1.1fr);
+  gap: 16px;
+  align-items: center;
+  margin-top: 14px;
+}
+.platform-pie-chart {
+  width: 100%;
+  height: 270px;
+}
+.platform-legend {
+  display: grid;
+  gap: 3px;
+  align-content: center;
+  min-width: 0;
+  max-height: 270px;
+  overflow: auto;
+}
+.platform-legend-row {
+  display: grid;
+  grid-template-columns: 8px 30px minmax(72px, 1fr) auto 44px;
+  gap: 7px;
+  min-height: 38px;
+  padding: 3px 5px;
+  color: #555b65;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f1f3;
+}
+.platform-legend-row:last-child {
+  border-bottom: 0;
+}
+.legend-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.platform-legend-row :deep(.platform-icon-badge) {
+  width: 30px;
+  height: 30px;
+}
+.platform-legend-row :deep(.platform-icon-badge img) {
+  width: 20px;
+  height: 20px;
+}
+.platform-legend-row :deep(.el-tag) {
+  max-width: 30px;
+  overflow: hidden;
+  padding: 0 4px;
+  text-overflow: ellipsis;
+}
+.platform-legend-row strong {
+  overflow: hidden;
+  color: #30343a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.platform-legend-row > span:nth-last-child(2) {
+  color: #32363d;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.platform-legend-row em {
+  color: #8a9099;
+  font-style: normal;
+  text-align: right;
+  white-space: nowrap;
+}
+.platform-metric-switch {
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 3px;
+  background: #f1f3f6;
+  border-radius: 8px;
+}
+.platform-metric-switch button {
+  padding: 6px 10px;
+  color: #6c727c;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+.platform-metric-switch button.active {
+  color: #2f63e7;
+  font-weight: 600;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 10%);
+}
+.project-info-card {
+  padding: 20px;
+  margin-top: 24px;
+  background: #f8fafc;
+  border: 1px solid #e7ebf0;
+  border-radius: 12px;
+}
+.project-info-heading {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.project-info-heading p {
+  margin: 6px 0 0;
+  color: #777a81;
+  font-size: 13px;
+}
+.project-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 24px;
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid #e4e8ed;
+}
+.project-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.project-info-item > span {
+  color: #8a9099;
+  font-size: 12px;
+}
+.project-info-item strong {
+  overflow: hidden;
+  color: #2d3239;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-info-item .el-tag {
+  align-self: flex-start;
+}
+.creator-page,
+.content-page {
+  min-width: 0;
+}
+.toolbar {
+  gap: 12px;
+  justify-content: space-between;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e8e8eb;
+}
+.search-field {
+  width: min(440px, 100%);
+}
+.toolbar-actions {
+  gap: 10px;
+  color: #2e3036;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.creator-table {
+  width: 100%;
+  margin-top: 0;
+}
+.creator-toolbar {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  padding-bottom: 18px;
+}
+.creator-toolbar .toolbar-actions {
+  margin-left: auto;
+}
+.creator-filter {
+  width: 148px;
+}
+.creator-part-heading {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 20px 2px 12px;
+}
+.creator-part-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.creator-part-heading p {
+  margin: 5px 0 0;
+  color: #858991;
+  font-size: 12px;
+}
+.creator-part-heading > span {
+  color: #747981;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.media-part-heading {
+  padding-top: 30px;
+  margin-top: 14px;
+  border-top: 1px solid #e8e8eb;
+}
+.creator-cell {
+  gap: 10px;
+}
+.creator-profile-link {
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+.creator-profile-link:hover strong {
+  color: #2f63e7;
+}
+.creator-cell > div {
+  display: grid;
+  gap: 3px;
+}
+.creator-cell strong {
+  color: #292b31;
+  font-size: 14px;
+}
+.creator-cell span {
+  color: #898b91;
+  font-size: 12px;
+}
+.creator-platform {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  color: #484d55;
+}
+.latest-content-thumb {
+  width: 92px;
+  height: 58px;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  background: #f1f4f8;
+  border: 1px solid #e1e6ec;
+  border-radius: 8px;
+}
+.latest-content-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.latest-content-thumb > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #69717c;
+}
+.latest-content-thumb small {
+  font-size: 10px;
+}
+.latest-content-thumb:hover {
+  border-color: #9eb7ef;
+}
+.latest-content-empty {
+  color: #a2a6ad;
+  font-size: 12px;
+}
+.creator-type-cell {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.creator-type-cell span {
+  color: #73767c;
+  font-size: 12px;
+}
+.handle-cell {
+  gap: 6px;
+  color: #45474d;
+}
+.handle-cell svg {
+  color: #24252b;
+}
+.creator-edit-alert {
+  margin-bottom: 18px;
+}
+.online-search-option-content {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--el-color-primary);
+}
+.online-search-option-content small {
+  max-width: 220px;
+  margin-left: auto;
+  overflow: hidden;
+  color: #8a8d94;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.online-search-panel {
+  padding: 16px;
+  margin-bottom: 18px;
+  background: #f7f9fc;
+  border: 1px solid #dde6f4;
+  border-radius: 12px;
+}
+.online-search-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  color: #3568d4;
+}
+.online-search-panel > header div {
+  display: grid;
+  gap: 3px;
+}
+.online-search-panel > header span {
+  color: #858a94;
+  font-size: 12px;
+}
+.online-search-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+.online-search-result {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 11px;
+  background: #fff;
+  border: 1px solid #dce7dc;
+  border-radius: 10px;
+}
+.online-search-result > div {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+}
+.online-search-result span {
+  color: #7d8189;
+  font-size: 12px;
+}
+.creator-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+.creator-form-grid__wide {
+  grid-column: 1 / -1;
+}
+.platform-filter {
+  width: 155px;
+}
+.content-sort-filter {
+  width: 190px;
+}
+.content-toolbar {
+  justify-content: flex-start;
+}
+.content-count {
+  margin-left: auto;
+  color: #85878e;
+  font-size: 13px;
+}
+.content-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+.content-card {
+  overflow: hidden;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #ececef;
+  border-radius: 14px;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+.content-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgb(31 35 42 / 10%);
+}
+.content-author {
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 13px;
+}
+.content-author-copy {
+  display: grid !important;
+  gap: 2px !important;
+  min-width: 0;
+  margin-top: 0 !important;
+}
+.content-author-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.content-author-copy span {
+  color: #8a8f97;
+  font-size: 11px;
+}
 .content-author .el-tag,
-.content-platform-badge { margin-left: auto; }
-.content-cover { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover; background: #f5f5f6; }
-.empty-cover { display: grid; place-items: center; color: #a5a7ad; font-size: 32px; }
-.content-info { padding: 12px 13px 14px; }
-.content-info p { display: -webkit-box; min-height: 34px; margin: 0; overflow: hidden; color: #32343a; font-size: 13px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.content-post-link { display: block; max-width: 100%; margin-top: 8px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.content-info > div { gap: 12px; margin-top: 11px; color: #777a81; font-size: 12px; }
-.content-info span { display: inline-flex; gap: 4px; align-items: center; }
-:deep(.campaign-workspace .el-button--primary) { --el-button-bg-color: #2f63e7; --el-button-border-color: #2f63e7; --el-button-hover-bg-color: #2558d7; --el-button-hover-border-color: #2558d7; border-radius: 9px; }
-:deep(.campaign-workspace .el-input__wrapper), :deep(.campaign-workspace .el-select__wrapper) { min-height: 40px; border-radius: 10px; box-shadow: 0 0 0 1px #e1e2e6 inset; }
-:deep(.campaign-workspace .el-table) { --el-table-border-color: #e7e8eb; --el-table-header-bg-color: #fff; --el-table-row-hover-bg-color: #f8f9fb; font-size: 14px; }
-:deep(.campaign-workspace .el-table th.el-table__cell) { height: 66px; color: #282a30; font-weight: 650; }
-:deep(.campaign-workspace .el-table td.el-table__cell) { height: 68px; }
-@media (max-width: 1180px) { .content-metrics, .engagement-metrics, .performance-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .wide-card { grid-column: span 2; } .campaign-header { align-items: flex-start; } .campaign-actions { flex-wrap: wrap; justify-content: flex-end; } }
-@media (max-width: 720px) { .campaign-header, .campaign-main { padding-right: 16px; padding-left: 16px; } .campaign-header { flex-direction: column; } .campaign-actions { width: 100%; justify-content: flex-start; } .project-switcher { width: 130px; } .campaign-tabs { gap: 20px; padding: 0 16px; overflow-x: auto; } .metric-grid, .content-metrics, .engagement-metrics, .performance-metrics { grid-template-columns: 1fr; } .wide-card { grid-column: auto; } .report-setup, .toolbar { align-items: flex-start; flex-direction: column; } .toolbar-actions { width: 100%; } .content-count { margin-left: 0; } .search-field { width: 100%; } }
+.content-platform-badge {
+  margin-left: auto;
+}
+.content-cover-wrap {
+  position: relative;
+  overflow: hidden;
+  background: #f5f5f6;
+}
+.content-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #f5f5f6;
+}
+.empty-cover {
+  display: grid;
+  place-items: center;
+  color: #a5a7ad;
+  font-size: 32px;
+}
+.viral-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  padding: 4px 8px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  background: rgb(220 38 38 / 92%);
+  border-radius: 999px;
+  box-shadow: 0 3px 10px rgb(127 29 29 / 22%);
+}
+.content-info {
+  padding: 12px 13px 14px;
+}
+.content-info p {
+  display: -webkit-box;
+  min-height: 34px;
+  margin: 0;
+  overflow: hidden;
+  color: #32343a;
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.content-post-link {
+  display: block;
+  max-width: 100%;
+  margin-top: 8px;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.content-info > div {
+  gap: 12px;
+  margin-top: 11px;
+  color: #777a81;
+  font-size: 12px;
+}
+.content-info span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.content-detail-page {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.content-detail-back {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0;
+  margin-bottom: 18px;
+  color: #555c66;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+.content-detail-back:hover {
+  color: #2f63e7;
+}
+.content-detail-hero {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e3e6eb;
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgb(15 23 42 / 6%);
+}
+.content-detail-cover {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  background: #15181d;
+  border: 0;
+}
+.content-detail-cover > img,
+.content-detail-cover-empty {
+  display: flex;
+  width: 100%;
+  aspect-ratio: 16 / 8;
+  object-fit: cover;
+}
+.content-detail-cover-empty {
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  color: #d8dde5;
+  background: linear-gradient(145deg, #252c36, #11151b);
+}
+.content-detail-cover-empty strong {
+  font-size: 16px;
+}
+.content-detail-cover-empty small {
+  color: #9ca6b4;
+}
+.content-detail-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 64px;
+  height: 48px;
+  color: #fff;
+  font-size: 28px;
+  background: #f52345;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+  transform: translate(-50%, -50%);
+  place-items: center;
+}
+.detail-viral-badge {
+  top: 18px;
+  right: 18px;
+  padding: 7px 11px;
+  font-size: 12px;
+}
+.content-detail-summary {
+  padding: 22px 24px;
+}
+.content-detail-title-row {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.content-detail-title-row > div > span {
+  color: #e34b45;
+  font-size: 12px;
+  font-weight: 700;
+}
+.content-detail-title-row h2 {
+  margin: 5px 0 0;
+  color: #23272e;
+  font-size: 22px;
+  line-height: 1.35;
+}
+.content-detail-author {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 20px;
+}
+.content-detail-author > div {
+  display: grid;
+  gap: 4px;
+}
+.content-detail-author strong {
+  color: #2e333a;
+  font-size: 15px;
+}
+.content-detail-author span {
+  color: #858b94;
+  font-size: 12px;
+}
+.content-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 18px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e3e6eb;
+  border-radius: 12px;
+}
+.content-detail-metrics article {
+  min-width: 0;
+  padding: 22px;
+  border-right: 1px solid #e7e9ed;
+}
+.content-detail-metrics article:last-child {
+  border-right: 0;
+}
+.content-detail-metrics span,
+.content-detail-metrics small {
+  display: block;
+  color: #838993;
+  font-size: 12px;
+}
+.content-detail-metrics strong {
+  display: block;
+  margin: 10px 0 8px;
+  color: #242931;
+  font-size: 24px;
+  line-height: 1;
+}
+.content-detail-metrics small {
+  overflow: hidden;
+  color: #a0a5ad;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.content-detail-link-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 12px;
+  padding: 18px 20px;
+  margin-top: 18px;
+  background: #f8fafc;
+  border: 1px solid #e7eaf0;
+  border-radius: 10px;
+}
+.content-detail-link-row > span {
+  color: #737983;
+  font-size: 13px;
+}
+.content-detail-link-row .el-link {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:deep(.campaign-workspace .el-button--primary) {
+  --el-button-bg-color: #2f63e7;
+  --el-button-border-color: #2f63e7;
+  --el-button-hover-bg-color: #2558d7;
+  --el-button-hover-border-color: #2558d7;
+  border-radius: 9px;
+}
+:deep(.campaign-workspace .el-input__wrapper),
+:deep(.campaign-workspace .el-select__wrapper) {
+  min-height: 40px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px #e1e2e6 inset;
+}
+:deep(.campaign-workspace .el-table) {
+  --el-table-border-color: #e7e8eb;
+  --el-table-header-bg-color: #fff;
+  --el-table-row-hover-bg-color: #f8f9fb;
+  font-size: 14px;
+}
+:deep(.campaign-workspace .el-table th.el-table__cell) {
+  height: 66px;
+  color: #282a30;
+  font-weight: 650;
+}
+:deep(.campaign-workspace .el-table td.el-table__cell) {
+  height: 68px;
+}
+@media (max-width: 1180px) {
+  .overview-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .platform-chart-grid {
+    grid-template-columns: 1fr;
+  }
+  .content-metrics,
+  .engagement-metrics,
+  .performance-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .wide-card {
+    grid-column: span 2;
+  }
+  .campaign-header {
+    align-items: flex-start;
+  }
+  .campaign-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+@media (max-width: 720px) {
+  .campaign-header,
+  .campaign-main {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+  .campaign-header {
+    flex-direction: column;
+  }
+  .campaign-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .project-switcher {
+    width: 130px;
+  }
+  .campaign-tabs {
+    gap: 20px;
+    padding: 0 16px;
+    overflow-x: auto;
+  }
+  .metric-grid,
+  .content-metrics,
+  .engagement-metrics,
+  .performance-metrics {
+    grid-template-columns: 1fr;
+  }
+  .overview-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .overview-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .platform-chart-card {
+    padding: 14px;
+  }
+  .platform-chart-card > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .platform-chart-body {
+    grid-template-columns: 1fr;
+  }
+  .platform-pie-chart {
+    height: 240px;
+  }
+  .platform-legend {
+    max-height: none;
+  }
+  .wide-card {
+    grid-column: auto;
+  }
+  .project-info-heading,
+  .toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .project-info-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .content-detail-title-row {
+    flex-direction: column;
+  }
+  .content-detail-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .content-detail-metrics article:nth-child(2) {
+    border-right: 0;
+  }
+  .content-detail-metrics article:nth-child(-n + 2) {
+    border-bottom: 1px solid #e7e9ed;
+  }
+  .toolbar-actions {
+    width: 100%;
+  }
+  .content-count {
+    margin-left: 0;
+  }
+  .search-field {
+    width: 100%;
+  }
+  .creator-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .creator-form-grid__wide {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 460px) {
+  .overview-metric-grid,
+  .project-info-grid,
+  .content-detail-metrics {
+    grid-template-columns: 1fr;
+  }
+  .content-detail-metrics article,
+  .content-detail-metrics article:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid #e7e9ed;
+  }
+  .content-detail-metrics article:last-child {
+    border-bottom: 0;
+  }
+}
 </style>

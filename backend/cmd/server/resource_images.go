@@ -36,6 +36,9 @@ func localizeResourceImage(ctx context.Context, resourceID int, key, sourceURL s
 	if resourceID <= 0 || sourceURL == "" || strings.HasPrefix(sourceURL, "/api/uploads/resource-images/") {
 		return sourceURL
 	}
+	if os.Getenv("KOL_SKIP_RESOURCE_IMAGE_DOWNLOAD") == "1" {
+		return sourceURL
+	}
 
 	downloadCtx, cancel := resourceImageDownloadContext(ctx)
 	defer cancel()
@@ -82,6 +85,22 @@ func localizeResourceImage(ctx context.Context, resourceID int, key, sourceURL s
 		return sourceURL
 	}
 	return "/api/uploads/resource-images/" + filepath.ToSlash(relative)
+}
+
+func normalizedRemoteImageURL(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "//") {
+		value = "https:" + value
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ""
+	}
+	return value
+}
+
+func isLocalResourceImageURL(value string) bool {
+	return strings.HasPrefix(strings.TrimSpace(value), "/api/uploads/resource-images/")
 }
 
 func newResourceImageHTTPClient(proxyURL string) *http.Client {

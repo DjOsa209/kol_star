@@ -343,19 +343,72 @@ func syncPlatformScopeLabel(selected map[string]bool) string {
 }
 
 func (a *app) syncResourceByPlatform(ctx context.Context, resource syncResourceRow) error {
+	var err error
 	switch platformDisplayName(resource.Platform) {
 	case "YouTube":
-		_, err := a.syncYouTubeResource(ctx, resource.ID, resource.Name, resource.PlatformURL)
-		return err
+		_, err = a.syncYouTubeResource(ctx, resource.ID, resource.Name, resource.PlatformURL)
 	case "Instagram":
-		_, err := a.syncInstagramResource(ctx, resource.ID, resource.Name, resource.PlatformURL, resource.PlatformUserID, resource.PlatformHandle)
-		return err
+		_, err = a.syncInstagramResource(ctx, resource.ID, resource.Name, resource.PlatformURL, resource.PlatformUserID, resource.PlatformHandle)
 	case "TikTok":
-		_, err := a.syncTikTokResource(ctx, resource.ID)
-		return err
+		_, err = a.syncTikTokResource(ctx, resource.ID)
 	default:
 		return fmt.Errorf("当前平台暂不支持官方 API 同步")
 	}
+	if err != nil {
+		return err
+	}
+	return a.refreshResourceAudienceClassification(ctx, resource.ID)
+}
+
+func (a *app) refreshResourceAudienceClassification(ctx context.Context, resourceID int) error {
+	var exists int
+	if err := a.DB().QueryRowContext(ctx,
+		`select count(*) from biz_resources where id = ?`, resourceID,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return nil
+	}
+	return refreshAllResourceAudienceClassifications(ctx, a.DB())
+}
+
+type audienceClassificationExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func refreshAllResourceAudienceClassifications(ctx context.Context, executor audienceClassificationExecutor) error {
+	_, err := executor.ExecContext(ctx,
+		`update biz_resources r
+		 join (
+		   select resource_type,
+		          case
+		            when trim(name) = '' then concat('__resource__', id)
+		            else lower(trim(name))
+		          end as collaborator_key,
+		          sum(greatest(followers, 0)) as total_audience
+		     from biz_resources
+		    group by resource_type,
+		             case
+		               when trim(name) = '' then concat('__resource__', id)
+		               else lower(trim(name))
+		             end
+		 ) totals
+		   on totals.resource_type = r.resource_type
+		  and totals.collaborator_key = case
+		        when trim(r.name) = '' then concat('__resource__', r.id)
+		        else lower(trim(r.name))
+		      end
+		 set r.audience_size = totals.total_audience,
+		     r.audience_size_unit = case when r.resource_type = '媒体' then 'UVM' else 'Followers' end,
+		     r.tier = case
+		       when totals.total_audience <= 0 then ''
+		       when totals.total_audience > 1000000 then '头部'
+		       when totals.total_audience >= 100000 then '腰部'
+		       else '尾部'
+		     end`,
+	)
+	return err
 }
 
 func (a *app) syncableResources(ctx context.Context) ([]syncResourceRow, error) {

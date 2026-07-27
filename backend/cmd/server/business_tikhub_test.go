@@ -110,3 +110,19 @@ func TestNormalizeTikHubTikTokAppV3Posts(t *testing.T) {
 		t.Fatalf("unexpected post fields: %#v", post)
 	}
 }
+
+func TestImageURLPrefersCompleteRemoteURLOverAssetKey(t *testing.T) {
+	value := map[string]any{
+		"uri":      "tos-useast8-p-0068-tx2/asset-key",
+		"url_list": []any{"https://cdn.example.com/cover.jpg"},
+	}
+	if got := imageURL(value); got != "https://cdn.example.com/cover.jpg" {
+		t.Fatalf("unexpected image URL: %q", got)
+	}
+	if got := imageURL("tos-useast8-p-0068-tx2/asset-key"); got != "" {
+		t.Fatalf("expected platform asset key to be rejected, got %q", got)
+	}
+	if got := imageURL("//cdn.example.com/cover.jpg"); got != "https://cdn.example.com/cover.jpg" {
+		t.Fatalf("unexpected protocol-relative image URL: %q", got)
+	}
+}

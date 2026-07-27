@@ -163,3 +163,25 @@ export const savePlatformSyncControl = (data?: object) => {
     data
   });
 };
+
+export const getStandardImportOptions = () => {
+  return http.request<any>("get", "/system/standard-import-options");
+};
+
+export const createStandardImportOption = (data?: object) => {
+  return http.request<any>("post", "/system/standard-import-options/create", {
+    data
+  });
+};
+
+export const updateStandardImportOption = (data?: object) => {
+  return http.request<any>("post", "/system/standard-import-options/update", {
+    data
+  });
+};
+
+export const deleteStandardImportOption = (data?: object) => {
+  return http.request<any>("post", "/system/standard-import-options/delete", {
+    data
+  });
+};

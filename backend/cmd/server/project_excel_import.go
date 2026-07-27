@@ -5,36 +5,108 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/xuri/excelize/v2"
 )
 
-// excelContentAliases intentionally uses an ordered list. Several common header
-// words (for example "Channel" and "Type") are broad, so a map would make the
-// matching result depend on Go's random map iteration order.
+const standardProjectCostNumberFormat = `"$"#,##0.00;-"$"#,##0.00`
+
+// excelContentAliases is deliberately strict: the standard workbook is the
+// only supported import contract. Legacy Chinese/English aliases must not be
+// accepted silently because that would make a malformed template look valid.
 var excelContentAliases = []struct {
 	field   string
 	aliases []string
 }{
-	{"influencer", []string{"姓名", "达人", "博主", "账号", "作者", "主播", "influencer", "creator", "kol", "media/kol", "publication", "outlet", "outlet name", "media name"}},
-	{"category", []string{"领域", "分类", "类别", "垂类", "行业", "类型", "category", "industry", "vertical", "niche", "content type", "source type", "type"}},
-	{"platform", []string{"平台", "渠道", "platform", "channel", "social platform", "social media"}},
-	{"country", []string{"国家", "地区", "国家地区", "region", "country", "location", "market"}},
-	{"followerNumber", []string{"粉丝数", "粉丝量", "粉丝", "follower number", "followers", "follower", "fans", "subscribers", "audience size", "uvm", "muv"}},
-	{"releaseDate", []string{"发布日期", "发布时间", "发布日", "release date", "publish date", "published date", "publication date", "posted date", "post date", "live date"}},
-	{"deliverableLinks", []string{"发布链接", "内容链接", "作品链接", "原文链接", "链接", "网址", "deliverable links", "deliverable link", "published link", "published url", "content link", "content url", "post link", "post url", "video url", "article url", "link", "url"}},
-	{"views", []string{"播放量", "浏览量", "阅读量", "曝光量", "views", "view count", "video views", "impressions", "reach"}},
-	{"engagementCount", []string{"转赞藏数", "互动量", "互动数", "点赞收藏转发", "likes+fav+share", "likes fav share", "total engagement", "engagement count", "engagements", "engagement", "interactions"}},
-	{"commentsCount", []string{"评论数", "评论量", "comments", "comment count"}},
+	{"influencer", []string{"collaboratorName"}},
+	{"resourceType", []string{"resourceType"}},
+	{"category", []string{"category"}},
+	{"country", []string{"market"}},
+	{"followerNumber", []string{"audienceSize"}},
+	{"collaboratorTier", []string{"collaboratorTier"}},
+	{"platform", []string{"platform"}},
+	{"cooperationType", []string{"collaborationType"}},
+	{"deliverableLinks", []string{"contentUrl"}},
+	{"quoteAmount", []string{"cost"}},
+	{"views", []string{"views"}},
+	{"engagementCount", []string{"engagement"}},
+	{"primaryContact", []string{"primaryContact"}},
+	{"owner", []string{"owner"}},
+	{"vendor", []string{"vendor"}},
+	{"notes", []string{"notes"}},
+	{"cpm", []string{"CPM"}},
+}
+
+var standardProjectImportHeaders = []string{
+	"标准字段", "collaboratorName", "resourceType", "category", "market", "audienceSize",
+	"collaboratorTier", "platform", "collaborationType", "contentUrl", "cost", "views",
+	"engagement", "primaryContact", "owner", "vendor", "notes", "CPM",
+}
+
+var standardProjectImportLabels = []string{
+	"", "合作方", "类型", "领域", "市场", "粉丝数/访问量", "合作方层级", "平台", "合作类型",
+	"内容链接", "合作费用", "曝光量/播放量", "互动量", "联系方式", "对接人", "供应商", "备注", "",
+}
+
+var standardProjectImportScopes = []string{
+	"填写范畴",
+	"媒体官网链接\n创作者账号链接",
+	"KOL\n媒体\n艺术家",
+	"科技\n生活方式\n商业\n设计\n游戏\n摄影\n体育\n娱乐\n汽车\n财经\n教育\n大众媒体",
+	"国家\n市场\n地区\n区域",
+	"系统自动回填：\nKOL：粉丝数、订阅数；\n媒体：月独立访客（UVM）",
+	"系统自动回填：\n头部\n腰部\n尾部",
+	"网站\n播客\n电视\n报刊\nYouTube\nTikTok\nInstagram\nFacebook\nX\nLinkedIn\nReddit",
+	"付费合作\n产品置换\n联盟合作\n活动合作\n采访合作",
+	"文章链接\n视频链接\n帖子链接\n内容链接\n发布链接",
+	"paid费用填写：实际支付金额\nseeding或不产生费用则填写：/",
+	"系统通过 contentUrl 自动回填播放量、曝光量或阅读量",
+	"系统通过 contentUrl 自动回填总互动量（点赞、评论、分享、收藏）",
+	"邮箱 / WhatsApp / Telegram",
+	"In-house项目负责人",
+	"项目供应商",
+	"",
+	"",
+}
+
+var standardProjectImportRules = []string{
+	"填写规范",
+	"1. 填写合作方对应网址\n-媒体填写官网链接\n-KOL填写达人对应平台主页\n\n2.一个资源对应一条URL，填写完整https链接",
+	"使用平台预设分类表述，不允许自由填写",
+	"使用平台预设分类表述，不允许新增自由分类",
+	"使用标准国家名称，不使用简称",
+	"无需填写。系统根据合作方主页链接自动抓取最新数据。",
+	"无需填写。系统根据 audienceSize 自动归类：头部 > 100万；腰部 10万-100万；尾部 < 10万。",
+	"1.使用平台标准名称，而非缩写\n2.媒体网站资源对应平台填写Website",
+	"使用系统预设选项",
+	"一个内容对应一条URL，填写完整https链接",
+	"填写实际支付美元金额（数字），币种统一使用Currency字段，不在金额中填写货币符号",
+	"无需填写。系统通过 contentUrl 解析；暂不支持的平台保留为空并记录同步提示。",
+	"无需填写。系统通过 contentUrl 解析；暂不支持的平台保留为空并记录同步提示。",
+	"可自由编辑",
+	"可自由编辑",
+	"可自由编辑",
+	"可自由编辑\n媒体/达人合作方式、配合程度等备注",
+	"无需填写。系统按 CPM = Cost / views × 1000 自动计算。",
 }
 
 var excelNumericFields = map[string]bool{
 	"followerNumber":  true,
 	"views":           true,
 	"engagementCount": true,
-	"commentsCount":   true,
+	"quoteAmount":     true,
+	"cpm":             true,
+}
+
+var defaultStandardProjectImportOptions = map[string][]string{
+	"resourceType":     {"KOL", "媒体", "艺术家"},
+	"category":         {"科技", "生活方式", "商业", "设计", "游戏", "摄影", "体育", "娱乐", "汽车", "财经", "教育", "大众媒体"},
+	"collaboratorTier": {"头部", "腰部", "尾部"},
+	"platform":         {"Website", "播客", "电视", "报刊", "YouTube", "TikTok", "Instagram", "Facebook", "X", "LinkedIn", "Reddit"},
+	"cooperationType":  {"付费合作", "产品置换", "联盟合作", "活动合作", "采访合作"},
 }
 
 func (a *app) previewProjectExcelImport(w http.ResponseWriter, r *http.Request) {
@@ -82,11 +154,16 @@ func (a *app) previewProjectExcelImport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer book.Close()
+	options, err := a.standardImportOptions(r.Context())
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
 	sheets := make([]map[string]any, 0)
 	for _, name := range book.GetSheetList() {
-		rows, err := parseExcelContentSheet(book, name)
+		rows, err := parseExcelContentSheetWithOptions(book, name, options)
 		if err != nil {
-			writeError(w, http.StatusOK, 10001, fmt.Sprintf("Sheet %s 解析失败", name))
+			writeError(w, http.StatusOK, 10001, fmt.Sprintf("Sheet %s：%v", name, err))
 			return
 		}
 		sheets = append(sheets, map[string]any{"name": name, "rows": rows})
@@ -94,7 +171,321 @@ func (a *app) previewProjectExcelImport(w http.ResponseWriter, r *http.Request) 
 	writeOK(w, map[string]any{"fileName": fileName, "sheets": sheets})
 }
 
+func (a *app) downloadProjectExcelImportTemplate(w http.ResponseWriter, r *http.Request) {
+	options, err := a.standardImportOptions(r.Context())
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	book, err := buildStandardProjectImportTemplateWithOptions(options)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 10006, "标准模板生成失败")
+		return
+	}
+	defer book.Close()
+	buffer, err := book.WriteToBuffer()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 10006, "标准模板生成失败")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", `attachment; filename="XMP_Standard_Project_Import.xlsx"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buffer.Bytes())
+}
+
+func buildStandardProjectImportTemplate() (*excelize.File, error) {
+	return buildStandardProjectImportTemplateWithOptions(defaultStandardProjectImportOptions)
+}
+
+func buildStandardProjectImportTemplateWithOptions(options map[string][]string) (*excelize.File, error) {
+	book := excelize.NewFile()
+	sheet := "标准模板"
+	defaultSheet := book.GetSheetName(0)
+	if err := book.SetSheetName(defaultSheet, sheet); err != nil {
+		return nil, err
+	}
+	headerRow := make([]any, len(standardProjectImportHeaders))
+	labelRow := make([]any, len(standardProjectImportLabels))
+	scopeRow := make([]any, len(standardProjectImportScopes))
+	ruleRow := make([]any, len(standardProjectImportRules))
+	for index := range standardProjectImportHeaders {
+		headerRow[index] = standardProjectImportHeaders[index]
+		if standardProjectImportLabels[index] != "" {
+			labelRow[index] = standardProjectImportLabels[index]
+		}
+		if standardProjectImportScopes[index] != "" {
+			scopeRow[index] = standardProjectImportScopes[index]
+		}
+		if standardProjectImportRules[index] != "" {
+			ruleRow[index] = standardProjectImportRules[index]
+		}
+	}
+	if err := book.SetSheetRow(sheet, "A1", &headerRow); err != nil {
+		return nil, err
+	}
+	if err := book.SetSheetRow(sheet, "A2", &labelRow); err != nil {
+		return nil, err
+	}
+	if err := book.SetSheetRow(sheet, "A3", &scopeRow); err != nil {
+		return nil, err
+	}
+	if err := book.SetSheetRow(sheet, "A4", &ruleRow); err != nil {
+		return nil, err
+	}
+	if err := book.MergeCell(sheet, "A1", "A2"); err != nil {
+		return nil, err
+	}
+	if err := book.MergeCell(sheet, "R1", "R2"); err != nil {
+		return nil, err
+	}
+
+	newHeaderStyle := func(fill string, bold bool) (int, error) {
+		return book.NewStyle(&excelize.Style{
+			Font:      &excelize.Font{Bold: bold, Color: "#000000", Family: "Arial", Size: 10},
+			Fill:      excelize.Fill{Type: "pattern", Color: []string{fill}, Pattern: 1},
+			Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+			Border: []excelize.Border{
+				{Type: "left", Color: "#D0D0D0", Style: 1}, {Type: "right", Color: "#D0D0D0", Style: 1},
+				{Type: "top", Color: "#D0D0D0", Style: 1}, {Type: "bottom", Color: "#D0D0D0", Style: 1},
+			},
+			Protection: &excelize.Protection{Locked: true},
+		})
+	}
+	blue, err := newHeaderStyle("#BACEFD", true)
+	if err != nil {
+		return nil, err
+	}
+	yellow, err := newHeaderStyle("#FAF1D1", true)
+	if err != nil {
+		return nil, err
+	}
+	gray, err := newHeaderStyle("#DEE0E3", true)
+	if err != nil {
+		return nil, err
+	}
+	green, err := newHeaderStyle("#EEF6C6", true)
+	if err != nil {
+		return nil, err
+	}
+	if err := book.SetCellStyle(sheet, "A1", "A1", blue); err != nil {
+		return nil, err
+	}
+	for _, group := range []struct {
+		start string
+		end   string
+		style int
+	}{
+		{"B1", "E2", yellow}, {"F1", "G2", gray}, {"H1", "M2", yellow},
+		{"N1", "Q2", green}, {"R1", "R1", gray},
+	} {
+		if err := book.SetCellStyle(sheet, group.start, group.end, group.style); err != nil {
+			return nil, err
+		}
+	}
+	editableStyle, err := book.NewStyle(&excelize.Style{Protection: &excelize.Protection{Locked: false}})
+	if err != nil {
+		return nil, err
+	}
+	if err := book.SetColStyle(sheet, "B:Q", editableStyle); err != nil {
+		return nil, err
+	}
+	if err := book.SetCellStyle(sheet, "B5", "Q2000", editableStyle); err != nil {
+		return nil, err
+	}
+	costStyle, err := book.NewStyle(&excelize.Style{
+		CustomNumFmt: stringPointer(standardProjectCostNumberFormat),
+		Protection:   &excelize.Protection{Locked: false},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := book.SetCellStyle(sheet, "K5", "K2000", costStyle); err != nil {
+		return nil, err
+	}
+	calculatedStyle, err := book.NewStyle(&excelize.Style{
+		Fill:       excelize.Fill{Type: "pattern", Color: []string{"#F3F4F6"}, Pattern: 1},
+		Protection: &excelize.Protection{Locked: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// audienceSize、collaboratorTier、views、engagement 和 CPM 都由平台逻辑
+	// 自动回填。即使用户解除工作表保护，解析器也不会采纳这些列的值。
+	for _, column := range []string{"F", "G", "L", "M", "R"} {
+		if err := book.SetCellStyle(sheet, column+"5", column+"2000", calculatedStyle); err != nil {
+			return nil, err
+		}
+	}
+	for _, definition := range []struct {
+		column string
+		field  string
+	}{
+		{"C", "resourceType"}, {"D", "category"}, {"H", "platform"}, {"I", "cooperationType"},
+	} {
+		validation := excelize.NewDataValidation(true)
+		validation.Sqref = definition.column + "5:" + definition.column + "2000"
+		if err := validation.SetDropList(options[definition.field]); err != nil {
+			return nil, err
+		}
+		validation.SetError(excelize.DataValidationErrorStyleStop, "非标准选项", "请从平台预设选项中选择")
+		if err := book.AddDataValidation(sheet, validation); err != nil {
+			return nil, err
+		}
+	}
+	// Column styles apply to the whole column, so lock and restyle the two fixed
+	// header rows after making the data-entry columns editable.
+	for _, group := range []struct {
+		start string
+		end   string
+		style int
+	}{
+		{"B1", "E2", yellow}, {"F1", "G2", gray}, {"H1", "M2", yellow}, {"N1", "Q2", green},
+	} {
+		if err := book.SetCellStyle(sheet, group.start, group.end, group.style); err != nil {
+			return nil, err
+		}
+	}
+	instructionStyle, err := book.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Color: "#000000", Family: "Arial", Size: 9},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+		Border: []excelize.Border{
+			{Type: "left", Color: "#D0D0D0", Style: 1}, {Type: "right", Color: "#D0D0D0", Style: 1},
+			{Type: "top", Color: "#D0D0D0", Style: 1}, {Type: "bottom", Color: "#D0D0D0", Style: 1},
+		},
+		Protection: &excelize.Protection{Locked: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := book.SetCellStyle(sheet, "B3", "R4", instructionStyle); err != nil {
+		return nil, err
+	}
+	if err := book.SetCellStyle(sheet, "A3", "A4", blue); err != nil {
+		return nil, err
+	}
+	widths := []float64{12, 25, 16, 16, 14, 18, 18, 16, 20, 32, 14, 18, 16, 24, 16, 16, 24, 12}
+	for index, width := range widths {
+		column, _ := excelize.ColumnNumberToName(index + 1)
+		if err := book.SetColWidth(sheet, column, column, width); err != nil {
+			return nil, err
+		}
+	}
+	_ = book.SetRowHeight(sheet, 1, 26)
+	_ = book.SetRowHeight(sheet, 2, 28)
+	_ = book.SetRowHeight(sheet, 3, 148)
+	_ = book.SetRowHeight(sheet, 4, 148)
+	if err := book.SetPanes(sheet, &excelize.Panes{Freeze: true, Split: false, YSplit: 4, TopLeftCell: "A5", ActivePane: "bottomLeft"}); err != nil {
+		return nil, err
+	}
+	if err := book.ProtectSheet(sheet, &excelize.SheetProtectionOptions{
+		Password: "xmp-standard-template", SelectLockedCells: false, SelectUnlockedCells: true,
+	}); err != nil {
+		return nil, err
+	}
+	if err := book.ProtectWorkbook(&excelize.WorkbookProtectionOptions{Password: "xmp-standard-template", LockStructure: true}); err != nil {
+		return nil, err
+	}
+	return book, nil
+}
+
+func buildStandardProjectExportWorkbook(options map[string][]string, rows []map[string]any) (*excelize.File, error) {
+	book, err := buildStandardProjectImportTemplateWithOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	if err := populateStandardProjectExportRows(book, rows); err != nil {
+		book.Close()
+		return nil, err
+	}
+	return book, nil
+}
+
+func populateStandardProjectExportRows(book *excelize.File, rows []map[string]any) error {
+	const sheet = "标准模板"
+	editableNumberStyle, err := book.NewStyle(&excelize.Style{
+		CustomNumFmt: stringPointer(standardProjectCostNumberFormat),
+		Protection:   &excelize.Protection{Locked: false},
+	})
+	if err != nil {
+		return err
+	}
+	calculatedIntegerStyle, err := book.NewStyle(&excelize.Style{
+		CustomNumFmt: stringPointer("#,##0"),
+		Fill:         excelize.Fill{Type: "pattern", Color: []string{"#F3F4F6"}, Pattern: 1},
+		Protection:   &excelize.Protection{Locked: true},
+	})
+	if err != nil {
+		return err
+	}
+	calculatedDecimalStyle, err := book.NewStyle(&excelize.Style{
+		CustomNumFmt: stringPointer("#,##0.00"),
+		Fill:         excelize.Fill{Type: "pattern", Color: []string{"#F3F4F6"}, Pattern: 1},
+		Protection:   &excelize.Protection{Locked: true},
+	})
+	if err != nil {
+		return err
+	}
+
+	for index, row := range rows {
+		rowNumber := index + 5
+		profileURL := firstHTTPExcelURL(stringValue(row["profileUrl"]))
+		contentValue := strings.TrimSpace(stringValue(row["contentUrl"]))
+		values := []any{
+			nil,
+			excelTextOrNil(firstNonEmpty(stringValue(row["resourceName"]), profileURL)),
+			excelTextOrNil(row["resourceType"]), excelTextOrNil(row["category"]), excelTextOrNil(row["market"]), row["audienceSize"],
+			excelTextOrNil(row["collaboratorTier"]), excelTextOrNil(row["platform"]), excelTextOrNil(row["cooperationType"]), excelTextOrNil(contentValue),
+			row["cost"], row["views"], row["engagement"], excelTextOrNil(row["primaryContact"]),
+			excelTextOrNil(row["owner"]), excelTextOrNil(row["vendor"]), excelTextOrNil(row["notes"]), row["cpm"],
+		}
+		startCell, _ := excelize.CoordinatesToCellName(1, rowNumber)
+		if err := book.SetSheetRow(sheet, startCell, &values); err != nil {
+			return err
+		}
+		if profileURL != "" {
+			if err := book.SetCellHyperLink(sheet, fmt.Sprintf("B%d", rowNumber), profileURL, "External"); err != nil {
+				return err
+			}
+		}
+		if contentURL := firstHTTPExcelURL(contentValue); contentURL != "" {
+			if err := book.SetCellHyperLink(sheet, fmt.Sprintf("J%d", rowNumber), contentURL, "External"); err != nil {
+				return err
+			}
+		}
+		if err := book.SetCellStyle(sheet, fmt.Sprintf("K%d", rowNumber), fmt.Sprintf("K%d", rowNumber), editableNumberStyle); err != nil {
+			return err
+		}
+		for _, column := range []string{"F", "L", "M"} {
+			if err := book.SetCellStyle(sheet, fmt.Sprintf("%s%d", column, rowNumber), fmt.Sprintf("%s%d", column, rowNumber), calculatedIntegerStyle); err != nil {
+				return err
+			}
+		}
+		if err := book.SetCellStyle(sheet, fmt.Sprintf("R%d", rowNumber), fmt.Sprintf("R%d", rowNumber), calculatedDecimalStyle); err != nil {
+			return err
+		}
+		_ = book.SetRowHeight(sheet, rowNumber, 24)
+	}
+	return nil
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
+func excelTextOrNil(value any) any {
+	text := strings.TrimSpace(stringValue(value))
+	if text == "" {
+		return nil
+	}
+	return text
+}
+
 func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any, error) {
+	return parseExcelContentSheetWithOptions(book, sheet, defaultStandardProjectImportOptions)
+}
+
+func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, options map[string][]string) ([]map[string]any, error) {
 	grid, err := book.GetRows(sheet)
 	if err != nil {
 		return nil, err
@@ -103,16 +494,24 @@ func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any
 	if err != nil {
 		return nil, err
 	}
-	headers := []string(nil)
+	if len(grid) < 4 || !standardImportRowMatches(grid[0], standardProjectImportHeaders) {
+		return nil, fmt.Errorf("第1行必须是锁定的标准字段表头")
+	}
+	if !standardImportRowMatches(grid[1], standardProjectImportLabels) {
+		return nil, fmt.Errorf("第2行中文表头与标准模板不一致")
+	}
+	if !standardImportInstructionRowMatches(grid[2], standardProjectImportScopes[0]) {
+		return nil, fmt.Errorf("第3行必须保留填写范畴说明")
+	}
+	if !standardImportInstructionRowMatches(grid[3], standardProjectImportRules[0]) {
+		return nil, fmt.Errorf("第4行必须保留填写规范说明")
+	}
+	headers := grid[0]
 	previous := map[string]any{}
 	result := make([]map[string]any, 0)
-	for rowIndex, values := range grid {
-		if excelHeaderRow(values) {
-			headers = values
-			previous = map[string]any{}
-			continue
-		}
-		if len(headers) == 0 || allBlank(values) {
+	for rowIndex := 4; rowIndex < len(grid); rowIndex++ {
+		values := grid[rowIndex]
+		if allBlank(values) {
 			continue
 		}
 		row := map[string]any{}
@@ -132,7 +531,7 @@ func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any
 			if value == "" {
 				value = mergedValues[cell]
 			}
-			if key == "deliverableLinks" {
+			if key == "deliverableLinks" || key == "influencer" {
 				if ok, link, _ := book.GetCellHyperLink(sheet, cell); ok && strings.TrimSpace(link) != "" {
 					value = strings.ReplaceAll(link, "&amp;", "&")
 				}
@@ -151,11 +550,6 @@ func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any
 		contentLinks := mappedContentLinks(
 			book, sheet, rowIndex, headers, values, mergedValues,
 		)
-		if len(contentLinks) == 0 {
-			contentLinks = fallbackContentLinks(
-				book, sheet, rowIndex, headers, values, mergedValues,
-			)
-		}
 		// A visible cell value is not necessarily a usable URL. Keep only an
 		// actual HTTP(S) link so a malformed field becomes empty during preview
 		// instead of failing the database write later.
@@ -163,13 +557,21 @@ func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any
 		if len(contentLinks) > 0 {
 			row["deliverableLinks"] = contentLinks[0]
 		}
-		row["releaseDate"] = normalizeImportedDate(excelCellString(row["releaseDate"]))
 		if excelCellString(row["influencer"]) == "" && excelCellString(row["deliverableLinks"]) == "" && excelCellString(row["platform"]) == "" && excelCellString(row["category"]) == "" {
 			continue // 汇总行
 		}
 		inheritedInfluencer := excelCellString(row["influencer"]) == ""
 		if inheritedInfluencer {
 			row["influencer"] = previous["influencer"]
+			if excelCellString(row["resourceType"]) == "" {
+				row["resourceType"] = previous["resourceType"]
+			}
+			if excelCellString(row["collaboratorTier"]) == "" {
+				row["collaboratorTier"] = previous["collaboratorTier"]
+			}
+			if excelCellString(row["primaryContact"]) == "" {
+				row["primaryContact"] = previous["primaryContact"]
+			}
 		}
 		if excelCellString(row["category"]) == "" {
 			row["category"] = previous["category"]
@@ -188,19 +590,32 @@ func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any
 		if excelCellString(row["influencer"]) == "" {
 			continue
 		}
-		if excelCellString(row["platform"]) == "" && excelCellString(row["deliverableLinks"]) != "" {
-			row["platform"] = platformFromLink(excelCellString(row["deliverableLinks"]))
+		errors := make([]string, 0)
+		profileURL, profileErr := normalizeImportedProfileLink(excelCellString(row["influencer"]))
+		if profileErr != nil {
+			errors = append(errors, profileErr.Error())
+		} else {
+			row["influencer"] = profileURL
 		}
+		row["platform"] = normalizeImportedPlatform(excelCellString(row["platform"]), excelCellString(row["influencer"]))
+		for _, field := range []string{"resourceType", "category", "platform", "cooperationType"} {
+			value := excelCellString(row[field])
+			if value != "" && !standardImportOptionAllowed(options, field, value) {
+				errors = append(errors, fmt.Sprintf("%s 必须使用平台预设选项", headerForImportField(field)))
+			}
+		}
+		row["errors"] = errors
+		row["country"] = normalizeImportedMarket(excelCellString(row["country"]))
 		row["rowNo"] = rowIndex + 1
 		row["sourceSheet"] = sheet
-		row["resourceType"] = "KOL"
-		identityHeader := excelHeaderNorm(headerText(headers, "influencer"))
-		if strings.EqualFold(excelCellString(row["platform"]), "website") || strings.Contains(identityHeader, "publication") || strings.Contains(identityHeader, "mediaoutlet") {
-			row["resourceType"] = "媒体"
+		resourceType := cleanImportString(excelCellString(row["resourceType"]))
+		if resourceType == "" {
+			resourceType = "KOL"
 		}
+		row["resourceType"] = resourceType
 		row["mediaOutlet"] = ""
 		if row["resourceType"] == "媒体" {
-			row["mediaOutlet"] = excelCellString(row["influencer"])
+			row["mediaOutlet"] = importedProfilePlaceholderName(excelCellString(row["influencer"]))
 			if excelCellString(row["platform"]) == "" {
 				row["platform"] = "Website"
 			}
@@ -210,6 +625,13 @@ func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any
 				row[field] = float64(0)
 			}
 		}
+		// These values belong to the system side of the contract. Never trust
+		// values typed into a locally-unprotected workbook.
+		row["followerNumber"] = float64(0)
+		row["collaboratorTier"] = ""
+		row["views"] = float64(0)
+		row["engagementCount"] = float64(0)
+		row["cpm"] = float64(0)
 		if len(contentLinks) == 0 {
 			result = append(result, row)
 		} else {
@@ -228,6 +650,46 @@ func parseExcelContentSheet(book *excelize.File, sheet string) ([]map[string]any
 		previous = row
 	}
 	return result, nil
+}
+
+func standardImportOptionAllowed(options map[string][]string, field, value string) bool {
+	for _, option := range options[field] {
+		if value == option {
+			return true
+		}
+	}
+	return false
+}
+
+func headerForImportField(field string) string {
+	for _, definition := range excelContentAliases {
+		if definition.field == field && len(definition.aliases) > 0 {
+			return definition.aliases[0]
+		}
+	}
+	return field
+}
+
+func standardImportRowMatches(values, expected []string) bool {
+	for index, expectedValue := range expected {
+		actual := ""
+		if index < len(values) {
+			actual = strings.TrimSpace(values[index])
+		}
+		if actual != expectedValue {
+			return false
+		}
+	}
+	for index := len(expected); index < len(values); index++ {
+		if strings.TrimSpace(values[index]) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func standardImportInstructionRowMatches(values []string, label string) bool {
+	return len(values) > 0 && strings.TrimSpace(values[0]) == label
 }
 
 func mappedContentLinks(book *excelize.File, sheet string, rowIndex int, headers, row []string, mergedValues map[string]string) []string {
@@ -406,11 +868,7 @@ func excelFieldForHeader(header string) string {
 	return ""
 }
 func excelHeaderMatch(header, alias string) bool {
-	h, a := excelHeaderNorm(header), excelHeaderNorm(alias)
-	if a == "url" || a == "link" {
-		return h == a
-	}
-	return h == a || (len([]rune(a)) >= 3 && strings.Contains(h, a))
+	return strings.TrimSpace(header) == alias
 }
 func excelHeaderNorm(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
@@ -477,7 +935,102 @@ func platformFromLink(link string) string {
 		return "Instagram"
 	case strings.Contains(link, "x.com/") || strings.Contains(link, "twitter.com/"):
 		return "X"
+	case strings.Contains(link, "facebook.com/") || strings.Contains(link, "fb.com/"):
+		return "Facebook"
+	case strings.Contains(link, "linkedin.com/"):
+		return "LinkedIn"
+	case strings.Contains(link, "reddit.com/"):
+		return "Reddit"
 	default:
 		return "Website"
 	}
+}
+
+func normalizeImportedPlatform(value, profileURL string) string {
+	declared := cleanImportString(value)
+	switch strings.ToLower(declared) {
+	case "youtube":
+		declared = "YouTube"
+	case "tiktok":
+		declared = "TikTok"
+	case "instagram", "ins":
+		declared = "Instagram"
+	case "facebook", "fb":
+		declared = "Facebook"
+	case "twitter", "x":
+		declared = "X"
+	case "linkedin":
+		declared = "LinkedIn"
+	case "reddit":
+		declared = "Reddit"
+	case "website", "网站":
+		declared = "Website"
+	}
+	inferred := platformFromLink(profileURL)
+	if inferred != "Website" {
+		return inferred
+	}
+	if declared != "" {
+		return declared
+	}
+	return "Website"
+}
+
+func normalizeImportedProfileLink(value string) (string, error) {
+	value = cleanImportString(value)
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", fmt.Errorf("合作方必须填写完整有效的主页 URL")
+	}
+	query := parsed.Query()
+	for key := range query {
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "utm_") || lowerKey == "fbclid" || lowerKey == "gclid" || lowerKey == "igsh" {
+			query.Del(key)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func importedProfilePlaceholderName(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Hostname() == "" {
+		return strings.TrimSpace(value)
+	}
+	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for index := len(segments) - 1; index >= 0; index-- {
+		candidate := strings.TrimSpace(strings.TrimPrefix(segments[index], "@"))
+		if candidate == "" || candidate == "channel" || candidate == "user" || candidate == "c" {
+			continue
+		}
+		if host != "youtube.com" && host != "m.youtube.com" || !strings.EqualFold(candidate, "shorts") {
+			return candidate
+		}
+	}
+	return host
+}
+
+func normalizeImportedMarket(value string) string {
+	value = cleanImportString(value)
+	key := strings.ToLower(strings.Join(strings.Fields(value), " "))
+	aliases := map[string]string{
+		"us": "美国", "u.s.": "美国", "usa": "美国", "united states": "美国", "united states of america": "美国", "美国": "美国",
+		"uk": "英国", "u.k.": "英国", "united kingdom": "英国", "great britain": "英国", "英国": "英国",
+		"ksa": "沙特阿拉伯", "saudi": "沙特阿拉伯", "saudi arabia": "沙特阿拉伯", "沙特": "沙特阿拉伯", "沙特阿拉伯": "沙特阿拉伯",
+		"uae": "阿拉伯联合酋长国", "united arab emirates": "阿拉伯联合酋长国", "阿联酋": "阿拉伯联合酋长国", "阿拉伯联合酋长国": "阿拉伯联合酋长国",
+		"de": "德国", "germany": "德国", "德国": "德国",
+		"fr": "法国", "france": "法国", "法国": "法国",
+		"jp": "日本", "japan": "日本", "日本": "日本",
+		"kr": "韩国", "south korea": "韩国", "republic of korea": "韩国", "韩国": "韩国",
+		"in": "印度", "india": "印度", "印度": "印度",
+		"id": "印度尼西亚", "indonesia": "印度尼西亚", "印尼": "印度尼西亚", "印度尼西亚": "印度尼西亚",
+		"sg": "新加坡", "singapore": "新加坡", "新加坡": "新加坡",
+	}
+	if canonical := aliases[key]; canonical != "" {
+		return canonical
+	}
+	return value
 }

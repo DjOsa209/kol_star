@@ -68,6 +68,35 @@ export const addProjectResource = (data?: object) => {
   });
 };
 
+export const getProjectResourceOptions = (params?: object) => {
+  return http.request<Result<any[]>>(
+    "get",
+    "/business/project-resources/options",
+    { params }
+  );
+};
+
+export const searchOnlineProjectResource = (data?: object) => {
+  return http.request<Result>(
+    "post",
+    "/business/project-resources/search-online",
+    { data },
+    { timeout: 130000 }
+  );
+};
+
+export const updateProjectResource = (data?: object) => {
+  return http.request<Result>("post", "/business/project-resources/update", {
+    data
+  });
+};
+
+export const deleteProjectResource = (data?: object) => {
+  return http.request<Result>("post", "/business/project-resources/delete", {
+    data
+  });
+};
+
 export const getMarketOptions = () => {
   return http.request<Result<any[]>>("get", "/business/markets");
 };
@@ -118,6 +147,17 @@ export const previewProjectExcelImport = (file: File) => {
   );
 };
 
+export const downloadProjectExcelImportTemplate = () => {
+  return http.request<Blob>(
+    "get",
+    "/business/projects/import-template",
+    { responseType: "blob" },
+    {
+      beforeResponseCallback: response => response.data
+    } as any
+  );
+};
+
 export const updateProject = (data?: object) => {
   return http.request<Result>("post", "/business/projects/update", { data });
 };
@@ -148,7 +188,7 @@ export const reportProjectInfluencer = (data?: object) => {
   });
 };
 
-export const downloadProjectReport = (params?: object) => {
+export const downloadProjectData = (params?: object) => {
   return http.request<Blob>(
     "get",
     "/business/projects/report/download",

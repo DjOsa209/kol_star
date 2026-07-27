@@ -8,6 +8,8 @@ import {
   createProject,
   importProjects,
   previewProjectExcelImport,
+  downloadProjectExcelImportTemplate,
+  downloadProjectData,
   updateProject,
   deleteProject,
   getCooperationList,
@@ -43,16 +45,14 @@ const importProjectId = ref<number | null>(null);
 const importProjectNameDraft = ref("");
 const importProjectCreating = ref(false);
 const importWorkbookSheets = shallowRef<{ name: string; rows: any[] }[]>([]);
-const selectedImportSheets = ref<string[]>([]);
 const importRows = shallowRef<any[]>([]);
-const importPreviewLimit = ref(20);
-const importPreviewTableRef = ref<any>();
 const importFileName = ref("");
 const marketOptions = ref<string[]>([]);
 const selectedProjectId = ref<number | null>(null);
 const activePipelineStage = ref("all");
 const activeCooperation = ref<any>(null);
 const syncingCooperationIds = reactive<Record<number, boolean>>({});
+const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
 const projectStatusFilter = ref("all");
@@ -306,13 +306,7 @@ const linkedImportRows = computed(() =>
   validImportRows.value.filter(row => String(row.deliverableLinks || "").trim())
 );
 
-const visibleImportRows = computed(() =>
-  importRows.value.slice(0, importPreviewLimit.value)
-);
-
-const hasMoreImportRows = computed(
-  () => visibleImportRows.value.length < importRows.value.length
-);
+const visibleImportRows = computed(() => importRows.value.slice(0, 10));
 
 const validProjectImportRows = computed(() =>
   projectImportRows.value.filter(row => row.errors.length === 0)
@@ -480,28 +474,6 @@ const visibleProjects = computed(() => {
       .filter(Boolean)
       .some(value => String(value).toLowerCase().includes(keyword));
   });
-});
-
-const centerOverview = computed(() => {
-  const totals = cooperations.value.reduce(
-    (summary, item) => {
-      summary.creators.add(Number(item.resourceId || 0));
-      summary.content += cooperationStage(item) === "published" ? 1 : 0;
-      summary.reach += primaryReach(item);
-      summary.cost += numberValue(item.quoteAmount);
-      return summary;
-    },
-    { creators: new Set<number>(), content: 0, reach: 0, cost: 0 }
-  );
-  return {
-    active: projects.value.filter(
-      project => !/paused|结束|archived/i.test(String(project.status || ""))
-    ).length,
-    creators: Array.from(totals.creators).filter(Boolean).length,
-    content: totals.content,
-    reach: totals.reach,
-    cost: totals.cost
-  };
 });
 
 async function loadData() {
@@ -928,65 +900,24 @@ async function syncCooperationPost(row: any) {
   ElMessage.warning(res.data?.message || "未找到匹配的合作作品");
 }
 
-function normalizeHeader(value: string) {
-  return String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]/gu, "");
-}
-
 const headerAliases = {
-  influencer: [
-    "姓名",
-    "Influencer",
-    "达人",
-    "KOL",
-    "Creator",
-    "Publication",
-    "Outlet",
-    "媒体名称"
-  ],
-  category: ["领域", "Category", "Type", "Industry", "类型"],
-  platform: ["平台", "Platform", "Channel", "渠道"],
-  followerNumber: [
-    "粉丝数",
-    "Follower Number",
-    "Followers",
-    "Fans",
-    "UVM",
-    "MUV"
-  ],
-  country: ["国家", "国家地区", "Country", "Location", "Market"],
-  releaseDate: [
-    "发布日期",
-    "发布时间",
-    "Release Date",
-    "Publish Date",
-    "Published At"
-  ],
-  deliverableLinks: [
-    "发布链接",
-    "内容链接",
-    "作品链接",
-    "Deliverable Links",
-    "Published Link",
-    "Post URL",
-    "Post Link",
-    "Link",
-    "URL"
-  ],
-  views: ["播放量", "浏览量", "Views", "View Count", "Impressions", "曝光量"],
-  engagementCount: [
-    "转赞藏数",
-    "互动量",
-    "Likes+Fav+Share",
-    "Likes Fav Share",
-    "Engagement",
-    "Interactions"
-  ],
-  commentsCount: ["评论数", "Comments", "Comment Count"],
-  quoteAmount: ["报价", "费用", "Cost", "Quote", "Paid Amount"],
-  rating: ["评级", "Rating"]
+  influencer: ["collaboratorName"],
+  resourceType: ["resourceType"],
+  category: ["category"],
+  country: ["market"],
+  followerNumber: ["audienceSize"],
+  rating: ["collaboratorTier"],
+  platform: ["platform"],
+  cooperationType: ["collaborationType"],
+  deliverableLinks: ["contentUrl"],
+  quoteAmount: ["cost"],
+  views: ["views"],
+  engagementCount: ["engagement"],
+  primaryContact: ["primaryContact"],
+  owner: ["owner"],
+  vendor: ["vendor"],
+  notes: ["notes"],
+  cpm: ["CPM"]
 };
 
 const projectImportAliases = {
@@ -1005,12 +936,7 @@ const projectImportAliases = {
 };
 
 function headerMatches(header: string, alias: string) {
-  const normalizedHeader = normalizeHeader(header);
-  const normalizedAlias = normalizeHeader(alias);
-  return (
-    normalizedHeader === normalizedAlias ||
-    (normalizedAlias.length >= 3 && normalizedHeader.includes(normalizedAlias))
-  );
+  return String(header).trim() === alias;
 }
 
 function matchingHeader(row: Record<string, any>, aliases: string[]) {
@@ -1188,67 +1114,39 @@ function parseProjectImportSheet(
     );
 }
 
-function downloadProjectImportTemplate() {
-  const headers = [
-    "项目名称",
-    "目标市场",
-    "语言",
-    "平台",
-    "合作目标",
-    "预算",
-    "币种",
-    "状态",
-    "负责人",
-    "项目说明",
-    "开始日期",
-    "结束日期"
-  ];
-  const worksheet = XLSX.utils.aoa_to_sheet([
-    headers,
-    [
-      "Summer Creator Launch",
-      "美国",
-      "English",
-      "TikTok, Instagram",
-      "新品种草",
-      25000,
-      "USD",
-      "需求创建",
-      "Mia",
-      "面向北美市场的夏季新品推广",
-      "2026-07-01",
-      "2026-08-31"
-    ]
-  ]);
-  worksheet["!cols"] = headers.map(header => ({
-    wch: Math.max(14, header.length * 2 + 4)
-  }));
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "项目导入模板");
-  XLSX.writeFile(workbook, "XMP_Project_Import_Template.xlsx");
+async function downloadProjectImportTemplate() {
+  const blob = await downloadProjectExcelImportTemplate();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "XMP_Standard_Project_Import.xlsx";
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
-function monitoringSheetNames(workbook: XLSX.WorkBook) {
-  return workbook.SheetNames.filter(sheetName => {
-    const rows = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[sheetName], {
-      header: 1,
-      defval: "",
-      blankrows: false,
-      range: 0
+async function exportProjectData(row: any) {
+  if (!row?.id || exportingProjectIds[row.id]) return;
+  exportingProjectIds[row.id] = true;
+  try {
+    const blob = await downloadProjectData({
+      projectId: row.id,
+      scope: "project"
     });
-    return rows.slice(0, 6).some(values => {
-      const headers = values.map(value => String(value || "").trim());
-      const hasResource = headers.some(header =>
-        headerAliases.influencer.some(alias => headerMatches(header, alias))
-      );
-      const hasLink = headers.some(header =>
-        headerAliases.deliverableLinks.some(alias =>
-          headerMatches(header, alias)
-        )
-      );
-      return hasResource && hasLink;
-    });
-  });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeName = String(row.name || `project-${row.id}`)
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .trim();
+    link.href = url;
+    link.download = `${safeName || `project-${row.id}`}_标准项目数据.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    ElMessage.success("项目标准数据已导出");
+  } catch {
+    ElMessage.error("项目数据导出失败，请稍后重试");
+  } finally {
+    exportingProjectIds[row.id] = false;
+  }
 }
 
 function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
@@ -1259,12 +1157,6 @@ function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
     name,
     rows: parseImportSheet(workbook.Sheets[name])
   }));
-  const reviewSheets = importWorkbookSheets.value
-    .filter(sheet => sheet.name.includes("测评内容"))
-    .map(sheet => sheet.name);
-  const detectedSheets = monitoringSheetNames(workbook);
-  selectedImportSheets.value =
-    reviewSheets.length > 0 ? reviewSheets : detectedSheets;
   refreshImportRows();
   importDialog.value = true;
 }
@@ -1304,35 +1196,36 @@ function normalizeImportRow(
   previousResource: Record<string, any>
 ) {
   const sourceName = cellText(pickValue(row, headerAliases.influencer));
-  const nameHeader = matchingHeader(row, headerAliases.influencer) || "";
   const sourcePlatform = cellText(pickValue(row, headerAliases.platform));
   const sourceCategory = cellText(pickValue(row, headerAliases.category));
   const sourceCountry = cellText(pickValue(row, headerAliases.country));
   const sourceLink = pickCooperationLink(row);
-  const inferredMedia =
-    /publication|outlet|媒体|media/i.test(nameHeader) ||
-    /^website$/i.test(sourcePlatform);
+  const resourceType = cellText(pickValue(row, headerAliases.resourceType));
+  const cost = parseNumber(pickValue(row, headerAliases.quoteAmount));
+  const views = parseNumber(pickValue(row, headerAliases.views));
   const normalized: any = {
     rowNo: index + 1,
     influencer: sourceName || previousResource.influencer || "",
     category: sourceCategory || previousResource.category || "",
     platform: sourcePlatform || previousResource.platform || "",
     country: sourceCountry,
-    resourceType:
-      inferredMedia || previousResource.resourceType === "媒体"
-        ? "媒体"
-        : "KOL",
-    mediaOutlet: inferredMedia
-      ? sourceName || previousResource.influencer || ""
-      : "",
+    resourceType: resourceType || previousResource.resourceType || "KOL",
+    mediaOutlet:
+      resourceType === "媒体"
+        ? sourceName || previousResource.influencer || ""
+        : "",
     followerNumber: parseNumber(pickValue(row, headerAliases.followerNumber)),
-    releaseDate: formatDateValue(pickValue(row, headerAliases.releaseDate)),
+    collaboratorTier: cellText(pickValue(row, headerAliases.rating)),
+    cooperationType: cellText(pickValue(row, headerAliases.cooperationType)),
     deliverableLinks: sourceLink,
-    views: parseNumber(pickValue(row, headerAliases.views)),
+    views,
     engagementCount: parseNumber(pickValue(row, headerAliases.engagementCount)),
-    commentsCount: parseNumber(pickValue(row, headerAliases.commentsCount)),
-    quoteAmount: parseNumber(pickValue(row, headerAliases.quoteAmount)),
-    rating: cellText(pickValue(row, headerAliases.rating)),
+    quoteAmount: cost,
+    primaryContact: cellText(pickValue(row, headerAliases.primaryContact)),
+    owner: cellText(pickValue(row, headerAliases.owner)),
+    vendor: cellText(pickValue(row, headerAliases.vendor)),
+    notes: cellText(pickValue(row, headerAliases.notes)),
+    cpm: views > 0 ? (cost * 1000) / views : 0,
     sourceHasIdentity: Boolean(
       sourceName ||
       sourcePlatform ||
@@ -1345,18 +1238,10 @@ function normalizeImportRow(
   };
 
   if (!normalized.influencer) normalized.errors.push("缺少资源名称");
-  if (!normalized.deliverableLinks) {
-    normalized.errors.push("缺少发布链接");
-  } else if (!isHTTPURL(normalized.deliverableLinks)) {
+  if (normalized.deliverableLinks && !isHTTPURL(normalized.deliverableLinks)) {
     normalized.errors.push("发布链接必须是有效 URL");
   }
-  [
-    "followerNumber",
-    "views",
-    "engagementCount",
-    "commentsCount",
-    "quoteAmount"
-  ].forEach(key => {
+  ["followerNumber", "views", "engagementCount", "quoteAmount"].forEach(key => {
     if (normalized[key] < 0) {
       normalized[key] = 0;
     }
@@ -1646,9 +1531,8 @@ function executionRowClassName({ row }: any) {
 }
 
 function refreshImportRows() {
-  const selected = new Set(selectedImportSheets.value);
   const rows = importWorkbookSheets.value
-    .filter(sheet => selected.has(sheet.name))
+    .filter(sheet => Array.isArray(sheet.rows) && sheet.rows.length > 0)
     .flatMap(sheet => sheet.rows);
   const seen = new Set<string>();
   rows.forEach(row => {
@@ -1662,37 +1546,6 @@ function refreshImportRows() {
     }
   });
   importRows.value = rows;
-  importPreviewLimit.value = 20;
-}
-
-function loadMoreImportRows() {
-  if (!hasMoreImportRows.value) return;
-  importPreviewLimit.value = Math.min(
-    importPreviewLimit.value + 20,
-    importRows.value.length
-  );
-}
-
-function handleImportTableScroll({ scrollTop }: { scrollTop: number }) {
-  const root = importPreviewTableRef.value?.$el || importPreviewTableRef.value;
-  const scrollWrap = root?.querySelector?.(".el-scrollbar__wrap") as
-    | HTMLElement
-    | undefined;
-  if (!scrollWrap) return;
-  const position = Number.isFinite(scrollTop) ? scrollTop : scrollWrap.scrollTop;
-  if (position + scrollWrap.clientHeight >= scrollWrap.scrollHeight - 48) {
-    loadMoreImportRows();
-  }
-}
-
-let importRowsRefreshFrame: number | undefined;
-
-function scheduleImportRowsRefresh() {
-  if (importRowsRefreshFrame) cancelAnimationFrame(importRowsRefreshFrame);
-  importRowsRefreshFrame = requestAnimationFrame(() => {
-    importRowsRefreshFrame = undefined;
-    refreshImportRows();
-  });
 }
 
 function normalizeImportPreviewSheet(sheet: any) {
@@ -1710,22 +1563,15 @@ function normalizeImportPreviewSheet(sheet: any) {
   };
 }
 
-function handleImportSheetChange() {
-  scheduleImportRowsRefresh();
-}
-
-function selectAllImportSheets() {
-  selectedImportSheets.value = importWorkbookSheets.value.map(
-    sheet => sheet.name
-  );
-  scheduleImportRowsRefresh();
-}
-
 function queryImportProjects(query: string, callback: (items: any[]) => void) {
   const keyword = query.trim().toLowerCase();
   callback(
-    projects.value.filter(project =>
-      !keyword || String(project.name || "").toLowerCase().includes(keyword)
+    projects.value.filter(
+      project =>
+        !keyword ||
+        String(project.name || "")
+          .toLowerCase()
+          .includes(keyword)
     )
   );
 }
@@ -1814,9 +1660,8 @@ async function removeProjects(rows: any[]) {
 async function handleUploadFile(file: any) {
   const rawFile = file.raw;
   if (!rawFile) return;
-  // Render the modal before waiting for the backend. Without this yield, a large
-  // workbook response can keep the browser busy long enough that the user never
-  // sees the Sheet-selection dialog.
+  // Render the modal before waiting for the backend so large files immediately
+  // show parsing progress instead of leaving the user without feedback.
   importDialog.value = true;
   await nextTick();
   await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -1838,12 +1683,6 @@ async function handleUploadFile(file: any) {
           .map(normalizeImportPreviewSheet)
           .filter(sheet => sheet.name)
       : [];
-    // The preview response already contains each Sheet's parsed rows. Select
-    // the non-empty ones by default so the dialog opens with a useful preview
-    // instead of an empty Sheet selector and table.
-    selectedImportSheets.value = importWorkbookSheets.value
-      .filter(sheet => Array.isArray(sheet.rows) && sheet.rows.length > 0)
-      .map(sheet => sheet.name);
     refreshImportRows();
   } catch {
     importParseError.value = "Excel 解析失败，请确认文件未损坏后重试。";
@@ -1877,7 +1716,10 @@ async function submitImport() {
     if (res.data.failed) {
       const failures = (res.data.errors || [])
         .slice(0, 3)
-        .map((item: any) => `第 ${item.row || "-"} 行：${item.message || "导入失败"}`)
+        .map(
+          (item: any) =>
+            `第 ${item.row || "-"} 行：${item.message || "导入失败"}`
+        )
         .join("；");
       ElMessage.warning(
         `另有 ${res.data.failed} 行未导入${failures ? `：${failures}` : ""}`
@@ -1906,9 +1748,13 @@ onMounted(() => {
     <div class="campaign-center">
       <header class="center-header">
         <div>
-          <h1>营销项目执行中心</h1>
+          <h1>项目管理</h1>
+          <p>统一管理项目、合作达人/媒体、合作内容与执行数据。</p>
         </div>
         <div class="center-header-actions">
+          <el-button @click="downloadProjectImportTemplate">
+            <IconifyIconOnline icon="ri:download-2-line" /> 下载标准模板
+          </el-button>
           <el-upload
             :key="contentUploadKey"
             accept=".xlsx,.xls,.csv"
@@ -1917,7 +1763,8 @@ onMounted(() => {
             :on-change="handleUploadFile"
           >
             <el-button type="primary"
-              ><IconifyIconOnline icon="ri:upload-2-line" /> 上传项目</el-button
+              ><IconifyIconOnline icon="ri:upload-2-line" />
+              导入项目数据</el-button
             >
           </el-upload>
           <el-button @click="openQuickProject"
@@ -1926,47 +1773,23 @@ onMounted(() => {
         </div>
       </header>
 
-      <section class="center-stats" aria-label="项目总体指标">
-        <article>
-          <span>进行中项目</span><strong>{{ centerOverview.active }}</strong
-          ><small>全部 {{ projects.length }} 个项目</small>
-        </article>
-        <article>
-          <span>合作达人</span><strong>{{ centerOverview.creators }}</strong
-          ><small>跨项目去重统计</small>
-        </article>
-        <article>
-          <span>已发布内容</span><strong>{{ centerOverview.content }}</strong
-          ><small>已进入效果回收</small>
-        </article>
-        <article>
-          <span>累计曝光 / 播放</span
-          ><strong>{{ formatCount(centerOverview.reach) }}</strong
-          ><small>达人内容真实数据</small>
-        </article>
-        <article>
-          <span>达人投入</span
-          ><strong>{{ moneyText(centerOverview.cost) }}</strong
-          ><small>合作报价汇总</small>
-        </article>
-      </section>
-
       <section class="projects-workspace">
         <div class="projects-heading">
           <div>
             <h2>全部项目</h2>
-            <p>选择项目进入概览、达人和内容工作台。</p>
+            <p>进入项目后管理合作达人/媒体、发布内容和执行进度。</p>
           </div>
-          <el-button link type="primary" @click="openCreateProject"
-            >使用完整创建向导</el-button
-          >
           <el-button
             type="danger"
             plain
             :disabled="selectedProjectRows.length === 0"
             @click="removeProjects(selectedProjectRows)"
           >
-            删除所选{{ selectedProjectRows.length ? ` (${selectedProjectRows.length})` : "" }}
+            删除所选{{
+              selectedProjectRows.length
+                ? ` (${selectedProjectRows.length})`
+                : ""
+            }}
           </el-button>
         </div>
         <div class="projects-toolbar">
@@ -1999,13 +1822,13 @@ onMounted(() => {
             <template #default="{ row }">
               <div class="project-name-cell">
                 <span class="project-icon"
-                  ><IconifyIconOnline icon="ri:megaphone-line"
+                  ><IconifyIconOnline icon="ri:folder-user-line"
                 /></span>
                 <div>
                   <strong>{{ row.name }}</strong
                   ><small
-                    >{{ row.campaignType || "达人营销" }} ·
-                    {{ row.targetMarket || "未设置市场" }}</small
+                    >{{ row.targetMarket || "未设置市场" }} ·
+                    {{ row.platform || "未设置平台" }}</small
                   >
                 </div>
               </div>
@@ -2018,12 +1841,17 @@ onMounted(() => {
               }}</el-tag></template
             >
           </el-table-column>
-          <el-table-column label="达人" width="100" align="center" sortable>
+          <el-table-column
+            label="合作达人 / 媒体"
+            width="150"
+            align="center"
+            sortable
+          >
             <template #default="{ row }">{{
               projectStats(row.id).resourceCount
             }}</template>
           </el-table-column>
-          <el-table-column label="内容" width="100" align="center" sortable>
+          <el-table-column label="合作内容" width="120" align="center" sortable>
             <template #default="{ row }">{{
               projectStats(row.id).cooperationCount
             }}</template>
@@ -2046,17 +1874,12 @@ onMounted(() => {
               )
             }}</template>
           </el-table-column>
-          <el-table-column label="预算" width="150" align="right" sortable>
-            <template #default="{ row }">{{
-              moneyText(row.budget, row.currency)
-            }}</template>
-          </el-table-column>
           <el-table-column label="负责人" width="130"
             ><template #default="{ row }">{{
               row.owner || "未指定"
             }}</template></el-table-column
           >
-          <el-table-column label="操作" width="166" fixed="right" align="right">
+          <el-table-column label="操作" width="230" fixed="right" align="right">
             <template #default="{ row }">
               <el-button
                 link
@@ -2066,6 +1889,12 @@ onMounted(() => {
               >
               <el-button link @click.stop="openEditProject(row)"
                 >编辑</el-button
+              >
+              <el-button
+                link
+                :loading="exportingProjectIds[row.id]"
+                @click.stop="exportProjectData(row)"
+                >导出</el-button
               >
               <el-button link type="danger" @click.stop="removeProjects([row])"
                 >删除</el-button
@@ -2105,15 +1934,6 @@ onMounted(() => {
             ><el-input
               v-model="projectForm.platform"
               placeholder="TikTok, Instagram"
-          /></el-form-item>
-          <el-form-item label="合作目标"
-            ><el-input v-model="projectForm.campaignType"
-          /></el-form-item>
-          <el-form-item label="预算"
-            ><el-input-number
-              v-model="projectForm.budget"
-              :min="0"
-              class="w-full!"
           /></el-form-item>
           <el-form-item label="负责人"
             ><el-input v-model="projectForm.owner"
@@ -2228,7 +2048,7 @@ onMounted(() => {
           class="mb-3"
           type="info"
           :closable="false"
-          title="正在读取 Excel 并识别可导入的 Sheet…"
+          title="正在读取标准模板并校验数据…"
         />
         <el-alert
           v-else-if="importParseError"
@@ -2238,28 +2058,6 @@ onMounted(() => {
           :title="importParseError"
         />
         <el-form label-width="80px" class="mb-3">
-          <el-form-item label="解析 Sheet" required>
-            <el-select
-              v-model="selectedImportSheets"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              :teleported="false"
-              class="import-sheet-select"
-              placeholder="请选择要解析的 Sheet"
-              @change="handleImportSheetChange"
-            >
-              <el-option
-                v-for="sheet in importWorkbookSheets"
-                :key="sheet.name"
-                :label="`${sheet.name}（${sheet.rows.length} 条）`"
-                :value="sheet.name"
-              />
-            </el-select>
-            <el-button link type="primary" @click="selectAllImportSheets">
-              全选
-            </el-button>
-          </el-form-item>
           <el-form-item label="项目名称" required>
             <el-autocomplete
               v-model="importProjectNameDraft"
@@ -2282,40 +2080,39 @@ onMounted(() => {
         </el-form>
         <el-alert
           class="mb-3"
-          type="info"
+          type="success"
           :closable="false"
-          :title="`当前 Excel 将作为一个项目导入。文件：${importFileName || '-'}，共 ${importRows.length} 行，可导入 ${validImportRows.length} 行，其中带发布链接的内容行 ${linkedImportRows.length} 行，异常 ${invalidImportRows.length} 行，疑似重复 ${duplicateImportRows.length} 行`"
+          :title="`标准数据区已自动识别。文件：${importFileName || '-'}，共 ${importRows.length} 行，可导入 ${validImportRows.length} 行，其中合作内容 ${linkedImportRows.length} 行，异常 ${invalidImportRows.length} 行，疑似重复 ${duplicateImportRows.length} 行`"
         />
         <el-table
-          ref="importPreviewTableRef"
           :data="visibleImportRows"
           border
-          height="460"
+          max-height="420"
           :row-class-name="importRowClassName"
-          @scroll="handleImportTableScroll"
         >
-          <el-table-column prop="sourceSheet" label="Sheet" width="140" fixed />
           <el-table-column prop="rowNo" label="行号" width="70" fixed />
-          <el-table-column prop="influencer" label="姓名" min-width="140" />
+          <el-table-column
+            prop="influencer"
+            label="合作方主页"
+            min-width="240"
+            show-overflow-tooltip
+          />
+          <el-table-column prop="resourceType" label="类型" width="120" />
           <el-table-column prop="category" label="领域" min-width="120" />
+          <el-table-column prop="country" label="市场" width="110" />
           <el-table-column prop="platform" label="平台" width="110" />
-          <el-table-column prop="followerNumber" label="粉丝数" width="110" />
-          <el-table-column prop="releaseDate" label="发布日期" width="120" />
+          <el-table-column
+            prop="cooperationType"
+            label="合作类型"
+            width="150"
+          />
           <el-table-column
             prop="deliverableLinks"
-            label="发布链接"
+            label="内容链接"
             min-width="220"
             show-overflow-tooltip
           />
-          <el-table-column prop="views" label="播放量" width="110" />
-          <el-table-column
-            prop="engagementCount"
-            label="转赞藏数"
-            width="110"
-          />
-          <el-table-column prop="commentsCount" label="评论数" width="100" />
-          <el-table-column prop="quoteAmount" label="报价/费用" width="110" />
-          <el-table-column prop="rating" label="评级" width="90" />
+          <el-table-column prop="quoteAmount" label="合作费用" width="110" />
           <el-table-column label="状态" min-width="180" fixed="right">
             <template #default="{ row }">
               <el-tag v-if="row.errors.length === 0" type="success"
@@ -2330,8 +2127,12 @@ onMounted(() => {
             </template>
           </el-table-column>
         </el-table>
-        <p v-if="hasMoreImportRows" class="import-preview-more">
-          已展示 {{ visibleImportRows.length }} / {{ importRows.length }} 条，向下滚动加载更多
+        <p
+          v-if="visibleImportRows.length < importRows.length"
+          class="import-preview-more"
+        >
+          当前仅预览前 {{ visibleImportRows.length }} 条，确认后将导入全部
+          {{ validImportRows.length }} 条有效数据
         </p>
         <template #footer>
           <el-button @click="importDialog = false">取消</el-button>
@@ -2341,13 +2142,13 @@ onMounted(() => {
             :disabled="
               importParsing ||
               Boolean(importParseError) ||
-              selectedImportSheets.length === 0 ||
               validImportRows.length === 0 ||
               importProjectCreating
             "
             @click="submitImport"
           >
-            确认导入 {{ validImportRows.length }} 行（内容 {{ linkedImportRows.length }} 条）
+            确认导入 {{ validImportRows.length }} 行（内容
+            {{ linkedImportRows.length }} 条）
           </el-button>
         </template>
       </el-dialog>
@@ -3943,7 +3744,6 @@ onMounted(() => {
           >
         </template>
       </el-dialog>
-
     </div>
   </div>
 </template>
@@ -5529,10 +5329,6 @@ onMounted(() => {
   width: min(100%, 420px);
 }
 
-.import-sheet-select {
-  width: min(100%, 520px);
-}
-
 .import-preview-more {
   margin: 10px 0 0;
   color: #64748b;
@@ -5694,10 +5490,6 @@ onMounted(() => {
   .import-project-select {
     width: 100%;
   }
-
-  .import-sheet-select {
-    width: 100%;
-  }
 }
 /* Campaign center: a compact project-first workspace. */
 .campaign-center {
@@ -5753,40 +5545,6 @@ onMounted(() => {
 .center-header-actions {
   display: flex;
   gap: 10px;
-}
-.center-stats {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  max-width: 1720px;
-  margin: 0 auto 20px;
-  overflow: hidden;
-  border: 1px solid #e4e5e8;
-  border-radius: 12px;
-}
-.center-stats article {
-  min-width: 0;
-  padding: 14px 16px;
-  background: #fff;
-}
-.center-stats article + article {
-  border-left: 1px solid #e7e8eb;
-}
-.center-stats span,
-.center-stats small {
-  display: block;
-  color: #85878d;
-  font-size: 13px;
-}
-.center-stats strong {
-  display: block;
-  margin: 8px 0 6px;
-  overflow: hidden;
-  color: #25262c;
-  font-size: 23px;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  letter-spacing: -0.035em;
 }
 .projects-workspace {
   max-width: 1720px;
@@ -5897,18 +5655,6 @@ onMounted(() => {
 :deep(.campaign-center .el-table__row) {
   cursor: pointer;
 }
-@media (max-width: 1120px) {
-  .center-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .center-stats article:nth-child(4) {
-    border-left: 0;
-    border-top: 1px solid #e7e8eb;
-  }
-  .center-stats article:nth-child(5) {
-    border-top: 1px solid #e7e8eb;
-  }
-}
 @media (max-width: 720px) {
   .campaign-center {
     padding: 20px 16px;
@@ -5919,19 +5665,6 @@ onMounted(() => {
   }
   .center-header-actions {
     width: 100%;
-  }
-  .center-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .center-stats article:nth-child(n) {
-    border-top: 1px solid #e7e8eb;
-  }
-  .center-stats article:nth-child(1),
-  .center-stats article:nth-child(2) {
-    border-top: 0;
-  }
-  .center-stats article:nth-child(odd) {
-    border-left: 0;
   }
   .projects-heading,
   .projects-toolbar {

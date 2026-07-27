@@ -144,6 +144,41 @@ func (a *app) syncImportedCooperations(ctx context.Context, batchID string) (int
 	return synced, warnings
 }
 
+func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int) (int, []string) {
+	synced := 0
+	warnings := make([]string, 0)
+	for _, resourceID := range resourceIDs {
+		var resource syncResourceRow
+		if err := a.DB().QueryRowContext(ctx,
+			`select id, name, platform, platform_url, platform_user_id, platform_handle
+			   from biz_resources where id = ? limit 1`,
+			resourceID,
+		).Scan(&resource.ID, &resource.Name, &resource.Platform, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle); err != nil {
+			warnings = append(warnings, fmt.Sprintf("资源 %d：%v", resourceID, err))
+			continue
+		}
+		if platformDisplayName(resource.Platform) == "" {
+			message := fmt.Sprintf("%s 暂不支持账号数据自动抓取", resource.Platform)
+			if strings.EqualFold(strings.TrimSpace(resource.Platform), "Website") {
+				message = "Website 的 UVM 自动抓取需要配置 Similarweb 数据源"
+			}
+			_, _ = a.DB().ExecContext(ctx,
+				`update biz_resources set last_sync_status = '待配置', last_sync_error = ?, last_sync_at = now() where id = ?`,
+				message, resourceID,
+			)
+			warnings = append(warnings, fmt.Sprintf("资源 %d：%s", resourceID, message))
+			continue
+		}
+		if err := a.syncResourceByPlatform(ctx, resource); err != nil {
+			a.markResourceSyncFailed(ctx, resourceID, err.Error())
+			warnings = append(warnings, fmt.Sprintf("资源 %d：%v", resourceID, err))
+			continue
+		}
+		synced++
+	}
+	return synced, warnings
+}
+
 func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 	for _, field := range strings.Fields(value) {
 		candidate := strings.Trim(field, "，,;；")
@@ -184,7 +219,8 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 
 func (a *app) findStoredPlatformPost(ctx context.Context, resourceID int, link cooperationPostLink) (platformPost, bool, error) {
 	rows, err := a.DB().QueryContext(ctx,
-		`select platform_post_id, title, description, post_url, cover_url, media_type,
+		`select platform_post_id, title, description, post_url,
+		        coalesce(nullif(cover_remote_url, ''), cover_url) as cover_url, media_type,
 		        published_at, duration_seconds, view_count, like_count, comment_count, share_count
 		   from biz_resource_platform_posts
 		  where resource_id = ? and platform = ?

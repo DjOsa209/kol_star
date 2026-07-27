@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, onMounted, onUnmounted } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
 import {
@@ -25,6 +25,7 @@ import {
 defineOptions({ name: "BusinessResources" });
 
 const router = useRouter();
+const route = useRoute();
 const loading = ref(false);
 const syncingAll = ref(false);
 const showSyncCard = ref(false);
@@ -71,12 +72,16 @@ const selectableResourceIds = computed(() =>
 const allVisibleResourcesSelected = computed(
   () =>
     selectableResourceIds.value.length > 0 &&
-    selectableResourceIds.value.every(id => selectedResourceIds.value.includes(id))
+    selectableResourceIds.value.every(id =>
+      selectedResourceIds.value.includes(id)
+    )
 );
 const resourceSelectionIndeterminate = computed(
   () =>
     !allVisibleResourcesSelected.value &&
-    selectableResourceIds.value.some(id => selectedResourceIds.value.includes(id))
+    selectableResourceIds.value.some(id =>
+      selectedResourceIds.value.includes(id)
+    )
 );
 const defaultPlatformOptions = [
   "YouTube",
@@ -224,6 +229,9 @@ const cooperationStatsByResource = computed(() => {
 const selectedCooperations = computed(() => {
   return cooperationsFor(selectedResource.value);
 });
+const selectedLatestCooperation = computed(
+  () => selectedCooperations.value[0] || null
+);
 const projectOptions = computed(() =>
   Array.from(
     new Set(
@@ -308,7 +316,7 @@ function platformIcon(platform: unknown) {
 }
 
 function marketText(row: any) {
-  const parts = [row.region, row.country || row.city]
+  const parts = [row.region, row.market || row.country || row.city]
     .map(item => displayText(item, ""))
     .filter(Boolean);
   return parts.length > 0 ? Array.from(new Set(parts)).join(" - ") : "-";
@@ -319,7 +327,7 @@ function domainText(row: any) {
 }
 
 function tierText(row: any) {
-  return displayText(row.tier || row.level, "待分级");
+  return displayText(row.tier, "待同步");
 }
 
 function cooperationTypes(row: any) {
@@ -418,8 +426,10 @@ async function ensureTagIds(names: string[]) {
 async function loadData() {
   loading.value = true;
   try {
+    const requestedResourceId = Number(route.query.resourceId || 0);
     const params = {
       ...search,
+      ...(requestedResourceId ? { id: requestedResourceId } : {}),
       currentPage: currentPage.value,
       pageSize: pageSize.value,
       sequenceSortOrder: sequenceSortOrder.value
@@ -449,6 +459,15 @@ async function loadData() {
           ? result.data.list
           : []
       );
+      if (requestedResourceId) {
+        const requestedResource = resourceRows.find(
+          row => Number(row.id) === requestedResourceId
+        );
+        if (requestedResource) {
+          selectedResource.value = requestedResource;
+          profileDialogVisible.value = true;
+        }
+      }
     } else {
       list.value = [];
       total.value = 0;
@@ -1288,7 +1307,9 @@ onUnmounted(() => {
           :disabled="selectedResourceIds.length === 0"
           @click="removeResources(selectedResourceIds)"
         >
-          删除所选{{ selectedResourceIds.length ? ` (${selectedResourceIds.length})` : "" }}
+          删除所选{{
+            selectedResourceIds.length ? ` (${selectedResourceIds.length})` : ""
+          }}
         </el-button>
       </div>
     </section>
@@ -1399,7 +1420,7 @@ onUnmounted(() => {
             class="filter-select-wide"
           >
             <el-option
-              v-for="item in ['T0', 'T1', 'T2', 'T3']"
+              v-for="item in ['头部', '腰部', '尾部']"
               :key="item"
               :label="item"
               :value="item"
@@ -1492,7 +1513,10 @@ onUnmounted(() => {
               :model-value="selectedResourceIds.includes(Number(row.id))"
               :aria-label="`选择资源 ${row.name}`"
               @click.stop
-              @change="checked => toggleResourceSelection(Number(row.id), Boolean(checked))"
+              @change="
+                checked =>
+                  toggleResourceSelection(Number(row.id), Boolean(checked))
+              "
             />
             {{ sequenceNumber(index) }}
           </span>
@@ -1534,8 +1558,8 @@ onUnmounted(() => {
 
           <dl class="compact-base-metrics">
             <div>
-              <dt>粉丝数 / 访问量</dt>
-              <dd>{{ compactCount(row.followers) }}</dd>
+              <dt>多平台粉丝 / 访问量</dt>
+              <dd>{{ compactCount(row.audienceSize || row.followers) }}</dd>
             </div>
             <div>
               <dt>月均播放量</dt>
@@ -1704,8 +1728,10 @@ onUnmounted(() => {
                 </div>
                 <dl class="detail-grid detail-grid--metrics">
                   <div>
-                    <dt>粉丝数 / 访问量</dt>
-                    <dd>{{ formatCount(row.followers) }}</dd>
+                    <dt>多平台粉丝 / 访问量</dt>
+                    <dd>
+                      {{ formatCount(row.audienceSize || row.followers) }}
+                    </dd>
                   </div>
                   <div>
                     <dt>月均播放量</dt>
@@ -1912,11 +1938,13 @@ onUnmounted(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="粉丝 / 访问量" width="140">
+        <el-table-column label="多平台粉丝 / 访问量" width="170">
           <template #default="{ row }">
             <div class="metric-cell">
-              <strong>{{ formatCount(row.followers) }}</strong>
-              <span>{{ displayText(row.platform) }}</span>
+              <strong>{{
+                formatCount(row.audienceSize || row.followers)
+              }}</strong>
+              <span>本平台 {{ formatCount(row.followers) }}</span>
             </div>
           </template>
         </el-table-column>
@@ -2038,18 +2066,10 @@ onUnmounted(() => {
               ><el-input v-model="form.mediaOutlet" /></el-form-item
           ></el-col>
           <el-col :span="12"
-            ><el-form-item label="Tier"
-              ><el-select
-                v-model="form.tier"
-                clearable
-                placeholder="选择资源分级"
-                class="w-full!"
-              >
-                <el-option
-                  v-for="item in ['T0', 'T1', 'T2', 'T3']"
-                  :key="item"
-                  :label="item"
-                  :value="item" /></el-select></el-form-item
+            ><el-form-item label="层级（自动）"
+              ><el-input
+                :model-value="form.tier || '保存后自动计算'"
+                disabled /></el-form-item
           ></el-col>
           <el-col :span="12"
             ><el-form-item label="国家/地区"
@@ -2259,7 +2279,7 @@ onUnmounted(() => {
             <div>
               <strong>基础身份</strong>
               <span
-                >序号由系统生成；名称、类型、领域和分级用于资源识别与筛选</span
+                >同名合作方的多平台受众量自动加和，并归入头部、腰部或尾部</span
               >
             </div>
           </div>
@@ -2302,19 +2322,10 @@ onUnmounted(() => {
               </el-select>
             </el-form-item>
             <el-form-item label="分级">
-              <el-select
-                v-model="form.tier"
-                clearable
-                class="w-full!"
-                placeholder="T0 / T1 / T2 / T3"
+              <el-input :model-value="form.tier || '保存后自动计算'" disabled />
+              <span class="form-tip"
+                >头部 &gt; 100 万；腰部 10 万–100 万；尾部 &lt; 10 万。</span
               >
-                <el-option
-                  v-for="item in ['T0', 'T1', 'T2', 'T3']"
-                  :key="item"
-                  :label="item"
-                  :value="item"
-                />
-              </el-select>
             </el-form-item>
             <el-form-item label="媒体 / 账号名称">
               <el-input v-model="form.mediaOutlet" />
@@ -2404,13 +2415,13 @@ onUnmounted(() => {
             <div>
               <strong>规模表现</strong>
               <span
-                >网站填写 MUV；KOL
-                填写主平台最大粉丝数。月均互动量根据播放量与互动率计算</span
+                >每条资源填写本平台粉丝数；媒体填写 UVM（Similarweb
+                暂为预置来源）。系统按同名合作方跨平台加和并自动分级</span
               >
             </div>
           </div>
           <div class="editor-form-grid editor-form-grid--metrics">
-            <el-form-item label="粉丝数 / 访问量（MUV）">
+            <el-form-item label="本平台粉丝数 / UVM">
               <el-input-number
                 v-model="form.followers"
                 :min="0"
@@ -2918,22 +2929,49 @@ onUnmounted(() => {
           </div>
           <div>
             <dt>联系方式</dt>
-            <dd>{{ displayText(selectedResource.contact) }}</dd>
+            <dd>
+              {{
+                displayText(
+                  selectedLatestCooperation?.primaryContact ||
+                    selectedResource.contact
+                )
+              }}
+            </dd>
           </div>
           <div>
-            <dt>对接人 / 供应商</dt>
-            <dd>{{ displayText(selectedResource.owner) }}</dd>
+            <dt>对接人</dt>
+            <dd>
+              {{
+                displayText(
+                  selectedLatestCooperation?.owner || selectedResource.owner
+                )
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>供应商</dt>
+            <dd>{{ displayText(selectedLatestCooperation?.vendor) }}</dd>
           </div>
           <div class="profile-facts__wide">
             <dt>备注</dt>
-            <dd>{{ displayText(selectedResource.notes) }}</dd>
+            <dd>
+              {{
+                displayText(
+                  selectedLatestCooperation?.notes || selectedResource.notes
+                )
+              }}
+            </dd>
           </div>
         </dl>
 
         <div class="profile-metrics">
           <div>
-            <span>平台粉丝 / 访问</span>
-            <strong>{{ formatCount(selectedResource.followers) }}</strong>
+            <span>多平台粉丝 / 访问</span>
+            <strong>{{
+              formatCount(
+                selectedResource.audienceSize || selectedResource.followers
+              )
+            }}</strong>
           </div>
           <div>
             <span>平台均值播放 / 阅读</span>
@@ -3001,6 +3039,8 @@ onUnmounted(() => {
           <el-table-column prop="views" label="播放 / 阅读" width="120" />
           <el-table-column prop="engagementCount" label="转赞藏" width="110" />
           <el-table-column prop="commentsCount" label="评论" width="90" />
+          <el-table-column prop="owner" label="对接人" width="120" />
+          <el-table-column prop="vendor" label="供应商" width="120" />
           <el-table-column label="互动率" width="100">
             <template #default="{ row }">
               {{
