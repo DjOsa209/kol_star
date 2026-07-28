@@ -543,13 +543,38 @@ select 1, id from sys_menus;
 
 use kol_admin;
 
-alter table biz_cooperations
-  add column views bigint not null default 0 after impressions,
-  add column engagement_count bigint not null default 0 after conversions,
-  add column comments_count bigint not null default 0 after engagement_count,
-  add column release_date date null after team_rating,
-  add column deliverable_links text null after release_date,
-  add column import_batch_id varchar(64) not null default '' after deliverable_links;
+drop procedure if exists add_bundle_column;
+
+delimiter $$
+
+create procedure add_bundle_column(
+  in p_table_name varchar(64),
+  in p_column_name varchar(64),
+  in p_column_definition text
+)
+begin
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = database()
+       and table_name = p_table_name
+       and column_name = p_column_name
+  ) then
+    set @sql = concat('alter table ', p_table_name, ' add column ', p_column_definition);
+    prepare stmt from @sql;
+    execute stmt;
+    deallocate prepare stmt;
+  end if;
+end$$
+
+delimiter ;
+
+call add_bundle_column('biz_cooperations', 'views', 'views bigint not null default 0 after impressions');
+call add_bundle_column('biz_cooperations', 'engagement_count', 'engagement_count bigint not null default 0 after conversions');
+call add_bundle_column('biz_cooperations', 'comments_count', 'comments_count bigint not null default 0 after engagement_count');
+call add_bundle_column('biz_cooperations', 'release_date', 'release_date date null after team_rating');
+call add_bundle_column('biz_cooperations', 'deliverable_links', 'deliverable_links text null after release_date');
+call add_bundle_column('biz_cooperations', 'import_batch_id', 'import_batch_id varchar(64) not null default '''' after deliverable_links');
 
 -- ============================================================
 -- Source: migrations/008_resource_platform_sync.sql
@@ -557,14 +582,13 @@ alter table biz_cooperations
 
 use kol_admin;
 
-alter table biz_resources
-  add column platform_user_id varchar(128) not null default '' after platform_url,
-  add column platform_handle varchar(128) not null default '' after platform_user_id,
-  add column total_views bigint not null default 0 after platform_handle,
-  add column video_count bigint not null default 0 after total_views,
-  add column last_sync_status varchar(32) not null default '' after video_count,
-  add column last_sync_error text null after last_sync_status,
-  add column last_sync_at datetime null after last_sync_error;
+call add_bundle_column('biz_resources', 'platform_user_id', 'platform_user_id varchar(128) not null default '''' after platform_url');
+call add_bundle_column('biz_resources', 'platform_handle', 'platform_handle varchar(128) not null default '''' after platform_user_id');
+call add_bundle_column('biz_resources', 'total_views', 'total_views bigint not null default 0 after platform_handle');
+call add_bundle_column('biz_resources', 'video_count', 'video_count bigint not null default 0 after total_views');
+call add_bundle_column('biz_resources', 'last_sync_status', 'last_sync_status varchar(32) not null default '''' after video_count');
+call add_bundle_column('biz_resources', 'last_sync_error', 'last_sync_error text null after last_sync_status');
+call add_bundle_column('biz_resources', 'last_sync_at', 'last_sync_at datetime null after last_sync_error');
 
 -- ============================================================
 -- Source: migrations/009_resource_dynamic_fields.sql
@@ -597,14 +621,15 @@ create table if not exists biz_resource_extra_values (
 
 use kol_admin;
 
-alter table biz_resources
-  add column media_outlet varchar(128) not null default '' after resource_type,
-  add column tier varchar(32) not null default '' after media_outlet,
-  add column title varchar(128) not null default '' after category,
-  add column reference_source varchar(255) not null default '' after region_team,
-  add column shipping_address text null after reference_source,
-  add column website varchar(512) not null default '' after platform_url,
-  add column import_source_sheet varchar(128) not null default '' after website;
+call add_bundle_column('biz_resources', 'media_outlet', 'media_outlet varchar(128) not null default '''' after resource_type');
+call add_bundle_column('biz_resources', 'tier', 'tier varchar(32) not null default '''' after media_outlet');
+call add_bundle_column('biz_resources', 'title', 'title varchar(128) not null default '''' after category');
+call add_bundle_column('biz_resources', 'reference_source', 'reference_source varchar(255) not null default '''' after region_team');
+call add_bundle_column('biz_resources', 'shipping_address', 'shipping_address text null after reference_source');
+call add_bundle_column('biz_resources', 'website', 'website varchar(512) not null default '''' after platform_url');
+call add_bundle_column('biz_resources', 'import_source_sheet', 'import_source_sheet varchar(128) not null default '''' after website');
+
+drop procedure if exists add_bundle_column;
 
 -- ============================================================
 -- Source: migrations/011_prd_v2_assistant_governance.sql
