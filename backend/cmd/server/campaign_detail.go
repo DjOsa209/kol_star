@@ -111,7 +111,7 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 	      or locate(lower(trim(trailing '/' from p.post_url)), lower(ifnull(c.deliverable_links, ''))) > 0
 	    )
 	   left join biz_resources r on r.id = p.resource_id
-	  order by p.published_at desc, p.id desc
+	  order by publishedAt desc, id desc
 	  limit 120`,
 		projectID,
 	)
