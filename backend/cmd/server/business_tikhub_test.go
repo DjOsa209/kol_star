@@ -111,6 +111,43 @@ func TestNormalizeTikHubTikTokAppV3Posts(t *testing.T) {
 	}
 }
 
+func TestNormalizeTikHubTikTokFlatMetrics(t *testing.T) {
+	posts := normalizeTikHubTikTokPosts(map[string]any{
+		"value": []any{
+			map[string]any{
+				"aweme_id":      "7350810998023949599",
+				"play_count":    2140000,
+				"digg_count":    128400,
+				"comment_count": 3120,
+				"share_count":   890,
+				"collect_count": 15600,
+			},
+		},
+	}, "creator")
+	if len(posts) != 1 {
+		t.Fatalf("expected one post, got %d", len(posts))
+	}
+	post := posts[0]
+	if post.ViewCount != 2140000 || post.LikeCount != 128400 {
+		t.Fatalf("unexpected exposure metrics: %#v", post)
+	}
+	if post.CommentCount != 3120 || post.ShareCount != 890 || post.SaveCount != 15600 {
+		t.Fatalf("unexpected engagement metrics: %#v", post)
+	}
+}
+
+func TestPlatformPostEngagementRateIncludesSaves(t *testing.T) {
+	rate := platformPostEngagementRate([]platformPost{{
+		LikeCount:    10,
+		CommentCount: 5,
+		ShareCount:   3,
+		SaveCount:    2,
+	}}, 100)
+	if rate != 0.2 {
+		t.Fatalf("platformPostEngagementRate() = %v, want 0.2", rate)
+	}
+}
+
 func TestImageURLPrefersCompleteRemoteURLOverAssetKey(t *testing.T) {
 	value := map[string]any{
 		"uri":      "tos-useast8-p-0068-tx2/asset-key",

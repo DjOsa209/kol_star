@@ -47,6 +47,7 @@ func (a *app) persistTikTokCollectorPayload(ctx context.Context, body map[string
 	secUID := firstNonEmpty(anyString(creator["secUid"]), anyString(creator["sec_uid"]), anyString(creator["platformUserId"]))
 	displayName := firstNonEmpty(anyString(creator["name"]), anyString(creator["displayName"]), username)
 	profileURL := firstNonEmpty(anyString(creator["profileUrl"]), tikTokProfileURL(username))
+	displayName = syncedResourceName(profileURL, displayName)
 	if username == "" && secUID == "" {
 		return nil, fmt.Errorf("creator.username 或 creator.secUid 至少需要一个")
 	}
@@ -243,6 +244,7 @@ func collectorPosts(raw any) []platformPost {
 			LikeCount:      anyInt64(item["likeCount"]),
 			CommentCount:   anyInt64(item["commentCount"]),
 			ShareCount:     anyInt64(item["shareCount"]),
+			SaveCount:      anyInt64(firstPresent(item, "saveCount", "collectCount", "favoriteCount")),
 			Raw:            item,
 		})
 	}

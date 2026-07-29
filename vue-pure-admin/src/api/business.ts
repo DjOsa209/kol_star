@@ -129,6 +129,10 @@ export const importProjects = (data?: object) => {
   return http.request<Result>("post", "/business/projects/import", { data });
 };
 
+export const syncProject = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/sync", { data });
+};
+
 export const previewProjectExcelImport = (file: File) => {
   const data = new FormData();
   data.append("file", file);

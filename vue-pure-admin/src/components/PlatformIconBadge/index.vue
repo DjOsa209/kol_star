@@ -13,6 +13,12 @@ const icon = computed(() => {
   if (["instagram", "ins", "ig"].includes(normalized)) {
     return "/api/uploads/images/ins.png";
   }
+  if (["x", "twitter", "x.com"].includes(normalized)) {
+    return "/api/uploads/images/x.png";
+  }
+  if (["website", "web", "媒体网站"].includes(normalized)) {
+    return "/api/uploads/images/web.png";
+  }
   return "";
 });
 </script>

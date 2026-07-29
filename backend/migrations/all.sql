@@ -828,6 +828,7 @@ create table if not exists biz_resource_platform_posts (
   like_count bigint not null default 0,
   comment_count bigint not null default 0,
   share_count bigint not null default 0,
+  save_count bigint not null default 0,
   raw_json json null,
   synced_at datetime not null default current_timestamp,
   created_at datetime not null default current_timestamp,
@@ -1454,3 +1455,33 @@ update biz_resource_platform_posts
    set cover_remote_url = cover_url
  where (cover_remote_url is null or trim(cover_remote_url) = '')
    and (cover_url like 'http://%' or cover_url like 'https://%');
+
+-- ============================================================
+-- Source: migrations/024_tiktok_post_metrics.sql
+-- ============================================================
+
+use kol_admin;
+
+drop procedure if exists add_tiktok_post_metrics_column;
+
+delimiter $$
+
+create procedure add_tiktok_post_metrics_column()
+begin
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = database()
+       and table_name = 'biz_resource_platform_posts'
+       and column_name = 'save_count'
+  ) then
+    alter table biz_resource_platform_posts
+      add column save_count bigint not null default 0 after share_count;
+  end if;
+end$$
+
+delimiter ;
+
+call add_tiktok_post_metrics_column();
+
+drop procedure if exists add_tiktok_post_metrics_column;

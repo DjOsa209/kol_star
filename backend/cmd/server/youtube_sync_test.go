@@ -1,0 +1,80 @@
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"database/sql"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+)
+
+func TestYouTubeSyncSavesFollowersBeforeFetchingPosts(t *testing.T) {
+	t.Setenv("KOL_SKIP_RESOURCE_IMAGE_DOWNLOAD", "1")
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("select content from biz_governance_rules").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec("update biz_resources set").
+		WithArgs(
+			"diag", "diag", "", "",
+			int64(123456), int64(1000000), int64(10), int64(100000),
+			"UCdiag", "@diag", "", 42,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select count\\(\\*\\) from biz_resources where id = \\?").
+		WithArgs(42).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("update biz_resources r").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select sync_posts, post_limit from biz_platform_sync_settings").
+		WithArgs("YouTube").
+		WillReturnRows(sqlmock.NewRows([]string{"sync_posts", "post_limit"}).AddRow(1, 25))
+
+	fakeAPI := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/youtube/v3/channels":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"items":[{"id":"UCdiag","snippet":{"title":"Diagnostic Channel","customUrl":"@diag"},"statistics":{"subscriberCount":"123456","viewCount":"1000000","videoCount":"10"},"contentDetails":{"relatedPlaylists":{"uploads":"PLdiag"}}}]}`)
+		case "/youtube/v3/playlistItems":
+			http.Error(w, `{"error":{"message":"post sync failed"}}`, http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fakeAPI.Close()
+
+	fakeAddr := fakeAPI.Listener.Addr().String()
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // test-only fake API
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fakeAddr)
+		},
+	}
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+
+	cfg := Config{PlatformAPIs: PlatformAPIConfig{YouTubeAPIKey: "diagnostic-key"}}
+	app := newApp(db, cfg)
+	_, syncErr := app.syncYouTubeResource(
+		context.Background(),
+		42,
+		"Diagnostic Channel",
+		"https://youtube.com/@diag",
+	)
+	if syncErr == nil {
+		t.Fatal("expected post synchronization to fail")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

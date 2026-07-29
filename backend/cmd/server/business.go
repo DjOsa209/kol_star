@@ -332,7 +332,7 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 		        case when p.cover_url like '/api/uploads/resource-images/%' then p.cover_url else '' end as coverLocalUrl,
 		        p.media_type as mediaType, cast(unix_timestamp(p.published_at) * 1000 as unsigned) as publishedAt,
 		        p.duration_seconds as durationSeconds, p.view_count as viewCount, p.like_count as likeCount,
-		        p.comment_count as commentCount, p.share_count as shareCount,
+		        p.comment_count as commentCount, p.share_count as shareCount, p.save_count as saveCount,
 		        cast(unix_timestamp(p.synced_at) * 1000 as unsigned) as syncedAt
 		   from biz_resource_platform_posts p
 		   left join biz_resources r on r.id = p.resource_id`+where+`
@@ -372,6 +372,7 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 			        coalesce(sum(like_count), 0) as totalLikes,
 			        coalesce(sum(comment_count), 0) as totalComments,
 			        coalesce(sum(share_count), 0) as totalShares,
+			        coalesce(sum(save_count), 0) as totalSaves,
 			        coalesce(round(avg(nullif(view_count, 0))), 0) as avgViews,
 			        cast(unix_timestamp(max(published_at)) * 1000 as unsigned) as latestPublishedAt
 			   from biz_resource_platform_posts
@@ -895,6 +896,27 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		avgViews = totalViews / videoCount
 	}
 	avatarURL := bestThumbnailURL(item.Snippet.Thumbnails)
+	avatarURL = localizeResourceImage(ctx, id, "avatar", avatarURL)
+	resourceName := syncedResourceName(platformURL, item.Snippet.Title)
+	_, err = a.DB().ExecContext(ctx,
+		`update biz_resources set
+		  name = if(? <> '', ?, name),
+		  country = if(country = '' and ? <> '', ?, country),
+		  followers = ?, total_views = ?, video_count = ?, avg_views = ?,
+		  platform_user_id = ?, platform_handle = ?, avatar_url = ?,
+		  last_sync_at = now()
+		 where id = ?`,
+		resourceName, resourceName, item.Snippet.Country, item.Snippet.Country,
+		followers, totalViews, videoCount, avgViews,
+		item.ID, item.Snippet.CustomURL, avatarURL, id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.refreshResourceAudienceClassification(ctx, id); err != nil {
+		return nil, err
+	}
+
 	syncPosts, postLimit := a.platformPostSyncOptions(ctx, "YouTube", 25)
 	posts := []platformPost{}
 	if syncPosts {
@@ -907,19 +929,12 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		avgViews = averagePostViews(posts)
 	}
 	engagementRate := platformPostEngagementRate(posts, followers)
-	avatarURL = localizeResourceImage(ctx, id, "avatar", avatarURL)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
-		  name = if(? <> '', ?, name),
-		  country = if(country = '' and ? <> '', ?, country),
-		  followers = ?, total_views = ?, video_count = ?, avg_views = ?,
-		  engagement_rate = if(? > 0, ?, engagement_rate),
-		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
-		  last_sync_error = '', last_sync_at = now()
+		  avg_views = ?, engagement_rate = if(? > 0, ?, engagement_rate),
+		  last_sync_status = '成功', last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
-		item.Snippet.Title, item.Snippet.Title, item.Snippet.Country, item.Snippet.Country,
-		followers, totalViews, videoCount, avgViews, engagementRate, engagementRate,
-		item.ID, item.Snippet.CustomURL, avatarURL, id,
+		avgViews, engagementRate, engagementRate, id,
 	)
 	if err != nil {
 		return nil, err
@@ -928,7 +943,7 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		"platform":       "YouTube",
 		"platformUserId": item.ID,
 		"platformHandle": item.Snippet.CustomURL,
-		"name":           item.Snippet.Title,
+		"name":           resourceName,
 		"followers":      followers,
 		"totalViews":     totalViews,
 		"videoCount":     videoCount,
@@ -1025,6 +1040,7 @@ type platformPost struct {
 	LikeCount      int64      `json:"likeCount"`
 	CommentCount   int64      `json:"commentCount"`
 	ShareCount     int64      `json:"shareCount"`
+	SaveCount      int64      `json:"saveCount"`
 	Raw            any        `json:"-"`
 }
 
@@ -1254,7 +1270,7 @@ func (a *app) syncInstagramResource(ctx context.Context, id int, name, platformU
 	if user.MediaCount == 0 && len(user.Posts) > 0 {
 		user.MediaCount = int64(len(user.Posts))
 	}
-	return a.persistTikHubInstagramUser(ctx, id, user, warnings, syncPosts)
+	return a.persistTikHubInstagramUser(ctx, id, platformURL, user, warnings, syncPosts)
 }
 
 func (a *app) syncInstagramBusinessDiscovery(ctx context.Context, client *http.Client, resourceID int, apiVersion, accessToken, igUserID, handle string) (map[string]any, error) {
@@ -1432,12 +1448,14 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		posts, postWarnings, err = a.fetchTikTokPosts(ctx, client, apiKey, id, user.SecUID, user.Username, postLimit)
 		warnings = append(warnings, postWarnings...)
 		if err != nil {
-			warnings = append(warnings, "作品获取失败："+err.Error())
-		} else {
-			postsFetched = true
+			return nil, fmt.Errorf("TikTok 作品获取失败：%w", err)
 		}
+		if len(posts) == 0 && user.VideoCount > 0 {
+			return nil, fmt.Errorf("TikTok 作品接口未返回可解析作品")
+		}
+		postsFetched = true
 	} else if syncPosts {
-		warnings = append(warnings, "账号资料未返回 secUid，已跳过作品接口")
+		return nil, fmt.Errorf("TikTok 账号资料未返回 secUid，无法同步作品指标")
 	}
 	recentViews := sumPostViews(posts)
 	avgViews := averagePostViews(posts)
@@ -1451,6 +1469,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		}
 	}
 	avatarURL := localizeResourceImage(ctx, id, "avatar", user.AvatarURL)
+	resourceName := syncedResourceName(resource.PlatformURL, user.DisplayName)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1459,7 +1478,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
-		user.DisplayName, user.DisplayName, user.FollowerCount, recentViews, user.VideoCount, avgViews,
+		resourceName, resourceName, user.FollowerCount, recentViews, user.VideoCount, avgViews,
 		engagementRate, engagementRate,
 		firstNonEmpty(user.SecUID, user.UserID), user.Username, avatarURL, id,
 	)
@@ -1470,7 +1489,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		"platform":       "TikTok",
 		"platformUserId": firstNonEmpty(user.SecUID, user.UserID),
 		"platformHandle": user.Username,
-		"name":           user.DisplayName,
+		"name":           resourceName,
 		"followers":      user.FollowerCount,
 		"totalViews":     recentViews,
 		"videoCount":     user.VideoCount,
@@ -1659,7 +1678,7 @@ func normalizeTikHubTikTokUser(data map[string]any, fallbackUsername, fallbackSe
 }
 
 func normalizeTikHubTikTokPosts(data map[string]any, username string) []platformPost {
-	items := firstListAt(data, "itemList", "items", "aweme_list", "videos", "data", "list")
+	items := firstListAt(data, "itemList", "items", "aweme_list", "videos", "data", "list", "value")
 	posts := make([]platformPost, 0, len(items))
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)
@@ -1690,10 +1709,11 @@ func normalizeTikHubTikTokPosts(data map[string]any, username string) []platform
 			MediaType:      "VIDEO",
 			PublishedAt:    publishedAt,
 			Duration:       duration,
-			ViewCount:      firstNonZeroInt64(stats["playCount"], stats["play_count"], stats["viewCount"], stats["view_count"], item["view_count"]),
-			LikeCount:      firstNonZeroInt64(stats["diggCount"], stats["digg_count"], stats["likeCount"], stats["like_count"], item["like_count"]),
-			CommentCount:   firstNonZeroInt64(stats["commentCount"], stats["comment_count"], item["comment_count"]),
-			ShareCount:     firstNonZeroInt64(stats["shareCount"], stats["share_count"], item["share_count"]),
+			ViewCount:      firstNonZeroInt64(stats["playCount"], stats["play_count"], stats["viewCount"], stats["view_count"], item["playCount"], item["play_count"], item["viewCount"], item["view_count"]),
+			LikeCount:      firstNonZeroInt64(stats["diggCount"], stats["digg_count"], stats["likeCount"], stats["like_count"], item["diggCount"], item["digg_count"], item["likeCount"], item["like_count"]),
+			CommentCount:   firstNonZeroInt64(stats["commentCount"], stats["comment_count"], item["commentCount"], item["comment_count"]),
+			ShareCount:     firstNonZeroInt64(stats["shareCount"], stats["share_count"], item["shareCount"], item["share_count"]),
+			SaveCount:      firstNonZeroInt64(stats["collectCount"], stats["collect_count"], stats["favoriteCount"], stats["favorite_count"], item["collectCount"], item["collect_count"], item["favoriteCount"], item["favorite_count"]),
 			Raw:            item,
 		})
 	}
@@ -1848,13 +1868,16 @@ func mergePlatformPost(current, incoming platformPost) platformPost {
 	if incoming.ShareCount > 0 {
 		current.ShareCount = incoming.ShareCount
 	}
+	if incoming.SaveCount > 0 {
+		current.SaveCount = incoming.SaveCount
+	}
 	if incoming.Raw != nil {
 		current.Raw = incoming.Raw
 	}
 	return current
 }
 
-func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, user tikHubInstagramUser, warnings []string, syncPosts bool) (map[string]any, error) {
+func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, profileURL string, user tikHubInstagramUser, warnings []string, syncPosts bool) (map[string]any, error) {
 	if user.ID == "" && user.Username == "" {
 		return nil, fmt.Errorf("TikHub 未返回 Instagram 账号数据，请检查用户名")
 	}
@@ -1879,6 +1902,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 		}
 	}
 	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.AvatarURL)
+	resourceName := syncedResourceName(profileURL, user.DisplayName)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1888,7 +1912,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
-		user.DisplayName, user.DisplayName, user.FollowerCount, totalViews, avgViews, user.MediaCount, engagementRate, engagementRate,
+		resourceName, resourceName, user.FollowerCount, totalViews, avgViews, user.MediaCount, engagementRate, engagementRate,
 		active30D, active90D, postFrequency, postFrequency,
 		user.ID, user.Username, avatarURL, resourceID,
 	)
@@ -1899,7 +1923,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, us
 		"platform":       "Instagram",
 		"platformUserId": user.ID,
 		"platformHandle": user.Username,
-		"name":           user.DisplayName,
+		"name":           resourceName,
 		"followers":      user.FollowerCount,
 		"totalViews":     totalViews,
 		"avgViews":       avgViews,
@@ -1951,8 +1975,8 @@ func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, p
 			`insert into biz_resource_platform_posts
 			  (resource_id, platform, platform_post_id, title, description, post_url, cover_url, cover_remote_url,
 			   media_type, published_at, duration_seconds, view_count, like_count, comment_count,
-			   share_count, raw_json, synced_at)
-			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+			   share_count, save_count, raw_json, synced_at)
+			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
 			 on duplicate key update
 			   title = values(title),
 			   description = values(description),
@@ -1966,11 +1990,12 @@ func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, p
 			   like_count = values(like_count),
 			   comment_count = values(comment_count),
 			   share_count = values(share_count),
+			   save_count = values(save_count),
 			   raw_json = values(raw_json),
 			   synced_at = now()`,
 			resourceID, platform, post.PlatformPostID, post.Title, post.Description, post.PostURL, localCoverURL, remoteCoverURL,
 			post.MediaType, post.PublishedAt, post.Duration, post.ViewCount, post.LikeCount, post.CommentCount,
-			post.ShareCount, rawJSON,
+			post.ShareCount, post.SaveCount, rawJSON,
 		)
 		if err != nil {
 			return err
@@ -2089,7 +2114,7 @@ func platformPostEngagementRate(posts []platformPost, followers int64) float64 {
 	}
 	total := int64(0)
 	for _, post := range posts {
-		total += post.LikeCount + post.CommentCount + post.ShareCount
+		total += post.LikeCount + post.CommentCount + post.ShareCount + post.SaveCount
 	}
 	return float64(total) / float64(followers) / float64(len(posts))
 }
@@ -4122,7 +4147,7 @@ func (a *app) businessDashboard(w http.ResponseWriter, r *http.Request) {
 	if err := a.DB().QueryRowContext(r.Context(),
 		`select count(*) as postCount,
 		        coalesce(sum(p.view_count), 0) as totalViews,
-		        coalesce(sum(p.like_count + p.comment_count + p.share_count), 0) as totalInteractions,
+		        coalesce(sum(p.like_count + p.comment_count + p.share_count + p.save_count), 0) as totalInteractions,
 		        coalesce(sum(case when p.view_count >= 1000000 then 1 else 0 end), 0) as hotPostCount
 		   from biz_resource_platform_posts p
 		   left join biz_resources r on r.id = p.resource_id`+postWhere,
@@ -4145,7 +4170,7 @@ func (a *app) businessDashboard(w http.ResponseWriter, r *http.Request) {
 		`select date_format(date(p.published_at), '%Y-%m-%d') as date,
 		        count(*) as postCount,
 		        coalesce(sum(p.view_count), 0) as exposure,
-		        coalesce(sum(p.like_count + p.comment_count + p.share_count), 0) as interactions
+		        coalesce(sum(p.like_count + p.comment_count + p.share_count + p.save_count), 0) as interactions
 		   from biz_resource_platform_posts p
 		   left join biz_resources r on r.id = p.resource_id`+postWhere+`
 		  group by date(p.published_at)
@@ -4159,9 +4184,9 @@ func (a *app) businessDashboard(w http.ResponseWriter, r *http.Request) {
 	topResources, err := a.queryMaps(r.Context(),
 		`select r.id, r.name, r.platform, count(*) as postCount,
 		        coalesce(sum(p.view_count), 0) as exposure,
-		        coalesce(sum(p.like_count + p.comment_count + p.share_count), 0) as interactions,
+		        coalesce(sum(p.like_count + p.comment_count + p.share_count + p.save_count), 0) as interactions,
 		        case when sum(p.view_count) > 0
-		             then sum(p.like_count + p.comment_count + p.share_count) / sum(p.view_count)
+		             then sum(p.like_count + p.comment_count + p.share_count + p.save_count) / sum(p.view_count)
 		             else 0 end as engagementRate
 		   from biz_resource_platform_posts p
 		   left join biz_resources r on r.id = p.resource_id`+postWhere+`

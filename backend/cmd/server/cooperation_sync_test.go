@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+)
 
 func TestParseCooperationPostLink(t *testing.T) {
 	tests := []struct {
@@ -32,6 +37,71 @@ func TestParseCooperationPostLink(t *testing.T) {
 func TestParseCooperationPostLinkRejectsUnsupportedLink(t *testing.T) {
 	if _, err := parseCooperationPostLink("https://example.com/post/123"); err == nil {
 		t.Fatal("expected unsupported link error")
+	}
+}
+
+func TestCooperationPostSourceUsesFinalLinkWhenDeliverableLinksAreEmpty(t *testing.T) {
+	finalLink := "https://www.tiktok.com/@creator/video/7350810998023949599"
+	if got := cooperationPostSource(finalLink, ""); got != finalLink {
+		t.Fatalf("cooperationPostSource() = %q, want %q", got, finalLink)
+	}
+}
+
+func TestCooperationPostSourcePrefersFinalLink(t *testing.T) {
+	finalLink := "https://www.instagram.com/reel/DPwhVB-jo9k/"
+	deliverableLinks := "https://www.instagram.com/reel/older/"
+	if got := cooperationPostSource(finalLink, deliverableLinks); got != finalLink {
+		t.Fatalf("cooperationPostSource() = %q, want %q", got, finalLink)
+	}
+}
+
+func TestSyncCooperationPostUsesFinalLinkAndStoredCover(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	finalLink := "https://www.youtube.com/watch?v=51dNGqLoM00"
+	mock.ExpectQuery("select resource_id, coalesce\\(final_link, ''\\), coalesce\\(deliverable_links, ''\\)").
+		WithArgs(99).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_id", "final_link", "deliverable_links"}).
+			AddRow(7, finalLink, ""))
+	mock.ExpectQuery("select platform_post_id, title, description, post_url,").
+		WithArgs(7, "YouTube").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"platform_post_id", "title", "description", "post_url", "cover_url", "media_type",
+			"published_at", "duration_seconds", "view_count", "like_count", "comment_count", "share_count", "save_count",
+		}).AddRow(
+			"51dNGqLoM00", "Video", "", finalLink, "https://i.ytimg.com/vi/51dNGqLoM00/hqdefault.jpg", "VIDEO",
+			nil, 60, 1000, 100, 12, 10, 20,
+		))
+	mock.ExpectExec("update biz_cooperations set").
+		WithArgs(int64(1000), int64(130), int64(12), nil, 99).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	app := newApp(db, Config{})
+	result, err := app.syncCooperationPost(context.Background(), 99, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Synced || result.Source != "作品库" {
+		t.Fatalf("syncCooperationPost() = %#v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCooperationPostSyncFailure(t *testing.T) {
+	if err := cooperationPostSyncFailure(cooperationPostSyncResult{
+		Platform: "TikTok",
+		Message:  "API 获取作品数据失败",
+	}); err == nil {
+		t.Fatal("expected unsuccessful API synchronization to become an error")
+	}
+	if err := cooperationPostSyncFailure(cooperationPostSyncResult{Synced: true}); err != nil {
+		t.Fatalf("successful synchronization returned error: %v", err)
 	}
 }
 

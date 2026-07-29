@@ -278,6 +278,9 @@ func TestBuildStandardProjectExportWorkbookMatchesImportContract(t *testing.T) {
 	if parsed[0]["influencer"] != "https://www.instagram.com/creatorone/" || parsed[0]["deliverableLinks"] != "https://www.instagram.com/p/example/" {
 		t.Fatalf("export must be re-importable: %#v", parsed[0])
 	}
+	if got := floatField(parsed[0], "quoteAmount"); got != 2500 {
+		t.Fatalf("parsed cooperation cost = %v, want 2500: %#v", got, parsed[0])
+	}
 }
 
 func TestBuildStandardProjectExportRowsIncludesAllProjectRelationships(t *testing.T) {
@@ -317,8 +320,44 @@ func TestNormalizeImportedProfileLogic(t *testing.T) {
 	if got := importedProfilePlaceholderName(profile); got != "example" {
 		t.Fatalf("placeholder = %q, want example", got)
 	}
+	if got := importedProfilePlaceholderName("https://youtube.com/@creator-name/videos"); got != "creator-name" {
+		t.Fatalf("YouTube placeholder = %q, want creator-name", got)
+	}
+	if got := syncedResourceName("https://www.tiktok.com/@creator/video/123", "Creator Display Name"); got != "creator" {
+		t.Fatalf("synced resource name = %q, want creator", got)
+	}
+	if got := syncedResourceName("https://example.com/profile", "Creator Display Name"); got != "Creator Display Name" {
+		t.Fatalf("fallback resource name = %q, want Creator Display Name", got)
+	}
 	if got := normalizeImportedMarket("Saudi"); got != "沙特阿拉伯" {
 		t.Fatalf("market = %q, want 沙特阿拉伯", got)
+	}
+}
+
+func TestProjectNameFromUploadFileName(t *testing.T) {
+	for _, test := range []struct {
+		fileName string
+		want     string
+	}{
+		{fileName: "Infinix NOTE 60 Series Master Media List.xlsx", want: "Infinix NOTE 60 Series Master Media List"},
+		{fileName: "campaign.v2.csv", want: "campaign.v2"},
+		{fileName: "/tmp/project.xls", want: "project"},
+	} {
+		if got := projectNameFromUploadFileName(test.fileName); got != test.want {
+			t.Fatalf("projectNameFromUploadFileName(%q) = %q, want %q", test.fileName, got, test.want)
+		}
+	}
+}
+
+func TestExcelNumberValueAcceptsFormattedCurrency(t *testing.T) {
+	for input, want := range map[string]float64{
+		"$2,500.00": 2500,
+		"￥1,234.50": 1234.5,
+		"€99":       99,
+	} {
+		if got := excelNumberValue(input); got != want {
+			t.Fatalf("excelNumberValue(%q) = %v, want %v", input, got, want)
+		}
 	}
 }
 

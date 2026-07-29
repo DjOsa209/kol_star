@@ -7,6 +7,7 @@ import {
   getProjectList,
   createProject,
   importProjects,
+  syncProject,
   previewProjectExcelImport,
   downloadProjectExcelImportTemplate,
   downloadProjectData,
@@ -52,6 +53,7 @@ const selectedProjectId = ref<number | null>(null);
 const activePipelineStage = ref("all");
 const activeCooperation = ref<any>(null);
 const syncingCooperationIds = reactive<Record<number, boolean>>({});
+const syncingProjectIds = reactive<Record<number, boolean>>({});
 const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
@@ -1151,7 +1153,7 @@ async function exportProjectData(row: any) {
 
 function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
   importProjectId.value = null;
-  importProjectNameDraft.value = "";
+  importProjectNameDraft.value = projectNameFromFileName(fileName);
   importFileName.value = fileName;
   importWorkbookSheets.value = workbook.SheetNames.map(name => ({
     name,
@@ -1159,6 +1161,35 @@ function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
   }));
   refreshImportRows();
   importDialog.value = true;
+}
+
+function projectNameFromFileName(fileName: string) {
+  return String(fileName || "")
+    .trim()
+    .replace(/\.(xlsx|xls|csv)$/i, "")
+    .trim();
+}
+
+async function syncProjectData(row: any) {
+  const projectId = Number(row?.id || 0);
+  if (!projectId || syncingProjectIds[projectId]) return;
+  syncingProjectIds[projectId] = true;
+  try {
+    const res = await syncProject({ id: projectId });
+    if (res.code !== 0) {
+      ElMessage.warning(res.message || "项目同步启动失败");
+      return;
+    }
+    if (res.data?.started === false) {
+      ElMessage.warning(res.data?.message || "已有同步任务正在运行");
+      return;
+    }
+    ElMessage.success(res.data?.message || "项目数据同步任务已启动");
+  } catch {
+    ElMessage.error("项目同步启动失败，请稍后重试");
+  } finally {
+    syncingProjectIds[projectId] = false;
+  }
 }
 
 async function handleProjectImportFile(file: any) {
@@ -1676,7 +1707,9 @@ async function handleUploadFile(file: any) {
       return;
     }
     importProjectId.value = null;
-    importProjectNameDraft.value = "";
+    importProjectNameDraft.value =
+      String(res.data?.projectName || "").trim() ||
+      projectNameFromFileName(rawFile.name);
     importFileName.value = res.data?.fileName || rawFile.name;
     importWorkbookSheets.value = Array.isArray(res.data?.sheets)
       ? res.data.sheets
@@ -1879,7 +1912,7 @@ onMounted(() => {
               row.owner || "未指定"
             }}</template></el-table-column
           >
-          <el-table-column label="操作" width="230" fixed="right" align="right">
+          <el-table-column label="操作" width="280" fixed="right" align="right">
             <template #default="{ row }">
               <el-button
                 link
@@ -1889,6 +1922,13 @@ onMounted(() => {
               >
               <el-button link @click.stop="openEditProject(row)"
                 >编辑</el-button
+              >
+              <el-button
+                link
+                type="primary"
+                :loading="syncingProjectIds[row.id]"
+                @click.stop="syncProjectData(row)"
+                >同步</el-button
               >
               <el-button
                 link

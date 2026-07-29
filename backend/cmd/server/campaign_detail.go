@@ -103,7 +103,8 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 		        p.media_type as mediaType,
 		        cast(unix_timestamp(p.published_at) * 1000 as unsigned) as publishedAt,
 		        p.duration_seconds as durationSeconds, p.view_count as viewCount,
-		        p.like_count as likeCount, p.comment_count as commentCount, p.share_count as shareCount
+		        p.like_count as likeCount, p.comment_count as commentCount, p.share_count as shareCount,
+		        p.save_count as saveCount
 	   from biz_resource_platform_posts p
 	   join biz_cooperations c on c.resource_id = p.resource_id and c.project_id = ?
 	    and (
@@ -545,7 +546,7 @@ func buildProjectReportContentRows(posts, cooperations []map[string]any) []proje
 			contentType: stringValue(post["mediaType"]), title: stringValue(post["title"]),
 			contentURL: contentURL, publishedAt: stringValue(post["publishedAt"]),
 			views:      floatFromAny(post["viewCount"]),
-			engagement: floatFromAny(post["likeCount"]) + floatFromAny(post["commentCount"]) + floatFromAny(post["shareCount"]),
+			engagement: floatFromAny(post["likeCount"]) + floatFromAny(post["commentCount"]) + floatFromAny(post["shareCount"]) + floatFromAny(post["saveCount"]),
 			comments:   floatFromAny(post["commentCount"]), notes: stringValue(post["description"]),
 		})
 	}

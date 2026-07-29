@@ -255,6 +255,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /business/projects/import-template", a.requireMenu("/business/projects", a.downloadProjectExcelImportTemplate))
 	mux.HandleFunc("POST /business/projects/import-excel/preview", a.requireMenu("/business/projects", a.previewProjectExcelImport))
 	mux.HandleFunc("POST /business/projects/import", a.requireMenu("/business/projects", a.importBusinessProjects))
+	mux.HandleFunc("POST /business/projects/sync", a.requireMenu("/business/projects", a.syncBusinessProject))
 	mux.HandleFunc("POST /business/projects/update", a.requireMenu("/business/projects", a.updateBusinessProject))
 	mux.HandleFunc("POST /business/projects/delete", a.requireMenu("/business/projects", a.deleteBusinessProject))
 	mux.HandleFunc("POST /business/cooperations", a.requireMenu("/business/projects", a.businessCooperations))

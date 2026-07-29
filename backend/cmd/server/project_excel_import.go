@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -168,7 +169,17 @@ func (a *app) previewProjectExcelImport(w http.ResponseWriter, r *http.Request) 
 		}
 		sheets = append(sheets, map[string]any{"name": name, "rows": rows})
 	}
-	writeOK(w, map[string]any{"fileName": fileName, "sheets": sheets})
+	writeOK(w, map[string]any{
+		"fileName":    fileName,
+		"projectName": projectNameFromUploadFileName(fileName),
+		"sheets":      sheets,
+	})
+}
+
+func projectNameFromUploadFileName(fileName string) string {
+	base := filepath.Base(strings.TrimSpace(fileName))
+	extension := filepath.Ext(base)
+	return strings.TrimSpace(strings.TrimSuffix(base, extension))
 }
 
 func (a *app) downloadProjectExcelImportTemplate(w http.ResponseWriter, r *http.Request) {
@@ -540,8 +551,19 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 				// An empty metric cell is deliberately left absent. This lets a
 				// repeated creator row inherit its profile follower count, while an
 				// explicit NaN still normalizes to zero below.
-				if value != "" {
-					row[key] = excelNumberValue(value)
+				numericValue := value
+				if rawValue, rawErr := book.GetCellValue(
+					sheet,
+					cell,
+					excelize.Options{RawCellValue: true},
+				); rawErr == nil && strings.TrimSpace(rawValue) != "" {
+					// GetRows returns the formatted display value (for example
+					// "$2,500.00"). Prefer the underlying numeric value so Excel
+					// currency and accounting formats do not erase the cost.
+					numericValue = rawValue
+				}
+				if numericValue != "" {
+					row[key] = excelNumberValue(numericValue)
 				}
 			} else {
 				row[key] = value
@@ -917,7 +939,17 @@ func excelNumberValue(value string) float64 {
 	case strings.HasSuffix(value, "万"):
 		multiplier, value = 10000, strings.TrimSuffix(value, "万")
 	}
-	value = strings.NewReplacer(",", "", "，", "", " ", "", "+", "").Replace(value)
+	value = strings.NewReplacer(
+		",", "",
+		"，", "",
+		" ", "",
+		"+", "",
+		"$", "",
+		"¥", "",
+		"￥", "",
+		"€", "",
+		"£", "",
+	).Replace(value)
 	number, err := strconv.ParseFloat(value, 64)
 	if err != nil || number < 0 {
 		return 0
@@ -999,6 +1031,9 @@ func importedProfilePlaceholderName(value string) string {
 	if err != nil || parsed.Hostname() == "" {
 		return strings.TrimSpace(value)
 	}
+	if handle := importedProfileAtHandle(parsed); handle != "" {
+		return handle
+	}
 	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
 	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	for index := len(segments) - 1; index >= 0; index-- {
@@ -1011,6 +1046,36 @@ func importedProfilePlaceholderName(value string) string {
 		}
 	}
 	return host
+}
+
+func importedProfileAtHandle(parsed *url.URL) string {
+	if parsed == nil {
+		return ""
+	}
+	for _, segment := range strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/") {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			decoded = segment
+		}
+		decoded = strings.TrimSpace(decoded)
+		if !strings.HasPrefix(decoded, "@") {
+			continue
+		}
+		if handle := strings.TrimSpace(strings.TrimPrefix(decoded, "@")); handle != "" {
+			return handle
+		}
+	}
+	return ""
+}
+
+func syncedResourceName(profileURL, fallback string) string {
+	parsed, err := url.Parse(strings.TrimSpace(profileURL))
+	if err == nil {
+		if handle := importedProfileAtHandle(parsed); handle != "" {
+			return handle
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func normalizeImportedMarket(value string) string {

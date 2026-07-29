@@ -136,7 +136,9 @@ onMounted(loadData);
       <div>
         <span>Content Data</span>
         <h1>作品数据</h1>
-        <p>查看同步下来的近期视频/帖子，核对播放、点赞、评论、分享和原始作品链接。</p>
+        <p>
+          查看同步下来的近期视频/帖子，核对播放、点赞、评论、分享和原始作品链接。
+        </p>
       </div>
     </section>
 
@@ -153,7 +155,9 @@ onMounted(loadData);
         </div>
         <div>
           <strong>{{ resource.name }}</strong>
-          <span>{{ resource.platform }} {{ resource.platformHandle || "" }}</span>
+          <span
+            >{{ resource.platform }} {{ resource.platformHandle || "" }}</span
+          >
           <span>粉丝 {{ formatCount(resource.followers) }}</span>
           <span>上次同步 {{ formatDateTime(resource.lastSyncAt) }}</span>
         </div>
@@ -172,14 +176,23 @@ onMounted(loadData);
           <el-input-number v-model="search.resourceId" :min="0" />
         </el-form-item>
         <el-form-item label="平台">
-          <el-select v-model="search.platform" clearable placeholder="全部" class="filter-select">
+          <el-select
+            v-model="search.platform"
+            clearable
+            placeholder="全部"
+            class="filter-select"
+          >
             <el-option label="YouTube" value="YouTube" />
             <el-option label="Instagram" value="Instagram" />
             <el-option label="TikTok" value="TikTok" />
           </el-select>
         </el-form-item>
         <el-form-item label="关键词">
-          <el-input v-model="search.keyword" clearable placeholder="标题/描述/达人" />
+          <el-input
+            v-model="search.keyword"
+            clearable
+            placeholder="标题/描述/达人"
+          />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="searchData">
@@ -193,7 +206,11 @@ onMounted(loadData);
 
     <section v-loading="loading" class="post-list">
       <article v-for="post in list" :key="post.id" class="post-card">
-        <button class="cover-button" type="button" @click="openUrl(post.postUrl)">
+        <button
+          class="cover-button"
+          type="button"
+          @click="openUrl(post.postUrl)"
+        >
           <img v-if="post.coverUrl" :src="post.coverUrl" :alt="post.title" />
           <span v-else>{{ post.platform }}</span>
         </button>
@@ -215,9 +232,15 @@ onMounted(loadData);
             <span>点赞 {{ formatCount(post.likeCount) }}</span>
             <span>评论 {{ formatCount(post.commentCount) }}</span>
             <span>分享 {{ formatCount(post.shareCount) }}</span>
+            <span>收藏 {{ formatCount(post.saveCount) }}</span>
           </div>
           <div class="post-actions">
-            <el-button link type="primary" :disabled="!post.postUrl" @click="openUrl(post.postUrl)">
+            <el-button
+              link
+              type="primary"
+              :disabled="!post.postUrl"
+              @click="openUrl(post.postUrl)"
+            >
               <IconifyIconOnline icon="ri:external-link-line" class="mr-1" />
               打开作品
             </el-button>
@@ -225,7 +248,10 @@ onMounted(loadData);
           </div>
         </div>
       </article>
-      <el-empty v-if="!loading && list.length === 0" description="暂无作品数据" />
+      <el-empty
+        v-if="!loading && list.length === 0"
+        description="暂无作品数据"
+      />
     </section>
 
     <div class="table-footer">

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -143,6 +144,69 @@ func (a *app) businessResourcesSyncStatus(w http.ResponseWriter, r *http.Request
 	writeOK(w, data)
 }
 
+func (a *app) syncBusinessProject(w http.ResponseWriter, r *http.Request) {
+	projectID := intField(readBody(r), "id")
+	if projectID <= 0 {
+		writeError(w, http.StatusOK, 10001, "项目 id 不能为空")
+		return
+	}
+	var projectName string
+	if err := a.DB().QueryRowContext(r.Context(),
+		`select name from biz_projects where id = ? limit 1`,
+		projectID,
+	).Scan(&projectName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusOK, 10002, "项目不存在")
+			return
+		}
+		writeDBError(w, err)
+		return
+	}
+	resources, err := a.projectSyncResources(r.Context(), projectID)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if len(resources) == 0 {
+		writeError(w, http.StatusOK, 10003, "该项目尚未关联达人或媒体")
+		return
+	}
+	running, err := a.latestRunningPlatformSyncJob(r.Context())
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if running != nil {
+		writeOK(w, map[string]any{
+			"started": false,
+			"message": "已有同步任务正在运行",
+			"job":     running,
+		})
+		return
+	}
+	result, err := a.DB().ExecContext(r.Context(),
+		`insert into biz_platform_sync_jobs
+		  (job_type, status, total_count, started_at, message)
+		 values ('project_sync', '运行中', ?, now(), ?)`,
+		len(resources), fmt.Sprintf("项目「%s」同步任务已启动", projectName),
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	jobID, err := result.LastInsertId()
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	go a.runBusinessProjectSync(int(jobID), projectID, projectName, resources)
+	writeOK(w, map[string]any{
+		"started": true,
+		"jobId":   jobID,
+		"message": fmt.Sprintf("项目「%s」的数据同步任务已启动", projectName),
+	})
+}
+
 func (a *app) interruptStalePlatformSyncJobs(ctx context.Context) (int64, error) {
 	result, err := a.DB().ExecContext(ctx,
 		`update biz_platform_sync_jobs
@@ -157,6 +221,69 @@ func (a *app) interruptStalePlatformSyncJobs(ctx context.Context) (int64, error)
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+func (a *app) runBusinessProjectSync(jobID, projectID int, projectName string, resources []syncResourceRow) {
+	ctx := context.Background()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("项目同步异常：%v", recovered))
+		}
+	}()
+	settings, err := a.platformSyncSettingsMap(ctx)
+	if err != nil {
+		a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("读取抓取设置失败：%v", err))
+		return
+	}
+	successCount := 0
+	failedCount := 0
+	skippedCount := 0
+	for _, resource := range resources {
+		running, err := a.platformSyncJobIsRunning(ctx, jobID)
+		if err != nil {
+			a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("检查任务状态失败：%v", err))
+			return
+		}
+		if !running {
+			return
+		}
+		platform := platformDisplayName(resource.Platform)
+		if platform == "" {
+			skippedCount++
+			a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, fmt.Sprintf("%s 暂不支持自动同步", resource.Platform))
+			continue
+		}
+		if !settings[platform] {
+			skippedCount++
+			a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, fmt.Sprintf("%s 已在抓取控制中停用", platform))
+			continue
+		}
+		a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, "同步达人及项目作品中")
+		err = a.syncResourceProfileAndPostsByPlatform(ctx, resource)
+		if err == nil {
+			err = a.syncCooperationsForProjectResource(ctx, projectID, resource.ID, true)
+		}
+		if err == nil {
+			err = a.refreshResourceAudienceClassification(ctx, resource.ID)
+		}
+		if err != nil {
+			errMessage := redactSensitiveText(err.Error())
+			failedCount++
+			a.markResourceSyncFailed(ctx, resource.ID, errMessage)
+			a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, errMessage)
+			continue
+		}
+		successCount++
+		a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, "同步成功")
+	}
+	status := "成功"
+	if failedCount > 0 && successCount == 0 {
+		status = "失败"
+	} else if failedCount > 0 {
+		status = "部分失败"
+	}
+	message := fmt.Sprintf("项目「%s」同步完成：成功 %d，失败 %d，跳过 %d", projectName, successCount, failedCount, skippedCount)
+	a.finishPlatformSyncJob(ctx, jobID, status, message)
 }
 
 func (a *app) runBusinessResourcesSyncAll(jobID int, selectedPlatforms map[string]bool) {
@@ -343,6 +470,16 @@ func syncPlatformScopeLabel(selected map[string]bool) string {
 }
 
 func (a *app) syncResourceByPlatform(ctx context.Context, resource syncResourceRow) error {
+	if err := a.syncResourceProfileAndPostsByPlatform(ctx, resource); err != nil {
+		return err
+	}
+	if err := a.syncCooperationsForResource(ctx, resource.ID, true); err != nil {
+		return err
+	}
+	return a.refreshResourceAudienceClassification(ctx, resource.ID)
+}
+
+func (a *app) syncResourceProfileAndPostsByPlatform(ctx context.Context, resource syncResourceRow) error {
 	var err error
 	switch platformDisplayName(resource.Platform) {
 	case "YouTube":
@@ -357,7 +494,7 @@ func (a *app) syncResourceByPlatform(ctx context.Context, resource syncResourceR
 	if err != nil {
 		return err
 	}
-	return a.refreshResourceAudienceClassification(ctx, resource.ID)
+	return nil
 }
 
 func (a *app) refreshResourceAudienceClassification(ctx context.Context, resourceID int) error {
@@ -423,6 +560,33 @@ func (a *app) syncableResources(ctx context.Context) ([]syncResourceRow, error) 
 	}
 	defer rows.Close()
 	var resources []syncResourceRow
+	for rows.Next() {
+		var resource syncResourceRow
+		if err := rows.Scan(&resource.ID, &resource.Name, &resource.Platform, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle); err != nil {
+			return nil, err
+		}
+		resources = append(resources, resource)
+	}
+	return resources, rows.Err()
+}
+
+func (a *app) projectSyncResources(ctx context.Context, projectID int) ([]syncResourceRow, error) {
+	rows, err := a.DB().QueryContext(ctx,
+		`select distinct r.id, r.name, r.platform, r.platform_url, r.platform_user_id, r.platform_handle
+		   from biz_resources r
+		   join (
+		     select resource_id from biz_project_resources where project_id = ?
+		     union
+		     select resource_id from biz_cooperations where project_id = ?
+		   ) project_resources on project_resources.resource_id = r.id
+		  order by r.id asc`,
+		projectID, projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	resources := make([]syncResourceRow, 0)
 	for rows.Next() {
 		var resource syncResourceRow
 		if err := rows.Scan(&resource.ID, &resource.Name, &resource.Platform, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle); err != nil {

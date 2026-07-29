@@ -26,18 +26,20 @@ type cooperationPostSyncResult struct {
 
 func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowAPI bool) (cooperationPostSyncResult, error) {
 	var resourceID int
+	var finalLink string
 	var deliverableLinks string
 	if err := a.DB().QueryRowContext(ctx,
-		`select resource_id, coalesce(deliverable_links, '')
+		`select resource_id, coalesce(final_link, ''), coalesce(deliverable_links, '')
 		   from biz_cooperations where id = ? limit 1`,
 		cooperationID,
-	).Scan(&resourceID, &deliverableLinks); err != nil {
+	).Scan(&resourceID, &finalLink, &deliverableLinks); err != nil {
 		return cooperationPostSyncResult{}, err
 	}
-	if strings.TrimSpace(deliverableLinks) == "" {
+	postSource := cooperationPostSource(finalLink, deliverableLinks)
+	if postSource == "" {
 		return cooperationPostSyncResult{}, nil
 	}
-	link, err := parseCooperationPostLink(deliverableLinks)
+	link, err := parseCooperationPostLink(postSource)
 	if err != nil {
 		return cooperationPostSyncResult{Message: err.Error()}, nil
 	}
@@ -78,10 +80,19 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	}, nil
 }
 
+func cooperationPostSource(finalLink, deliverableLinks string) string {
+	return firstNonEmpty(strings.TrimSpace(finalLink), strings.TrimSpace(deliverableLinks))
+}
+
 func (a *app) syncCooperationsFromStoredPostsForResource(ctx context.Context, resourceID int) error {
+	return a.syncCooperationsForResource(ctx, resourceID, false)
+}
+
+func (a *app) syncCooperationsForResource(ctx context.Context, resourceID int, allowAPI bool) error {
 	rows, err := a.DB().QueryContext(ctx,
 		`select id from biz_cooperations
-		  where resource_id = ? and coalesce(deliverable_links, '') <> ''`,
+		  where resource_id = ?
+		    and coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '') <> ''`,
 		resourceID,
 	)
 	if err != nil {
@@ -100,11 +111,60 @@ func (a *app) syncCooperationsFromStoredPostsForResource(ctx context.Context, re
 		return err
 	}
 	for _, id := range cooperationIDs {
-		if _, err := a.syncCooperationPost(ctx, id, false); err != nil {
+		result, err := a.syncCooperationPost(ctx, id, allowAPI)
+		if err != nil {
 			return err
+		}
+		if allowAPI {
+			if err := cooperationPostSyncFailure(result); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func (a *app) syncCooperationsForProjectResource(ctx context.Context, projectID, resourceID int, allowAPI bool) error {
+	rows, err := a.DB().QueryContext(ctx,
+		`select id from biz_cooperations
+		  where project_id = ? and resource_id = ?
+		    and coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '') <> ''`,
+		projectID, resourceID,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	cooperationIDs := make([]int, 0)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		cooperationIDs = append(cooperationIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range cooperationIDs {
+		result, err := a.syncCooperationPost(ctx, id, allowAPI)
+		if err != nil {
+			return err
+		}
+		if allowAPI {
+			if err := cooperationPostSyncFailure(result); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func cooperationPostSyncFailure(result cooperationPostSyncResult) error {
+	if result.Synced || strings.TrimSpace(result.Message) == "" {
+		return nil
+	}
+	return fmt.Errorf("%s", result.Message)
 }
 
 func (a *app) syncImportedCooperations(ctx context.Context, batchID string) (int, []string) {
@@ -221,7 +281,8 @@ func (a *app) findStoredPlatformPost(ctx context.Context, resourceID int, link c
 	rows, err := a.DB().QueryContext(ctx,
 		`select platform_post_id, title, description, post_url,
 		        coalesce(nullif(cover_remote_url, ''), cover_url) as cover_url, media_type,
-		        published_at, duration_seconds, view_count, like_count, comment_count, share_count
+		        published_at, duration_seconds, view_count, like_count, comment_count, share_count,
+		        save_count
 		   from biz_resource_platform_posts
 		  where resource_id = ? and platform = ?
 		  order by synced_at desc`,
@@ -249,7 +310,7 @@ func scanPlatformPost(scanner interface{ Scan(...any) error }) (platformPost, er
 	err := scanner.Scan(
 		&post.PlatformPostID, &post.Title, &post.Description, &post.PostURL, &post.CoverURL,
 		&post.MediaType, &publishedAt, &post.Duration, &post.ViewCount, &post.LikeCount,
-		&post.CommentCount, &post.ShareCount,
+		&post.CommentCount, &post.ShareCount, &post.SaveCount,
 	)
 	if publishedAt.Valid {
 		post.PublishedAt = &publishedAt.Time
@@ -275,7 +336,7 @@ func (a *app) applyPlatformPostToCooperation(ctx context.Context, cooperationID 
 		  views = ?, engagement_count = ?, comments_count = ?,
 		  release_date = coalesce(?, release_date)
 		 where id = ?`,
-		post.ViewCount, post.LikeCount+post.ShareCount, post.CommentCount, releaseDate, cooperationID,
+		post.ViewCount, post.LikeCount+post.ShareCount+post.SaveCount, post.CommentCount, releaseDate, cooperationID,
 	)
 	return err
 }

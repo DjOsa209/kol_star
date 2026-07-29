@@ -229,6 +229,45 @@ const currentDeliverables = computed(() =>
   )
 );
 
+function youtubeThumbnailFromContentUrl(value: unknown) {
+  const raw = String(value || "").trim();
+  const candidate = raw.match(/https?:\/\/[^\s,，;；]+/)?.[0] || raw;
+  if (!candidate) return "";
+  try {
+    const parsed = new URL(candidate);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    let videoId = "";
+    if (host === "youtu.be") {
+      videoId = parsed.pathname.split("/").filter(Boolean)[0] || "";
+    } else if (host.endsWith("youtube.com")) {
+      videoId = parsed.searchParams.get("v") || "";
+      if (!videoId) {
+        const segments = parsed.pathname.split("/").filter(Boolean);
+        if (["shorts", "embed"].includes(segments[0])) {
+          videoId = segments[1] || "";
+        }
+      }
+    }
+    return videoId
+      ? `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function importedContentCover(item: any, postUrl: string) {
+  if (
+    String(item.platform || "")
+      .trim()
+      .toLowerCase() === "youtube"
+  ) {
+    const youtubeCover = youtubeThumbnailFromContentUrl(postUrl);
+    if (youtubeCover) return youtubeCover;
+  }
+  return "";
+}
+
 const projectContentPosts = computed(() => {
   const seenLinks = new Set<string>();
   const posts = contentPosts.value.filter(post => {
@@ -256,6 +295,9 @@ const projectContentPosts = computed(() => {
         title: item.creativeName || item.cooperationType || "已导入发布内容",
         description: item.notes,
         postUrl,
+        coverUrl: importedContentCover(item, postUrl),
+        coverRemoteUrl: "",
+        coverLocalUrl: "",
         mediaType: "imported",
         publishedAt: item.publishTime || item.releaseDate || item.updatedAt,
         viewCount: item.views || item.impressions,
@@ -626,12 +668,16 @@ function openPost(post: any) {
 
 function useLocalPostCover(event: Event, post: any) {
   const image = event.currentTarget as HTMLImageElement | null;
-  const fallbackURL = String(post?.coverLocalUrl || "").trim();
-  if (!image || !fallbackURL || image.dataset.localFallbackApplied === "1") {
+  if (!image) {
     return;
   }
-  image.dataset.localFallbackApplied = "1";
-  image.src = fallbackURL;
+  const fallbackURL = String(post?.coverLocalUrl || "").trim();
+  if (fallbackURL && image.dataset.localFallbackApplied !== "1") {
+    image.dataset.localFallbackApplied = "1";
+    image.src = fallbackURL;
+    return;
+  }
+  post.coverUrl = "";
 }
 
 function selectCampaignTab(tab: CampaignTab) {
@@ -1054,7 +1100,9 @@ function postExposure(row: any) {
 
 function postEngagement(row: any) {
   const totalEngagement = numberValue(row.engagementCount);
-  if (totalEngagement > 0) return totalEngagement;
+  if (totalEngagement > 0) {
+    return totalEngagement + numberValue(row.commentCount);
+  }
   return [
     "likeCount",
     "commentCount",
