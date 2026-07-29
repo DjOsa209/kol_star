@@ -4,8 +4,9 @@ import { computed } from "vue";
 const props = defineProps<{ platform?: string | null }>();
 
 const platform = computed(() => String(props.platform || "").trim());
+const normalizedPlatform = computed(() => platform.value.toLowerCase());
 const icon = computed(() => {
-  const normalized = platform.value.toLowerCase();
+  const normalized = normalizedPlatform.value;
   if (normalized === "youtube") return "/api/uploads/images/youtube.png";
   if (normalized === "tiktok" || normalized === "tik tok") {
     return "/api/uploads/images/tiktok.png";
@@ -21,12 +22,21 @@ const icon = computed(() => {
   }
   return "";
 });
+const iconSizeClass = computed(() => {
+  if (["x", "twitter", "x.com"].includes(normalizedPlatform.value)) {
+    return "platform-icon-badge--x";
+  }
+  if (["website", "web", "媒体网站"].includes(normalizedPlatform.value)) {
+    return "platform-icon-badge--web";
+  }
+  return "";
+});
 </script>
 
 <template>
   <span
     v-if="icon"
-    class="platform-icon-badge"
+    :class="['platform-icon-badge', iconSizeClass]"
     :title="platform"
     :aria-label="platform"
   >
@@ -52,5 +62,15 @@ const icon = computed(() => {
   width: 24px;
   height: 24px;
   object-fit: contain;
+}
+
+.platform-icon-badge--x img {
+  width: 17px;
+  height: 17px;
+}
+
+.platform-icon-badge--web img {
+  width: 14px;
+  height: 14px;
 }
 </style>
