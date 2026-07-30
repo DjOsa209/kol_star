@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -905,7 +904,7 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		avgViews = totalViews / videoCount
 	}
 	avatarRemoteURL := bestThumbnailURL(item.Snippet.Thumbnails)
-	avatarURL := localizeResourceImage(ctx, id, "avatar", avatarRemoteURL)
+	avatarURL := normalizedRemoteImageURL(avatarRemoteURL)
 	resourceName := syncedResourceName(platformURL, item.Snippet.Title)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
@@ -1443,7 +1442,7 @@ func (a *app) persistInstagramUser(ctx context.Context, resourceID int, user ins
 		engagementRate = float64(totalEngagement) / float64(user.FollowersCount) / float64(len(posts))
 	}
 	displayName := firstNonEmpty(user.Name, user.Username)
-	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.ProfilePictureURL)
+	avatarURL := normalizedRemoteImageURL(user.ProfilePictureURL)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1539,7 +1538,7 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 			return nil, err
 		}
 	}
-	avatarURL := localizeResourceImage(ctx, id, "avatar", user.AvatarURL)
+	avatarURL := normalizedRemoteImageURL(user.AvatarURL)
 	resourceName := syncedResourceName(resource.PlatformURL, user.DisplayName)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
@@ -1987,7 +1986,7 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, pr
 			return nil, err
 		}
 	}
-	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.AvatarURL)
+	avatarURL := normalizedRemoteImageURL(user.AvatarURL)
 	resourceName := syncedResourceName(profileURL, user.DisplayName)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
@@ -2035,20 +2034,10 @@ func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, p
 }
 
 func (a *app) upsertSingleContentPlatformPost(ctx context.Context, resourceID int, platform string, post platformPost) error {
-	return a.persistResourcePlatformPostsWithImageLocalization(ctx, resourceID, platform, []platformPost{post}, false)
+	return a.persistResourcePlatformPosts(ctx, resourceID, platform, []platformPost{post})
 }
 
 func (a *app) persistResourcePlatformPosts(ctx context.Context, resourceID int, platform string, posts []platformPost) error {
-	return a.persistResourcePlatformPostsWithImageLocalization(ctx, resourceID, platform, posts, true)
-}
-
-func (a *app) persistResourcePlatformPostsWithImageLocalization(
-	ctx context.Context,
-	resourceID int,
-	platform string,
-	posts []platformPost,
-	localizeImages bool,
-) error {
 	for index := range posts {
 		post := &posts[index]
 		if strings.TrimSpace(post.PlatformPostID) == "" {
@@ -2057,17 +2046,7 @@ func (a *app) persistResourcePlatformPostsWithImageLocalization(
 		incomingCoverURL := strings.TrimSpace(post.CoverURL)
 		remoteCoverURL := normalizedRemoteImageURL(incomingCoverURL)
 		localCoverURL := ""
-		if localizeImages && remoteCoverURL != "" {
-			localizedURL := localizeResourceImage(
-				ctx,
-				resourceID,
-				filepath.Join("posts", platform+"_"+post.PlatformPostID),
-				remoteCoverURL,
-			)
-			if isLocalResourceImageURL(localizedURL) {
-				localCoverURL = localizedURL
-			}
-		} else if isLocalResourceImageURL(incomingCoverURL) {
+		if isLocalResourceImageURL(incomingCoverURL) {
 			localCoverURL = incomingCoverURL
 		}
 		post.CoverURL = firstNonEmpty(remoteCoverURL, localCoverURL)

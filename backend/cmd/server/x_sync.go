@@ -122,7 +122,7 @@ func (a *app) syncXResource(ctx context.Context, id int) (map[string]any, error)
 	totalViews := sumPostViews(posts)
 	avgViews := averageViewedPostViews(posts)
 	engagementRate := platformPostEngagementRate(posts, user.FollowerCount)
-	avatarURL := localizeResourceImage(ctx, id, "avatar", user.AvatarURL)
+	avatarURL := normalizedRemoteImageURL(user.AvatarURL)
 	resourceName := syncedResourceName(resource.PlatformURL, firstNonEmpty(user.DisplayName, user.Handle))
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set

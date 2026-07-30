@@ -432,10 +432,6 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		writeDBError(w, err)
 		return
 	}
-	if remoteCoverURL != "" {
-		go a.cacheProjectContentCover(cooperationID, resourceID, postID, remoteCoverURL)
-	}
-
 	writeOK(w, map[string]any{
 		"updated":         true,
 		"platform":        platform,
@@ -498,34 +494,6 @@ func normalizedProjectContentURL(value string) string {
 		return strings.ToLower(parsed.String())
 	}
 	return strings.ToLower(strings.TrimRight(value, "/"))
-}
-
-func (a *app) cacheProjectContentCover(cooperationID, resourceID int, postID int64, remoteCoverURL string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	localCoverURL := localizeResourceImage(
-		ctx,
-		resourceID,
-		fmt.Sprintf("project-content/%d", cooperationID),
-		remoteCoverURL,
-	)
-	if localCoverURL == "" || localCoverURL == remoteCoverURL {
-		return
-	}
-	_, _ = a.DB().ExecContext(ctx,
-		`update biz_cooperations
-		    set content_cover_url = ?
-		  where id = ? and content_cover_remote_url = ?`,
-		localCoverURL, cooperationID, remoteCoverURL,
-	)
-	if postID > 0 {
-		_, _ = a.DB().ExecContext(ctx,
-			`update biz_resource_platform_posts
-			    set cover_url = ?
-			  where id = ? and resource_id = ? and cover_remote_url = ?`,
-			localCoverURL, postID, resourceID, remoteCoverURL,
-		)
-	}
 }
 
 func (a *app) updateBusinessProjectStatus(w http.ResponseWriter, r *http.Request) {

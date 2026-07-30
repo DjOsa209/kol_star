@@ -73,7 +73,7 @@ func (a *app) syncWebsiteResource(ctx context.Context, id int) (map[string]any, 
 	}
 
 	avatarRemoteURL, avatarWarning := fetchWebsiteAvatar(ctx, homepage)
-	avatarURL := localizeResourceImage(ctx, id, "avatar", avatarRemoteURL)
+	avatarURL := normalizedRemoteImageURL(avatarRemoteURL)
 	if avatarRemoteURL != "" {
 		_, _ = a.DB().ExecContext(ctx,
 			`update biz_resources

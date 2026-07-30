@@ -565,7 +565,7 @@ func (a *app) persistExtendedSocialUser(
 	totalViews := sumPostViews(posts)
 	avgViews := averageViewedPostViews(posts)
 	engagementRate := platformPostEngagementRate(posts, user.FollowerCount)
-	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.AvatarURL)
+	avatarURL := normalizedRemoteImageURL(user.AvatarURL)
 	resourceName := syncedResourceName(user.ProfileURL, firstNonEmpty(user.DisplayName, user.Handle))
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set

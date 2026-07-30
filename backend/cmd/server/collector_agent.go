@@ -67,12 +67,6 @@ func (a *app) persistTikTokCollectorPayload(ctx context.Context, body map[string
 	if err != nil {
 		return nil, err
 	}
-	if avatarURL := localizeResourceImage(ctx, int(resourceID), "avatar", anyString(creator["avatarUrl"])); avatarURL != "" {
-		if _, err := a.DB().ExecContext(ctx, `update biz_resources set avatar_url = ? where id = ?`, avatarURL, resourceID); err != nil {
-			return nil, err
-		}
-	}
-
 	posts := collectorPosts(body["posts"])
 	if err := a.upsertResourcePlatformPosts(ctx, int(resourceID), "TikTok", posts); err != nil {
 		return nil, err
@@ -129,6 +123,7 @@ func (a *app) upsertTikTokCollectorResource(ctx context.Context, requestedID int
 			   platform_handle = if(? <> '', ?, platform_handle),
 			   platform_url = if(? <> '', ?, platform_url),
 			   avatar_url = if(? <> '', ?, avatar_url),
+			   avatar_remote_url = if(? <> '', ?, avatar_remote_url),
 			   last_sync_status = '成功',
 			   last_sync_error = '',
 			   last_sync_at = now()
@@ -136,7 +131,8 @@ func (a *app) upsertTikTokCollectorResource(ctx context.Context, requestedID int
 			creator.Name, creator.Name, creator.Followers, creator.Followers,
 			creator.VideoCount, creator.VideoCount, creator.EngagementRaw, creator.EngagementRaw,
 			creator.SecUID, creator.SecUID, creator.Username, creator.Username,
-			creator.ProfileURL, creator.ProfileURL, creator.AvatarURL, creator.AvatarURL, requestedID,
+			creator.ProfileURL, creator.ProfileURL, creator.AvatarURL, creator.AvatarURL,
+			creator.AvatarURL, creator.AvatarURL, requestedID,
 		); err != nil {
 			return 0, false, err
 		}
@@ -158,6 +154,7 @@ func (a *app) upsertTikTokCollectorResource(ctx context.Context, requestedID int
 			   platform_handle = if(? <> '', ?, platform_handle),
 			   platform_url = if(? <> '', ?, platform_url),
 			   avatar_url = if(? <> '', ?, avatar_url),
+			   avatar_remote_url = if(? <> '', ?, avatar_remote_url),
 			   last_sync_status = '成功',
 			   last_sync_error = '',
 			   last_sync_at = now()
@@ -165,7 +162,8 @@ func (a *app) upsertTikTokCollectorResource(ctx context.Context, requestedID int
 			creator.Name, creator.Name, creator.Followers, creator.Followers,
 			creator.VideoCount, creator.VideoCount, creator.EngagementRaw, creator.EngagementRaw,
 			creator.SecUID, creator.SecUID, creator.Username, creator.Username,
-			creator.ProfileURL, creator.ProfileURL, creator.AvatarURL, creator.AvatarURL, id,
+			creator.ProfileURL, creator.ProfileURL, creator.AvatarURL, creator.AvatarURL,
+			creator.AvatarURL, creator.AvatarURL, id,
 		)
 		return id, false, err
 	}
@@ -173,13 +171,13 @@ func (a *app) upsertTikTokCollectorResource(ctx context.Context, requestedID int
 	result, err := a.DB().ExecContext(ctx,
 		`insert into biz_resources
 		  (name, resource_type, platform, status, followers, engagement_rate, video_count,
-		   platform_user_id, platform_handle, platform_url, avatar_url, score, level,
+		   platform_user_id, platform_handle, platform_url, avatar_url, avatar_remote_url, score, level,
 		   risk_level, last_sync_status, last_sync_error, last_sync_at)
-		 values (?, 'KOL', 'TikTok', '可合作', ?, ?, ?, ?, ?, ?, ?, 60, 'B',
+		 values (?, 'KOL', 'TikTok', '可合作', ?, ?, ?, ?, ?, ?, ?, ?, 60, 'B',
 		         '低', '成功', '', now())`,
 		firstNonEmpty(creator.Name, creator.Username, creator.SecUID), creator.Followers,
 		creator.EngagementRaw, creator.VideoCount, creator.SecUID, creator.Username,
-		creator.ProfileURL, creator.AvatarURL,
+		creator.ProfileURL, creator.AvatarURL, creator.AvatarURL,
 	)
 	if err != nil {
 		return 0, false, err
