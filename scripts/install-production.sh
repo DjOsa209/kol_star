@@ -4,6 +4,7 @@ set -euo pipefail
 APP_NAME="${APP_NAME:-kol-admin}"
 DOMAIN="${DOMAIN:-xmp.transsion.com}"
 PROJECT_ROOT="${PROJECT_ROOT:-/home/trnuser/kol_star}"
+RUN_USER="${RUN_USER:-trnuser}"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 FRONTEND_DIR="$PROJECT_ROOT/vue-pure-admin"
 BACKEND_BINARY="$BACKEND_DIR/kol-admin-server"
@@ -40,6 +41,12 @@ if [[ ! -d "$BACKEND_DIR" || ! -d "$FRONTEND_DIR" ]]; then
   exit 1
 fi
 
+if ! id "$RUN_USER" >/dev/null 2>&1; then
+  echo "Service user does not exist: $RUN_USER" >&2
+  echo "Override with: RUN_USER=your-deploy-user $0" >&2
+  exit 1
+fi
+
 echo "Building backend..."
 cd "$BACKEND_DIR"
 go build -o "$BACKEND_BINARY" ./cmd/server
@@ -58,7 +65,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=$RUN_USER
 WorkingDirectory=$BACKEND_DIR
 Environment=CONFIG_FILE=$BACKEND_DIR/config.yaml
 ExecStart=$BACKEND_BINARY
