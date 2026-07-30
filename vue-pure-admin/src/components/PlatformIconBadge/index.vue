@@ -17,6 +17,15 @@ const icon = computed(() => {
   if (["x", "twitter", "x.com"].includes(normalized)) {
     return "/api/uploads/images/x.png";
   }
+  if (["facebook", "fb"].includes(normalized)) {
+    return "/api/uploads/images/facebook.png";
+  }
+  if (normalized === "linkedin") {
+    return "/api/uploads/images/linkedin.png";
+  }
+  if (normalized === "reddit") {
+    return "/api/uploads/images/reddit.png";
+  }
   if (["website", "web", "媒体网站"].includes(normalized)) {
     return "/api/uploads/images/web.png";
   }

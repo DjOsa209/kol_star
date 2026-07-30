@@ -58,7 +58,7 @@ var standardProjectImportScopes = []string{
 	"KOL\n媒体\n艺术家",
 	"科技\n生活方式\n商业\n设计\n游戏\n摄影\n体育\n娱乐\n汽车\n财经\n教育\n大众媒体",
 	"国家\n市场\n地区\n区域",
-	"系统自动回填：\nKOL：粉丝数、订阅数；\n媒体：月独立访客（UVM）",
+	"系统自动回填：\nKOL：粉丝数、订阅数；\n媒体：月独立访客（UMV）",
 	"系统自动回填：\n头部\n腰部\n尾部",
 	"网站\n播客\n电视\n报刊\nYouTube\nTikTok\nInstagram\nFacebook\nX\nLinkedIn\nReddit",
 	"付费合作\n产品置换\n联盟合作\n活动合作\n采访合作",

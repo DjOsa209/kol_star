@@ -2,32 +2,31 @@ package main
 
 import "testing"
 
-func TestBuildCampaignDetailStatsIncludesCooperationCost(t *testing.T) {
-	stats := buildCampaignDetailStats(
-		map[string]any{"budget": float64(10000)},
-		[]map[string]any{
-			{
-				"resourceId":        1,
-				"quoteAmount":       float64(2500),
-				"views":             float64(500000),
-				"engagementCount":   float64(20000),
-				"commentsCount":     float64(3000),
-				"status":            "已发布",
-				"deliverableStatus": "已完成",
-			},
-			{
-				"resourceId":        2,
-				"quoteAmount":       float64(1250),
-				"impressions":       float64(250000),
-				"engagementCount":   float64(10000),
-				"commentsCount":     float64(1000),
-				"status":            "已发布",
-				"deliverableStatus": "已完成",
-			},
-		},
-		nil,
+func TestNormalizeEditableContentPlatform(t *testing.T) {
+	tests := map[string]string{
+		"tiktok":   "TikTok",
+		"INS":      "Instagram",
+		"twitter":  "X",
+		"LinkedIn": "LinkedIn",
+		"网站":       "Website",
+		"unknown":  "",
+	}
+	for input, want := range tests {
+		if got := normalizeEditableContentPlatform(input); got != want {
+			t.Fatalf("normalizeEditableContentPlatform(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestReplaceCooperationContentURL(t *testing.T) {
+	raw := "https://example.com/one\nhttps://example.com/two"
+	got := replaceCooperationContentURL(
+		raw,
+		"https://example.com/two",
+		"https://example.com/updated",
 	)
-	if got := floatFromAny(stats["totalCost"]); got != 3750 {
-		t.Fatalf("project totalCost = %v, want 3750: %#v", got, stats)
+	want := "https://example.com/one\nhttps://example.com/updated"
+	if got != want {
+		t.Fatalf("replaceCooperationContentURL() = %q, want %q", got, want)
 	}
 }

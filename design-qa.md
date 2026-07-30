@@ -39,6 +39,43 @@ final result: passed
 
 ---
 
+**Project Overview Metrics And Platform Charts QA**
+
+- Source visual truth: `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-3e9ad5af-5e67-4760-bf4d-ef95ffd90406.png`
+- Implementation: `http://localhost:8848/#/business/projects/detail?id={projectId}`
+- Implementation screenshot: blocked; the in-app browser rejected local-page access under its URL safety policy.
+- Viewport: intended desktop comparison at `1440 x 1000`.
+- State: authenticated project detail with “项目概览” selected and platform data available.
+- Full-view comparison evidence: blocked because no browser-rendered implementation screenshot could be captured.
+- Focused-region comparison evidence: blocked for the same reason; the platform pie hover tooltip and exposure/engagement switch could not be visually exercised.
+
+**Findings**
+
+- [P1] Browser-rendered visual and hover verification is unavailable.
+  Location: project overview metric grids and both platform chart cards.
+  Evidence: source screenshot is available, but the local implementation could not be opened by the approved in-app browser surface.
+  Impact: typography, spacing, chart tooltip placement, and responsive fidelity cannot be certified from rendered evidence.
+  Fix: sign in and inspect the local project detail in the user-controlled browser, then rerun screenshot comparison when local-page browser access is available.
+- Fonts and typography: implementation retains the existing product font stack and defines explicit metric, label, help-copy, and chart-title hierarchy; rendered comparison remains blocked.
+- Spacing and layout rhythm: code provides six-column desktop metric grids, two platform chart cards, tablet reflow, and single-column mobile charts; rendered comparison remains blocked.
+- Colors and visual tokens: implementation retains the existing white surfaces, neutral borders, blue primary emphasis, and stable per-platform colors; rendered contrast sampling remains blocked.
+- Image quality and asset fidelity: no raster imagery is required by the reference; existing platform icon assets and ECharts SVG rendering are reused, with no handcrafted SVG or placeholder artwork.
+- Copy and content: overview terminology matches the approved project vocabulary and documents the collaborator deduplication, engagement, CPM, and CPE formulas.
+- Interaction states: code includes pie hover tooltips and a working exposure/engagement metric switch; browser-level interaction verification remains blocked.
+
+**Comparison History**
+
+- Pass 1: source image opened successfully; implementation capture was blocked before comparison, so no visual fixes could be evidence-driven.
+
+**Implementation Checklist**
+
+- Completed: content and performance metric aggregation, collaborator-name deduplication, platform aggregation, two ECharts donut charts, platform legends, hover tooltip content, exposure/engagement switch, empty states, responsive CSS, ESLint, TypeScript checking, and production build.
+- Blocked: authenticated browser rendering, screenshot-to-screenshot comparison, hover-state capture, console inspection, and final responsive visual certification.
+
+final result: blocked
+
+---
+
 **Global Compact Density QA**
 
 - Source visual truth: `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-d956c697-c1e4-44cc-bc09-2504fccc90d8.png`
@@ -166,3 +203,12 @@ final result: passed
 - Completed: authenticated desktop capture and comparison of the Campaign overview.
 
 final result: passed
+
+---
+
+**Latest QA Status — Project Overview Metrics And Platform Charts**
+
+- The complete evidence, findings, comparison history, and implementation checklist are recorded in “Project Overview Metrics And Platform Charts QA” above.
+- Browser-rendered comparison remains unavailable because the approved in-app browser rejected local-page access under its URL safety policy.
+
+final result: blocked

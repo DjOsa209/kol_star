@@ -220,7 +220,7 @@ func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int) (int
 		if platformDisplayName(resource.Platform) == "" {
 			message := fmt.Sprintf("%s 暂不支持账号数据自动抓取", resource.Platform)
 			if strings.EqualFold(strings.TrimSpace(resource.Platform), "Website") {
-				message = "Website 的 UVM 自动抓取需要配置 Similarweb 数据源"
+				message = "Website 的 UMV 自动抓取需要配置 Similarweb API Key"
 			}
 			_, _ = a.DB().ExecContext(ctx,
 				`update biz_resources set last_sync_status = '待配置', last_sync_error = ?, last_sync_at = now() where id = ?`,

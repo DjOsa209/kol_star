@@ -13,7 +13,8 @@ func TestSelectedSyncPlatforms(t *testing.T) {
 		{name: "missing means all", body: map[string]any{}, wantAll: true},
 		{name: "empty means all", body: map[string]any{"platforms": []any{}}, wantAll: true},
 		{name: "normalizes aliases", body: map[string]any{"platforms": []any{"youtube", "ins"}}, wantCount: 2},
-		{name: "rejects unsupported platform", body: map[string]any{"platforms": []any{"Facebook"}}, wantError: true},
+		{name: "supports extended tikhub platforms", body: map[string]any{"platforms": []any{"LinkedIn", "Reddit"}}, wantCount: 2},
+		{name: "rejects unsupported platform", body: map[string]any{"platforms": []any{"Pinterest"}}, wantError: true},
 	}
 
 	for _, test := range tests {

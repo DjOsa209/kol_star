@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -94,7 +95,7 @@ func (a *app) searchOnlineProjectResource(w http.ResponseWriter, r *http.Request
 func normalizeOnlineProjectResourceSeed(platformValue, queryValue, resourceTypeValue string) (onlineProjectResourceSeed, error) {
 	platform := platformDisplayName(platformValue)
 	if platform == "" {
-		return onlineProjectResourceSeed{}, fmt.Errorf("请选择 Instagram、TikTok 或 YouTube")
+		return onlineProjectResourceSeed{}, fmt.Errorf("请选择 Instagram、TikTok、YouTube、X、Facebook、LinkedIn、Reddit 或 Website")
 	}
 	query := strings.TrimSpace(queryValue)
 	if query == "" {
@@ -139,8 +140,82 @@ func normalizeOnlineProjectResourceSeed(platformValue, queryValue, resourceTypeV
 				seed.PlatformHandle = strings.TrimPrefix(identifier, "@")
 			}
 		}
+	case "X":
+		handle := xHandleIdentifier(query)
+		if handle == "" {
+			return onlineProjectResourceSeed{}, fmt.Errorf("请输入有效的 X 主页链接或 @handle")
+		}
+		seed.Name = handle
+		seed.PlatformHandle = handle
+		seed.PlatformURL = "https://x.com/" + handle
+	case "Facebook":
+		handle, profileURL := facebookProfileIdentifier(query)
+		if handle == "" {
+			return onlineProjectResourceSeed{}, fmt.Errorf("请输入有效的 Facebook 主页链接或账号")
+		}
+		seed.Name = handle
+		seed.PlatformHandle = handle
+		seed.PlatformURL = profileURL
+	case "LinkedIn":
+		handle, profileURL, _ := linkedinProfileIdentifier(query)
+		if handle == "" {
+			return onlineProjectResourceSeed{}, fmt.Errorf("请输入有效的 LinkedIn 个人主页或公司主页链接")
+		}
+		seed.Name = handle
+		seed.PlatformHandle = handle
+		seed.PlatformURL = profileURL
+	case "Reddit":
+		username := redditUsernameIdentifier(query)
+		if username == "" {
+			return onlineProjectResourceSeed{}, fmt.Errorf("请输入有效的 Reddit 用户主页链接或用户名")
+		}
+		seed.Name = username
+		seed.PlatformHandle = username
+		seed.PlatformURL = "https://www.reddit.com/user/" + username + "/"
+	case "Website":
+		if resourceType != "媒体" {
+			return onlineProjectResourceSeed{}, fmt.Errorf("Website 平台只能添加为媒体")
+		}
+		domain, homepage := normalizeWebsiteDomain(query)
+		if domain == "" {
+			return onlineProjectResourceSeed{}, fmt.Errorf("请输入有效的网站域名或主页链接")
+		}
+		seed.Name = domain
+		seed.PlatformURL = homepage
 	}
 	return seed, nil
+}
+
+func facebookProfileIdentifier(values ...string) (handle, profileURL string) {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+			host := strings.ToLower(strings.TrimPrefix(parsed.Hostname(), "www."))
+			if host != "facebook.com" && host != "m.facebook.com" && host != "fb.com" {
+				continue
+			}
+			if strings.EqualFold(strings.Trim(parsed.Path, "/"), "profile.php") {
+				handle = sanitizeSocialHandle(parsed.Query().Get("id"))
+			} else {
+				segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+				if len(segments) > 0 {
+					handle = sanitizeSocialHandle(segments[0])
+				}
+			}
+			if handle != "" {
+				return handle, "https://www.facebook.com/" + handle + "/"
+			}
+		}
+		if !strings.ContainsAny(value, " /") {
+			if handle = sanitizeSocialHandle(value); handle != "" {
+				return handle, "https://www.facebook.com/" + handle + "/"
+			}
+		}
+	}
+	return "", ""
 }
 
 func (a *app) findOnlineProjectResource(ctx context.Context, seed onlineProjectResourceSeed) (int, error) {
@@ -177,7 +252,7 @@ func (a *app) findOnlineProjectResource(ctx context.Context, seed onlineProjectR
 func (a *app) createOnlineProjectResource(ctx context.Context, seed onlineProjectResourceSeed) (int, error) {
 	referenceSource := ""
 	if seed.ResourceType == "媒体" {
-		referenceSource = "Similarweb（预置，未接入）"
+		referenceSource = "Similarweb"
 	}
 	result, err := a.DB().ExecContext(ctx,
 		`insert into biz_resources
@@ -219,7 +294,8 @@ func (a *app) projectResourceOption(ctx context.Context, resourceID int) (map[st
 		        r.platform, r.platform_handle as platformHandle, r.platform_url as platformUrl,
 		        r.country, r.market, r.category, r.followers, r.audience_size as audienceSize,
 		        r.audience_size_unit as audienceSizeUnit, r.tier as collaboratorTier,
-		        r.contact as primaryContact, r.avatar_url as resourceAvatarUrl
+		        r.contact as primaryContact, r.avatar_url as resourceAvatarUrl,
+		        r.avatar_remote_url as resourceAvatarRemoteUrl, r.umv_month as umvMonth
 		   from biz_resources r
 		  where r.id = ?
 		  limit 1`,

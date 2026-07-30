@@ -246,6 +246,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/tags/create", a.requireMenu("/business/tags", a.createBusinessTag))
 	mux.HandleFunc("POST /business/projects", a.requireMenu("/business/projects", a.businessProjects))
 	mux.HandleFunc("GET /business/projects/detail", a.requireMenu("/business/projects", a.businessProjectDetail))
+	mux.HandleFunc("POST /business/projects/content/update", a.requireMenu("/business/projects", a.updateBusinessProjectContent))
 	mux.HandleFunc("POST /business/projects/status", a.requireMenu("/business/projects", a.updateBusinessProjectStatus))
 	mux.HandleFunc("POST /business/projects/renew", a.requireMenu("/business/projects", a.renewBusinessProject))
 	mux.HandleFunc("POST /business/projects/budget", a.requireMenu("/business/projects", a.updateBusinessProjectBudget))

@@ -28,7 +28,7 @@ func TestYouTubeSyncSavesFollowersBeforeFetchingPosts(t *testing.T) {
 		WithArgs(
 			"diag", "diag", "", "",
 			int64(123456), int64(1000000), int64(10), int64(100000),
-			"UCdiag", "@diag", "", 42,
+			"UCdiag", "@diag", "", "", "", 42,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("select count\\(\\*\\) from biz_resources where id = \\?").

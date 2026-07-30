@@ -174,6 +174,15 @@ export const getProjectDetail = (params?: object) => {
   return http.request<Result>("get", "/business/projects/detail", { params });
 };
 
+export const updateProjectContent = (data?: object) => {
+  return http.request<Result>(
+    "post",
+    "/business/projects/content/update",
+    { data },
+    { timeout: 30000 }
+  );
+};
+
 export const updateProjectStatus = (data?: object) => {
   return http.request<Result>("post", "/business/projects/status", { data });
 };

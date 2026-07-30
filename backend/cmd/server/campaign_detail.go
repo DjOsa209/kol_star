@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -137,10 +139,12 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 func (a *app) projectResourceRows(ctx context.Context, projectID int) ([]map[string]any, error) {
 	return a.queryMaps(ctx,
 		`select relation.resource_id as resourceId, r.name as resourceName,
-		        r.avatar_url as resourceAvatarUrl, r.platform_handle as platformHandle,
+		        r.avatar_url as resourceAvatarUrl, r.avatar_remote_url as resourceAvatarRemoteUrl,
+		        r.platform_handle as platformHandle,
 		        r.platform_url as platformUrl, r.country, r.market, r.language, r.platform, r.followers,
 		        r.resource_type as resourceType, r.category, r.audience_size as audienceSize,
-		        r.audience_size_unit as audienceSizeUnit, r.tier as collaboratorTier, r.contact as primaryContact,
+		        r.audience_size_unit as audienceSizeUnit, r.umv_month as umvMonth,
+		        r.tier as collaboratorTier, r.contact as primaryContact,
 		        r.engagement_rate as engagementRate, r.score, r.level,
 		        ifnull(c.id, 0) as id, ifnull(c.cooperation_type, '') as cooperationType,
 		        ifnull(c.quote_amount, 0) as quoteAmount, ifnull(c.currency, 'USD') as currency,
@@ -170,12 +174,18 @@ func (a *app) projectResourceRows(ctx context.Context, projectID int) ([]map[str
 func (a *app) projectCooperationRows(ctx context.Context, projectID int) ([]map[string]any, error) {
 	return a.queryMaps(ctx,
 		`select c.id, c.project_id as projectId, p.name as projectName, c.resource_id as resourceId,
-		        r.name as resourceName, r.avatar_url as resourceAvatarUrl, r.platform_handle as platformHandle,
+		        r.name as resourceName, r.avatar_url as resourceAvatarUrl,
+		        r.avatar_remote_url as resourceAvatarRemoteUrl, r.platform_handle as platformHandle,
 		        r.platform_url as platformUrl, r.country, r.market, r.language, r.platform, r.followers,
 		        r.resource_type as resourceType, r.category, r.audience_size as audienceSize,
-		        r.audience_size_unit as audienceSizeUnit, r.tier as collaboratorTier, r.contact as primaryContact,
+		        r.audience_size_unit as audienceSizeUnit, r.umv_month as umvMonth,
+		        r.tier as collaboratorTier, r.contact as primaryContact,
 		        r.engagement_rate as engagementRate, r.score, r.level,
 		        c.cooperation_type as cooperationType, c.owner, c.vendor, c.audience_segment as audienceSegment,
+		        c.content_platform as contentPlatform,
+		        coalesce(nullif(c.content_cover_remote_url, ''), nullif(c.content_cover_url, ''), '') as contentCoverUrl,
+		        c.content_cover_remote_url as contentCoverRemoteUrl,
+		        case when c.content_cover_url like '/api/uploads/resource-images/%' then c.content_cover_url else '' end as contentCoverLocalUrl,
 		        c.creative_name as creativeName, c.quote_amount as quoteAmount,
 		        c.currency, c.status, c.deliverable_status as deliverableStatus,
 		        c.impressions, c.views, c.clicks, c.conversions, c.engagement_count as engagementCount,
@@ -195,6 +205,252 @@ func (a *app) projectCooperationRows(ctx context.Context, projectID int) ([]map[
 		  order by c.updated_at desc`,
 		projectID,
 	)
+}
+
+var editableContentPlatforms = map[string]string{
+	"youtube":   "YouTube",
+	"tiktok":    "TikTok",
+	"instagram": "Instagram",
+	"ins":       "Instagram",
+	"x":         "X",
+	"twitter":   "X",
+	"facebook":  "Facebook",
+	"fb":        "Facebook",
+	"linkedin":  "LinkedIn",
+	"reddit":    "Reddit",
+	"website":   "Website",
+	"网站":        "Website",
+}
+
+func normalizeEditableContentPlatform(value string) string {
+	return editableContentPlatforms[strings.ToLower(strings.TrimSpace(value))]
+}
+
+func validEditableContentURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+func replaceCooperationContentURL(raw, oldURL, newURL string) string {
+	raw = strings.TrimSpace(raw)
+	oldURL = strings.TrimSpace(oldURL)
+	newURL = strings.TrimSpace(newURL)
+	if raw == "" || oldURL == "" || newURL == "" {
+		return raw
+	}
+	if raw == oldURL {
+		return newURL
+	}
+	return strings.ReplaceAll(raw, oldURL, newURL)
+}
+
+func parseProjectContentPostID(value string) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "cooperation-") {
+		return 0
+	}
+	id, _ := strconv.ParseInt(value, 10, 64)
+	return id
+}
+
+func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Request) {
+	body := readBody(r)
+	projectID := intField(body, "projectId")
+	cooperationID := intField(body, "cooperationId")
+	resourceID := intField(body, "resourceId")
+	postID := parseProjectContentPostID(str(body, "contentId"))
+	postURL := strings.TrimSpace(str(body, "postUrl"))
+	platform := normalizeEditableContentPlatform(str(body, "platform"))
+	if projectID <= 0 || cooperationID <= 0 || resourceID <= 0 {
+		writeError(w, http.StatusOK, 10001, "项目、合作记录和合作方不能为空")
+		return
+	}
+	if platform == "" {
+		writeError(w, http.StatusOK, 10001, "请选择支持的平台")
+		return
+	}
+	if !validEditableContentURL(postURL) {
+		writeError(w, http.StatusOK, 10001, "请输入以 http:// 或 https:// 开头的有效内容链接")
+		return
+	}
+
+	var storedProjectID, storedResourceID int
+	var finalLink, deliverableLinks, storedContentPlatform string
+	err := a.DB().QueryRowContext(r.Context(),
+		`select c.project_id, c.resource_id, c.final_link, ifnull(c.deliverable_links, ''),
+		        coalesce(nullif(c.content_platform, ''), r.platform, 'Website')
+		   from biz_cooperations c
+		   left join biz_resources r on r.id = c.resource_id
+		  where c.id = ? limit 1`,
+		cooperationID,
+	).Scan(&storedProjectID, &storedResourceID, &finalLink, &deliverableLinks, &storedContentPlatform)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusOK, 10004, "合作内容不存在")
+		return
+	}
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if storedProjectID != projectID || storedResourceID != resourceID {
+		writeError(w, http.StatusOK, 10003, "该合作内容不属于当前项目")
+		return
+	}
+
+	oldPostURL := finalLink
+	oldPostPlatform := ""
+	if postID > 0 {
+		err = a.DB().QueryRowContext(r.Context(),
+			`select post_url, platform
+			   from biz_resource_platform_posts
+			  where id = ? and resource_id = ?
+			  limit 1`,
+			postID, resourceID,
+		).Scan(&oldPostURL, &oldPostPlatform)
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusOK, 10004, "内容记录不存在")
+			return
+		}
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
+
+	remoteCoverURL := ""
+	localCoverURL := ""
+	previewWarning := ""
+	if platform == "Website" {
+		localCoverURL, previewWarning = captureWebsiteScreenshot(
+			r.Context(),
+			resourceID,
+			cooperationID,
+			postURL,
+		)
+	}
+
+	tx, err := a.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	defer tx.Rollback()
+
+	nextDeliverableLinks := replaceCooperationContentURL(deliverableLinks, oldPostURL, postURL)
+	contentChanged := normalizedProjectContentURL(oldPostURL) != normalizedProjectContentURL(postURL) ||
+		normalizeEditableContentPlatform(storedContentPlatform) != platform
+	_, err = tx.ExecContext(r.Context(),
+		`update biz_cooperations
+		    set final_link = ?, deliverable_links = ?, content_platform = ?,
+		        content_cover_url = ?, content_cover_remote_url = ?,
+		        views = if(?, 0, views), impressions = if(?, 0, impressions),
+		        engagement_count = if(?, 0, engagement_count),
+		        comments_count = if(?, 0, comments_count)
+		  where id = ? and project_id = ? and resource_id = ?`,
+		postURL, nextDeliverableLinks, platform, localCoverURL, remoteCoverURL,
+		contentChanged, contentChanged, contentChanged, contentChanged,
+		cooperationID, projectID, resourceID,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+
+	if postID > 0 {
+		platformOrURLChanged := !strings.EqualFold(strings.TrimSpace(oldPostPlatform), platform) ||
+			strings.TrimSpace(oldPostURL) != postURL
+		if platform == "Website" {
+			_, err = tx.ExecContext(r.Context(),
+				`update biz_resource_platform_posts
+				    set platform = ?, post_url = ?, platform_post_id = '',
+				        media_type = 'webpage', cover_url = ?, cover_remote_url = ?,
+				        title = if(?, '', title), description = if(?, '', description),
+				        published_at = if(?, null, published_at),
+				        duration_seconds = if(?, 0, duration_seconds),
+				        view_count = if(?, 0, view_count), like_count = if(?, 0, like_count),
+				        comment_count = if(?, 0, comment_count), share_count = if(?, 0, share_count),
+				        save_count = if(?, 0, save_count)
+				  where id = ? and resource_id = ?`,
+				platform, postURL, localCoverURL, remoteCoverURL,
+				contentChanged, contentChanged, contentChanged, contentChanged,
+				contentChanged, contentChanged, contentChanged, contentChanged, contentChanged,
+				postID, resourceID,
+			)
+		} else if platformOrURLChanged {
+			_, err = tx.ExecContext(r.Context(),
+				`update biz_resource_platform_posts
+				    set platform = ?, post_url = ?, platform_post_id = '',
+				        title = '', description = '', cover_url = '', cover_remote_url = '',
+				        published_at = null, duration_seconds = 0,
+				        view_count = 0, like_count = 0, comment_count = 0,
+				        share_count = 0, save_count = 0
+				  where id = ? and resource_id = ?`,
+				platform, postURL, postID, resourceID,
+			)
+		}
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if remoteCoverURL != "" {
+		go a.cacheProjectContentCover(cooperationID, resourceID, postID, remoteCoverURL)
+	}
+
+	writeOK(w, map[string]any{
+		"updated":         true,
+		"platform":        platform,
+		"postUrl":         postURL,
+		"coverUrl":        firstNonEmpty(remoteCoverURL, localCoverURL),
+		"coverRemoteUrl":  remoteCoverURL,
+		"coverLocalUrl":   localCoverURL,
+		"previewWarning":  previewWarning,
+		"cooperationId":   cooperationID,
+		"contentRecordId": postID,
+	})
+}
+
+func normalizedProjectContentURL(value string) string {
+	value = strings.TrimSpace(value)
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		return strings.ToLower(parsed.String())
+	}
+	return strings.ToLower(strings.TrimRight(value, "/"))
+}
+
+func (a *app) cacheProjectContentCover(cooperationID, resourceID int, postID int64, remoteCoverURL string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	localCoverURL := localizeResourceImage(
+		ctx,
+		resourceID,
+		fmt.Sprintf("project-content/%d", cooperationID),
+		remoteCoverURL,
+	)
+	if localCoverURL == "" || localCoverURL == remoteCoverURL {
+		return
+	}
+	_, _ = a.DB().ExecContext(ctx,
+		`update biz_cooperations
+		    set content_cover_url = ?
+		  where id = ? and content_cover_remote_url = ?`,
+		localCoverURL, cooperationID, remoteCoverURL,
+	)
+	if postID > 0 {
+		_, _ = a.DB().ExecContext(ctx,
+			`update biz_resource_platform_posts
+			    set cover_url = ?
+			  where id = ? and resource_id = ? and cover_remote_url = ?`,
+			localCoverURL, postID, resourceID, remoteCoverURL,
+		)
+	}
 }
 
 func (a *app) updateBusinessProjectStatus(w http.ResponseWriter, r *http.Request) {

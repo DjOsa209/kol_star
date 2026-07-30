@@ -1,5 +1,5 @@
 -- kol-admin database bootstrap bundle
--- Generated from backend/migrations/001_init.sql through 023_remote_content_image_urls.sql.
+-- Generated from backend/migrations/001_init.sql through 029_editable_project_content.sql.
 -- Execute with: mysql -uroot -p < migrations/all.sql
 
 
@@ -228,7 +228,7 @@ create table if not exists biz_resource_tags (
 create table if not exists biz_projects (
   id bigint primary key auto_increment,
   name varchar(128) not null,
-  target_market varchar(128) not null default '',
+  target_market text null,
   language varchar(64) not null default '',
   platform varchar(64) not null default '',
   campaign_type varchar(64) not null default '',
@@ -981,7 +981,7 @@ use kol_admin;
 
 update sys_menus
 set
-  title = '营销项目执行中心',
+  title = '项目管理',
   icon = 'ri:flow-chart'
 where id = 903 or path = '/business/projects';
 
@@ -1004,7 +1004,7 @@ where id = 905 or path = '/business/dashboard';
 
 update sys_menus set
   parent_id = 900,
-  title = '营销项目执行中心',
+  title = '项目管理',
   path = '/business/projects',
   name = 'BusinessProjects',
   component = 'business/projects/index',
@@ -1290,7 +1290,7 @@ drop procedure if exists add_standard_import_column;
 update biz_resources
    set market = if(market = '', country, market),
        audience_size = if(audience_size = 0, followers, audience_size),
-       audience_size_unit = if(audience_size_unit = '', if(resource_type = '媒体', 'UVM', 'Followers'), audience_size_unit)
+       audience_size_unit = if(audience_size_unit = '', if(resource_type = '媒体', 'UMV', 'Followers'), audience_size_unit)
  where market = '' or audience_size = 0 or audience_size_unit = '';
 
 -- ============================================================
@@ -1383,13 +1383,13 @@ on duplicate key update
   source = '系统计算',
   sort_order = values(sort_order);
 
--- 当前阶段媒体的 UVM 数据源只做预置，暂不调用 Similarweb。
+-- Website 媒体的 UMV 数据源使用 Similarweb。
 update biz_resources
-   set reference_source = 'Similarweb（预置，未接入）'
+   set reference_source = 'Similarweb'
  where resource_type = '媒体'
    and trim(reference_source) = '';
 
--- 同名合作方视为同一主体；按资源类型汇总多个平台账号的粉丝数/UVM，
+-- 同名合作方视为同一主体；达人汇总粉丝数，媒体使用 UMV，
 -- 再将合计值和统一层级回写到该主体的每个平台资源记录。
 update biz_resources r
 join (
@@ -1398,7 +1398,10 @@ join (
            when trim(name) = '' then concat('__resource__', id)
            else lower(trim(name))
          end as collaborator_key,
-         sum(greatest(followers, 0)) as total_audience
+         case
+           when resource_type = '媒体' then max(greatest(audience_size, 0))
+           else sum(greatest(followers, 0))
+         end as total_audience
     from biz_resources
    group by resource_type,
             case
@@ -1412,7 +1415,7 @@ join (
        else lower(trim(r.name))
      end
 set r.audience_size = totals.total_audience,
-    r.audience_size_unit = if(r.resource_type = '媒体', 'UVM', 'Followers'),
+    r.audience_size_unit = if(r.resource_type = '媒体', 'UMV', 'Followers'),
     r.tier = case
       when totals.total_audience <= 0 then ''
       when totals.total_audience > 1000000 then '头部'
@@ -1485,3 +1488,136 @@ delimiter ;
 call add_tiktok_post_metrics_column();
 
 drop procedure if exists add_tiktok_post_metrics_column;
+
+-- ============================================================
+-- Source: migrations/025_project_multi_market.sql
+-- ============================================================
+
+use kol_admin;
+
+alter table biz_projects
+  modify column target_market text null;
+
+-- ============================================================
+-- Source: migrations/026_rename_project_management.sql
+-- ============================================================
+
+use kol_admin;
+
+update sys_menus
+set title = '项目管理'
+where id = 903 or path = '/business/projects';
+
+-- ============================================================
+-- Source: migrations/027_x_website_media_metrics.sql
+-- ============================================================
+
+use kol_admin;
+
+drop procedure if exists add_media_metric_column;
+
+delimiter $$
+
+create procedure add_media_metric_column(
+  in p_column_name varchar(64),
+  in p_column_definition text
+)
+begin
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = database()
+       and table_name = 'biz_resources'
+       and column_name = p_column_name
+  ) then
+    set @sql = concat('alter table biz_resources add column ', p_column_definition);
+    prepare stmt from @sql;
+    execute stmt;
+    deallocate prepare stmt;
+  end if;
+end$$
+
+delimiter ;
+
+call add_media_metric_column('avatar_remote_url', 'avatar_remote_url varchar(1024) not null default '''' after avatar_url');
+call add_media_metric_column('umv_month', 'umv_month varchar(7) not null default '''' after audience_size_unit');
+call add_media_metric_column('umv_country', 'umv_country varchar(8) not null default '''' after umv_month');
+call add_media_metric_column('umv_web_source', 'umv_web_source varchar(16) not null default '''' after umv_country');
+call add_media_metric_column('umv_cross_device_deduplicated', 'umv_cross_device_deduplicated tinyint not null default 0 after umv_web_source');
+call add_media_metric_column('monthly_visits', 'monthly_visits bigint not null default 0 after umv_cross_device_deduplicated');
+call add_media_metric_column('monthly_page_views', 'monthly_page_views bigint not null default 0 after monthly_visits');
+call add_media_metric_column('website_bounce_rate', 'website_bounce_rate decimal(8, 4) not null default 0 after monthly_page_views');
+call add_media_metric_column('provider_updated_at', 'provider_updated_at datetime null after website_bounce_rate');
+
+drop procedure if exists add_media_metric_column;
+
+update biz_resources
+   set audience_size = if(audience_size > 0, audience_size, followers),
+       audience_size_unit = 'UMV',
+       followers = 0
+ where resource_type = '媒体';
+
+insert ignore into biz_platform_sync_settings
+  (platform, enabled, sync_profile, sync_posts, post_limit)
+values
+  ('X', 1, 1, 1, 20),
+  ('Website', 1, 1, 0, 1);
+
+-- ============================================================
+-- Source: migrations/028_tikhub_linkedin_reddit.sql
+-- ============================================================
+
+use kol_admin;
+
+insert ignore into biz_platform_sync_settings
+  (platform, enabled, sync_profile, sync_posts, post_limit)
+values
+  ('Facebook', 0, 1, 1, 20),
+  ('LinkedIn', 1, 1, 1, 20),
+  ('Reddit', 1, 1, 1, 20);
+
+-- ============================================================
+-- Source: migrations/029_editable_project_content.sql
+-- ============================================================
+
+use kol_admin;
+
+drop procedure if exists add_project_content_column;
+
+delimiter $$
+
+create procedure add_project_content_column(
+  in p_column_name varchar(64),
+  in p_column_definition text
+)
+begin
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = database()
+       and table_name = 'biz_cooperations'
+       and column_name = p_column_name
+  ) then
+    set @sql = concat('alter table biz_cooperations add column ', p_column_definition);
+    prepare stmt from @sql;
+    execute stmt;
+    deallocate prepare stmt;
+  end if;
+end$$
+
+delimiter ;
+
+call add_project_content_column(
+  'content_platform',
+  'content_platform varchar(32) not null default '''' after cooperation_type'
+);
+call add_project_content_column(
+  'content_cover_url',
+  'content_cover_url text null after final_link'
+);
+call add_project_content_column(
+  'content_cover_remote_url',
+  'content_cover_remote_url text null after content_cover_url'
+);
+
+drop procedure if exists add_project_content_column;

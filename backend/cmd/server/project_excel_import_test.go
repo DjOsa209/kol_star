@@ -86,11 +86,11 @@ func TestParseExcelContentSheetAcceptsChangedInstructionCopy(t *testing.T) {
 	sheet := book.GetSheetName(0)
 	writeStandardImportHeaders(t, book, sheet)
 	for cell, value := range map[string]string{
-		"F3": "KOL：粉丝数、订阅数；\n\n媒体：月独立访客（UVM,unique visitors per month ）、月访问量；",
+		"F3": "KOL：粉丝数、订阅数；\n\n媒体：月独立访客（UMV,unique visitors per month ）、月访问量；",
 		"G3": "头部\n腰部\n尾部",
 		"L3": "播放量\n曝光量\n阅读量",
 		"M3": "总互动量（点赞、评论、分享、收藏）",
-		"F4": "填写纯数字，不带K/M。根据资源类型自动识别对应指标（Followers、UVM、Members等）。",
+		"F4": "填写纯数字，不带K/M。根据资源类型自动识别对应指标（Followers、UMV、Members等）。",
 		"G4": "/",
 		"L4": "优先填写实际播放量（Views）",
 		"M4": "填写总互动数（Likes + Comments + Shares + Saves）",

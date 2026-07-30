@@ -70,7 +70,11 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		        engagement_rate as engagementRate, avg_views as avgViews,
 		        content_types as contentTypes, platform_url as platformUrl,
 		        platform_user_id as platformUserId, platform_handle as platformHandle,
-		        avatar_url as avatarUrl, total_views as totalViews, video_count as videoCount,
+		        avatar_url as avatarUrl, avatar_remote_url as avatarRemoteUrl,
+		        umv_month as umvMonth, umv_country as umvCountry, umv_web_source as umvWebSource,
+		        monthly_visits as monthlyVisits, monthly_page_views as monthlyPageViews,
+		        website_bounce_rate as websiteBounceRate,
+		        total_views as totalViews, video_count as videoCount,
 		        last_sync_status as lastSyncStatus, last_sync_error as lastSyncError,
 		        cast(unix_timestamp(last_sync_at) * 1000 as unsigned) as lastSyncAt,
 		        score, level, risk_level as riskLevel, notes,
@@ -94,7 +98,7 @@ func (a *app) createBusinessResource(w http.ResponseWriter, r *http.Request) {
 	resourceType := str(body, "resourceType")
 	referenceSource := str(body, "referenceSource")
 	if resourceType == "媒体" && strings.TrimSpace(referenceSource) == "" {
-		referenceSource = "Similarweb（预置，未接入）"
+		referenceSource = "Similarweb"
 	}
 	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
@@ -106,15 +110,17 @@ func (a *app) createBusinessResource(w http.ResponseWriter, r *http.Request) {
 		`insert into biz_resources
 		 (name, resource_type, media_outlet, tier, country, region, city, language, platform,
 		  industry, category, title, contact, owner, region_team, reference_source,
-		  shipping_address, status, followers, engagement_rate, avg_views, content_types,
+		  shipping_address, status, followers, audience_size, audience_size_unit, engagement_rate, avg_views, content_types,
 		  platform_url, website, score, level, risk_level, notes)
-		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		str(body, "name"), resourceType, str(body, "mediaOutlet"), "",
 		str(body, "country"), str(body, "region"), str(body, "city"), str(body, "language"),
 		str(body, "platform"), str(body, "industry"), str(body, "category"), str(body, "title"),
 		str(body, "contact"), str(body, "owner"), str(body, "regionTeam"), referenceSource,
 		str(body, "shippingAddress"), defaultString(str(body, "status"), "可合作"),
-		intField(body, "followers"), floatField(body, "engagementRate"), intField(body, "avgViews"),
+		map[bool]int{true: 0, false: intField(body, "followers")}[resourceType == "媒体"],
+		intField(body, "followers"), map[bool]string{true: "UMV", false: "Followers"}[resourceType == "媒体"],
+		floatField(body, "engagementRate"), intField(body, "avgViews"),
 		str(body, "contentTypes"), str(body, "platformUrl"), str(body, "website"),
 		intField(body, "score"), calcLevel(intField(body, "score")),
 		defaultString(str(body, "riskLevel"), "低"), str(body, "notes"),
@@ -153,7 +159,7 @@ func (a *app) updateBusinessResource(w http.ResponseWriter, r *http.Request) {
 	resourceType := str(body, "resourceType")
 	referenceSource := str(body, "referenceSource")
 	if resourceType == "媒体" && strings.TrimSpace(referenceSource) == "" {
-		referenceSource = "Similarweb（预置，未接入）"
+		referenceSource = "Similarweb"
 	}
 	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
@@ -166,6 +172,7 @@ func (a *app) updateBusinessResource(w http.ResponseWriter, r *http.Request) {
 		  name=?, resource_type=?, media_outlet=?, tier=?, country=?, region=?, city=?,
 		  language=?, platform=?, industry=?, category=?, title=?, contact=?, owner=?,
 		  region_team=?, reference_source=?, shipping_address=?, status=?, followers=?,
+		  audience_size=?, audience_size_unit=?,
 		  engagement_rate=?, avg_views=?, content_types=?, platform_url=?, website=?,
 		  score=?, level=?, risk_level=?, notes=?
 		 where id=?`,
@@ -174,7 +181,9 @@ func (a *app) updateBusinessResource(w http.ResponseWriter, r *http.Request) {
 		str(body, "platform"), str(body, "industry"), str(body, "category"), str(body, "title"),
 		str(body, "contact"), str(body, "owner"), str(body, "regionTeam"), referenceSource,
 		str(body, "shippingAddress"), defaultString(str(body, "status"), "可合作"),
-		intField(body, "followers"), floatField(body, "engagementRate"), intField(body, "avgViews"),
+		map[bool]int{true: 0, false: intField(body, "followers")}[resourceType == "媒体"],
+		intField(body, "followers"), map[bool]string{true: "UMV", false: "Followers"}[resourceType == "媒体"],
+		floatField(body, "engagementRate"), intField(body, "avgViews"),
 		str(body, "contentTypes"), str(body, "platformUrl"), str(body, "website"),
 		intField(body, "score"), calcLevel(intField(body, "score")),
 		defaultString(str(body, "riskLevel"), "低"), str(body, "notes"), id,
@@ -895,8 +904,8 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	if videoCount > 0 {
 		avgViews = totalViews / videoCount
 	}
-	avatarURL := bestThumbnailURL(item.Snippet.Thumbnails)
-	avatarURL = localizeResourceImage(ctx, id, "avatar", avatarURL)
+	avatarRemoteURL := bestThumbnailURL(item.Snippet.Thumbnails)
+	avatarURL := localizeResourceImage(ctx, id, "avatar", avatarRemoteURL)
 	resourceName := syncedResourceName(platformURL, item.Snippet.Title)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
@@ -904,11 +913,12 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		  country = if(country = '' and ? <> '', ?, country),
 		  followers = ?, total_views = ?, video_count = ?, avg_views = ?,
 		  platform_user_id = ?, platform_handle = ?, avatar_url = ?,
+		  avatar_remote_url = if(? <> '', ?, avatar_remote_url),
 		  last_sync_at = now()
 		 where id = ?`,
 		resourceName, resourceName, item.Snippet.Country, item.Snippet.Country,
 		followers, totalViews, videoCount, avgViews,
-		item.ID, item.Snippet.CustomURL, avatarURL, id,
+		item.ID, item.Snippet.CustomURL, avatarURL, avatarRemoteURL, avatarRemoteURL, id,
 	)
 	if err != nil {
 		return nil, err
@@ -1378,11 +1388,12 @@ func (a *app) persistInstagramUser(ctx context.Context, resourceID int, user ins
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
 		  followers = ?, video_count = ?, engagement_rate = if(? > 0, ?, engagement_rate),
-		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
+		  platform_user_id = ?, platform_handle = ?, avatar_url = ?,
+		  avatar_remote_url = if(? <> '', ?, avatar_remote_url), last_sync_status = '成功',
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		displayName, displayName, user.FollowersCount, user.MediaCount, engagementRate, engagementRate,
-		user.ID, user.Username, avatarURL, resourceID,
+		user.ID, user.Username, avatarURL, user.ProfilePictureURL, user.ProfilePictureURL, resourceID,
 	)
 	if err != nil {
 		return nil, err
@@ -1475,12 +1486,13 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 		  name = if(? <> '', ?, name),
 		  followers = ?, total_views = ?, video_count = ?, avg_views = ?,
 		  engagement_rate = if(? > 0, ?, engagement_rate),
-		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
+		  platform_user_id = ?, platform_handle = ?, avatar_url = ?,
+		  avatar_remote_url = if(? <> '', ?, avatar_remote_url), last_sync_status = '成功',
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		resourceName, resourceName, user.FollowerCount, recentViews, user.VideoCount, avgViews,
 		engagementRate, engagementRate,
-		firstNonEmpty(user.SecUID, user.UserID), user.Username, avatarURL, id,
+		firstNonEmpty(user.SecUID, user.UserID), user.Username, avatarURL, user.AvatarURL, user.AvatarURL, id,
 	)
 	if err != nil {
 		return nil, err
@@ -1909,12 +1921,13 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, pr
 		  followers = ?, total_views = ?, avg_views = ?, video_count = ?,
 		  engagement_rate = if(? > 0, ?, engagement_rate),
 		  active_30d = ?, active_90d = ?, post_frequency = if(? <> '', ?, post_frequency),
-		  platform_user_id = ?, platform_handle = ?, avatar_url = ?, last_sync_status = '成功',
+		  platform_user_id = ?, platform_handle = ?, avatar_url = ?,
+		  avatar_remote_url = if(? <> '', ?, avatar_remote_url), last_sync_status = '成功',
 		  last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		resourceName, resourceName, user.FollowerCount, totalViews, avgViews, user.MediaCount, engagementRate, engagementRate,
 		active30D, active90D, postFrequency, postFrequency,
-		user.ID, user.Username, avatarURL, resourceID,
+		user.ID, user.Username, avatarURL, user.AvatarURL, user.AvatarURL, resourceID,
 	)
 	if err != nil {
 		return nil, err
@@ -3132,12 +3145,13 @@ func (a *app) businessProjects(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) createBusinessProject(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
+	targetMarket := projectTargetMarketValue(body["targetMarket"])
 	result, err := a.DB().ExecContext(r.Context(),
 		`insert into biz_projects
 		 (name, target_market, language, platform, campaign_type, budget, currency, status, owner, brief,
 		  cycle_start_date, cycle_end_date, report_update_date)
 		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		str(body, "name"), str(body, "targetMarket"), str(body, "language"), str(body, "platform"),
+		str(body, "name"), targetMarket, str(body, "language"), str(body, "platform"),
 		str(body, "campaignType"), floatField(body, "budget"), defaultString(str(body, "currency"), "USD"),
 		defaultString(str(body, "status"), "需求创建"), str(body, "owner"), str(body, "brief"),
 		nullableDate(str(body, "cycleStartDate")), nullableDate(str(body, "cycleEndDate")),
@@ -3186,7 +3200,7 @@ func (a *app) importBusinessProjects(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusOK, 10001, "项目名称不能为空")
 			return
 		}
-		targetMarket := strings.TrimSpace(str(row, "targetMarket"))
+		targetMarket := projectTargetMarketValue(row["targetMarket"])
 		var existingID int
 		err := tx.QueryRowContext(r.Context(),
 			`select id from biz_projects where name = ? and target_market = ? limit 1`,
@@ -3231,13 +3245,14 @@ func (a *app) updateBusinessProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusOK, 10001, "项目 id 不能为空")
 		return
 	}
+	targetMarket := projectTargetMarketValue(body["targetMarket"])
 	_, err := a.DB().ExecContext(r.Context(),
 		`update biz_projects set
-		  name = ?, target_market = ?, language = ?, platform = ?, campaign_type = ?,
+		  name = ?, target_market = ?, language = ?, campaign_type = ?,
 		  budget = ?, currency = ?, status = ?, owner = ?, brief = ?,
 		  cycle_start_date = ?, cycle_end_date = ?, report_update_date = ?
 		 where id = ?`,
-		str(body, "name"), str(body, "targetMarket"), str(body, "language"), str(body, "platform"),
+		str(body, "name"), targetMarket, str(body, "language"),
 		str(body, "campaignType"), floatField(body, "budget"), defaultString(str(body, "currency"), "USD"),
 		defaultString(str(body, "status"), "需求创建"), str(body, "owner"), str(body, "brief"),
 		nullableDate(str(body, "cycleStartDate")), nullableDate(str(body, "cycleEndDate")),
@@ -3248,6 +3263,38 @@ func (a *app) updateBusinessProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeOK(w, map[string]any{"updated": true})
+}
+
+func projectTargetMarketValue(value any) string {
+	var values []string
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			values = append(values, fmt.Sprint(item))
+		}
+	case []string:
+		values = append(values, typed...)
+	default:
+		values = strings.FieldsFunc(fmt.Sprint(value), func(r rune) bool {
+			switch r {
+			case ',', '，', ';', '；', '、', '|':
+				return true
+			default:
+				return false
+			}
+		})
+	}
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "<nil>" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return strings.Join(result, ",")
 }
 
 func (a *app) deleteBusinessProject(w http.ResponseWriter, r *http.Request) {
@@ -3336,7 +3383,8 @@ func (a *app) businessProjectResourceOptions(w http.ResponseWriter, r *http.Requ
 		        r.platform, r.platform_handle as platformHandle, r.platform_url as platformUrl,
 		        r.country, r.market, r.category, r.followers, r.audience_size as audienceSize,
 		        r.audience_size_unit as audienceSizeUnit, r.tier as collaboratorTier,
-		        r.contact as primaryContact, r.avatar_url as resourceAvatarUrl
+		        r.contact as primaryContact, r.avatar_url as resourceAvatarUrl,
+		        r.avatar_remote_url as resourceAvatarRemoteUrl, r.umv_month as umvMonth
 		   from biz_resources r
 		  where not exists (
 		    select 1 from biz_project_resources relation
@@ -3393,16 +3441,20 @@ func (a *app) updateBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		`update biz_resources
 		    set name = ?, resource_type = ?, category = ?,
 		        country = ?, market = ?, platform = ?, platform_url = ?,
-		        contact = ?, followers = ?,
-		        audience_size_unit = if(? = '媒体', 'UVM', 'Followers'),
+		        contact = ?,
+		        followers = if(? = '媒体', 0, ?),
+		        audience_size = if(? = '媒体', ?, ?),
+		        audience_size_unit = if(? = '媒体', 'UMV', 'Followers'),
 		        reference_source = case
-		          when ? = '媒体' and trim(reference_source) = '' then 'Similarweb（预置，未接入）'
+		          when ? = '媒体' and trim(reference_source) = '' then 'Similarweb'
 		          else reference_source
 		        end
 		  where id = ?`,
 		name, resourceType, str(body, "category"),
 		str(body, "market"), str(body, "market"), str(body, "platform"), str(body, "platformUrl"),
-		str(body, "primaryContact"), intField(body, "followers"),
+		str(body, "primaryContact"),
+		resourceType, intField(body, "followers"),
+		resourceType, intField(body, "audienceSize"), intField(body, "followers"),
 		resourceType, resourceType, resourceID,
 	)
 	if err != nil {
@@ -3711,6 +3763,7 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusOK, 10001, "项目 id 不能为空")
 		return
 	}
+	incremental := boolField(body, "incremental")
 	rows, ok := body["rows"].([]any)
 	if !ok || len(rows) == 0 {
 		writeError(w, http.StatusOK, 10001, "导入数据不能为空")
@@ -3723,14 +3776,27 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback()
+	var projectExists int
+	if err := tx.QueryRowContext(r.Context(), `select count(*) from biz_projects where id = ?`, projectID).Scan(&projectExists); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if projectExists == 0 {
+		writeError(w, http.StatusOK, 10002, "选择的项目不存在")
+		return
+	}
 
 	batchID := fmt.Sprintf("IMP%s", time.Now().Format("20060102150405"))
 	imported := 0
 	importedContent := 0
 	importedProfiles := 0
 	createdResources := 0
+	createdCooperations := 0
 	updatedCooperations := 0
+	skippedCooperations := 0
+	matchedResourceIDs := make(map[int64]bool)
 	resourceIDs := make(map[int64]bool)
+	seenRows := make(map[string]bool)
 	var errors []map[string]any
 	for index, raw := range rows {
 		row, ok := raw.(map[string]any)
@@ -3754,26 +3820,47 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 		}
-		resourceID, created, err := upsertImportResource(r.Context(), tx, row)
+		dedupeKey, err := importCooperationRowKey(row)
+		if err != nil {
+			errors = append(errors, map[string]any{"row": intField(row, "rowNo"), "message": err.Error()})
+			continue
+		}
+		if seenRows[dedupeKey] {
+			skippedCooperations++
+			continue
+		}
+		seenRows[dedupeKey] = true
+		resourceID, created, err := upsertImportResource(r.Context(), tx, row, incremental)
 		if err != nil {
 			errors = append(errors, map[string]any{"row": index + 2, "message": err.Error()})
 			continue
 		}
 		if created {
 			createdResources++
+			resourceIDs[resourceID] = true
+		} else {
+			matchedResourceIDs[resourceID] = true
+			if !incremental {
+				resourceIDs[resourceID] = true
+			}
 		}
-		resourceIDs[resourceID] = true
-		if err := ensureImportProjectResource(r.Context(), tx, projectID, resourceID); err != nil {
+		if err := ensureImportProjectResource(r.Context(), tx, projectID, resourceID, incremental); err != nil {
 			errors = append(errors, map[string]any{"row": index + 2, "message": err.Error()})
 			continue
 		}
-		createdCooperation, err := insertImportCooperation(r.Context(), tx, projectID, resourceID, batchID, row)
+		action, err := insertImportCooperation(r.Context(), tx, projectID, resourceID, batchID, row, incremental)
 		if err != nil {
 			errors = append(errors, map[string]any{"row": index + 2, "message": err.Error()})
 			continue
 		}
-		if !createdCooperation {
+		if action == importCooperationSkipped {
+			skippedCooperations++
+			continue
+		}
+		if action == importCooperationUpdated {
 			updatedCooperations++
+		} else {
+			createdCooperations++
 		}
 		imported++
 		if hasPublishedLink {
@@ -3783,7 +3870,7 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if imported == 0 {
+	if imported == 0 && skippedCooperations == 0 {
 		writeError(w, http.StatusOK, 10002, "没有可导入的有效数据")
 		return
 	}
@@ -3795,30 +3882,44 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 	for resourceID := range resourceIDs {
 		importedResourceIDs = append(importedResourceIDs, int(resourceID))
 	}
-	go func() {
-		profileSynced, profileWarnings := a.syncImportedResources(context.Background(), importedResourceIDs)
-		synced, warnings := a.syncImportedCooperations(context.Background(), batchID)
-		warnings = append(profileWarnings, warnings...)
-		if len(warnings) > 0 {
-			log.Printf("import batch %s platform sync completed: profiles=%d content=%d warnings=%s", batchID, profileSynced, synced, redactSensitiveText(strings.Join(warnings, "; ")))
-			return
-		}
-		log.Printf("import batch %s platform sync completed: profiles=%d content=%d", batchID, profileSynced, synced)
-	}()
+	if imported > 0 {
+		go func() {
+			profileSynced, profileWarnings := a.syncImportedResources(context.Background(), importedResourceIDs)
+			synced, warnings := a.syncImportedCooperations(context.Background(), batchID)
+			warnings = append(profileWarnings, warnings...)
+			if len(warnings) > 0 {
+				log.Printf("import batch %s platform sync completed: profiles=%d content=%d warnings=%s", batchID, profileSynced, synced, redactSensitiveText(strings.Join(warnings, "; ")))
+				return
+			}
+			log.Printf("import batch %s platform sync completed: profiles=%d content=%d", batchID, profileSynced, synced)
+		}()
+	}
 	writeOK(w, map[string]any{
 		"batchId":             batchID,
+		"incremental":         incremental,
 		"imported":            imported,
 		"importedContent":     importedContent,
 		"importedProfiles":    importedProfiles,
+		"createdCooperations": createdCooperations,
 		"updatedCooperations": updatedCooperations,
+		"skippedCooperations": skippedCooperations,
+		"matchedResources":    len(matchedResourceIDs),
 		"failed":              len(errors),
 		"createdResources":    createdResources,
-		"platformSyncStarted": true,
+		"platformSyncStarted": imported > 0,
 		"errors":              errors,
 	})
 }
 
-func ensureImportProjectResource(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64) error {
+func ensureImportProjectResource(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64, preserveExisting bool) error {
+	if preserveExisting {
+		_, err := tx.ExecContext(ctx,
+			`insert ignore into biz_project_resources (project_id, resource_id, status, source)
+			 values (?, ?, '已关联', '表格增量导入')`,
+			projectID, resourceID,
+		)
+		return err
+	}
 	_, err := tx.ExecContext(ctx,
 		`insert into biz_project_resources (project_id, resource_id, status, source)
 		 values (?, ?, '已关联', '表格导入')
@@ -3828,7 +3929,7 @@ func ensureImportProjectResource(ctx context.Context, tx *sql.Tx, projectID int,
 	return err
 }
 
-func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (int64, bool, error) {
+func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any, preserveExisting bool) (int64, bool, error) {
 	profileURL, err := normalizeImportedProfileLink(str(row, "influencer"))
 	if err != nil {
 		return 0, false, err
@@ -3848,7 +3949,7 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (
 	primaryContact := cleanImportString(str(row, "primaryContact"))
 	audienceUnit := "Followers"
 	if resourceType == "媒体" {
-		audienceUnit = "UVM"
+		audienceUnit = "UMV"
 	}
 	website := ""
 	if platform == "Website" || resourceType == "媒体" {
@@ -3858,9 +3959,20 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (
 
 	var id int64
 	err = tx.QueryRowContext(ctx,
-		`select id from biz_resources where lower(trim(platform_url)) = lower(trim(?)) limit 1`,
+		`select id from biz_resources
+		  where lower(trim(trailing '/' from platform_url)) = lower(trim(trailing '/' from ?))
+		  limit 1`,
 		profileURL,
 	).Scan(&id)
+	if err == sql.ErrNoRows {
+		err = tx.QueryRowContext(ctx,
+			`select id from biz_resources
+			  where lower(trim(platform)) = lower(?)
+			    and lower(trim(leading '@' from platform_handle)) = lower(?)
+			  limit 1`,
+			platform, platformHandle,
+		).Scan(&id)
+	}
 	if err == sql.ErrNoRows {
 		err = tx.QueryRowContext(ctx,
 			`select id from biz_resources where name = ? and platform = ? limit 1`,
@@ -3868,6 +3980,9 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (
 		).Scan(&id)
 	}
 	if err == nil {
+		if preserveExisting {
+			return id, false, nil
+		}
 		_, err = tx.ExecContext(ctx,
 			`update biz_resources set resource_type = ?, media_outlet = if(? <> '', ?, media_outlet),
 			 country = if(? <> '', ?, country), market = if(? <> '', ?, market), industry = if(? <> '', ?, industry),
@@ -3901,7 +4016,38 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any) (
 	return id, true, err
 }
 
-func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64, batchID string, row map[string]any) (bool, error) {
+type importCooperationAction string
+
+const (
+	importCooperationCreated importCooperationAction = "created"
+	importCooperationUpdated importCooperationAction = "updated"
+	importCooperationSkipped importCooperationAction = "skipped"
+)
+
+func importCooperationRowKey(row map[string]any) (string, error) {
+	profileURL, err := normalizeImportedProfileLink(str(row, "influencer"))
+	if err != nil {
+		return "", err
+	}
+	contentURL := ""
+	if rawLink := cleanImportString(str(row, "deliverableLinks")); rawLink != "" {
+		contentURL, err = normalizeImportedCooperationLink(rawLink)
+		if err != nil {
+			return "", err
+		}
+	}
+	return strings.ToLower(strings.Join([]string{
+		profileURL,
+		normalizeImportedPlatform(str(row, "platform"), profileURL),
+		contentURL,
+		defaultString(str(row, "cooperationType"), "内容合作"),
+		fmt.Sprintf("%.2f", floatField(row, "quoteAmount")),
+		cleanImportString(str(row, "owner")),
+		cleanImportString(str(row, "vendor")),
+	}, "|")), nil
+}
+
+func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64, batchID string, row map[string]any, incremental bool) (importCooperationAction, error) {
 	// views / engagement are system-owned fields and are populated only from
 	// contentUrl after the import transaction commits.
 	views := 0
@@ -3916,8 +4062,46 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 		var err error
 		link, err = normalizeImportedCooperationLink(rawLink)
 		if err != nil {
-			return false, err
+			return "", err
 		}
+	}
+	if incremental {
+		if link != "" {
+			var existingID int64
+			err := tx.QueryRowContext(ctx,
+				`select id from biz_cooperations
+				  where project_id = ? and resource_id = ?
+				    and lower(coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '')) = lower(?)
+				  limit 1`,
+				projectID, resourceID, link,
+			).Scan(&existingID)
+			if err == nil {
+				return importCooperationSkipped, nil
+			}
+			if err != sql.ErrNoRows {
+				return "", err
+			}
+		}
+		if link == "" {
+			_, err := tx.ExecContext(ctx,
+				`insert into biz_cooperations
+				 (project_id, resource_id, cooperation_type, owner, vendor, quote_amount, currency, status, deliverable_status,
+				  import_batch_id, notes)
+				 values (?, ?, ?, ?, ?, ?, 'USD', '邀约中', '未开始', ?, ?)`,
+				projectID, resourceID, cooperationType, owner, vendor, floatField(row, "quoteAmount"), batchID, notes,
+			)
+			return importCooperationCreated, err
+		}
+		_, err := tx.ExecContext(ctx,
+			`insert into biz_cooperations
+			 (project_id, resource_id, cooperation_type, owner, vendor, quote_amount, currency, status, deliverable_status,
+			  impressions, views, engagement_count, comments_count, release_date, deliverable_links,
+			  final_link, import_batch_id, notes)
+			 values (?, ?, ?, ?, ?, ?, 'USD', '已发布', '已完成', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			projectID, resourceID, cooperationType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
+			0, nil, link, link, batchID, notes,
+		)
+		return importCooperationCreated, err
 	}
 	if link == "" {
 		var existingID int64
@@ -3933,10 +4117,10 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 				`update biz_cooperations set cooperation_type = ?, owner = ?, vendor = ?, import_batch_id = ?, notes = ? where id = ?`,
 				cooperationType, owner, vendor, batchID, notes, existingID,
 			)
-			return false, err
+			return importCooperationUpdated, err
 		}
 		if err != sql.ErrNoRows {
-			return false, err
+			return "", err
 		}
 		_, err = tx.ExecContext(ctx,
 			`insert into biz_cooperations
@@ -3945,7 +4129,7 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 			 values (?, ?, ?, ?, ?, ?, 'USD', '邀约中', '未开始', ?, ?)`,
 			projectID, resourceID, cooperationType, owner, vendor, floatField(row, "quoteAmount"), batchID, notes,
 		)
-		return true, err
+		return importCooperationCreated, err
 	}
 	var existingID int64
 	var err error
@@ -3963,10 +4147,10 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 			cooperationType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
 			0, nil, link, link, batchID, notes, existingID,
 		)
-		return false, err
+		return importCooperationUpdated, err
 	}
 	if err != sql.ErrNoRows {
-		return false, err
+		return "", err
 	}
 	// The first published link completes a profile-only project association;
 	// later links remain separate content records for the same creator.
@@ -3985,10 +4169,10 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 			cooperationType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
 			0, nil, link, link, batchID, notes, existingID,
 		)
-		return false, err
+		return importCooperationUpdated, err
 	}
 	if err != sql.ErrNoRows {
-		return false, err
+		return "", err
 	}
 	_, err = tx.ExecContext(ctx,
 		`insert into biz_cooperations
@@ -3999,7 +4183,7 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 		projectID, resourceID, cooperationType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
 		0, nil, link, link, batchID, notes,
 	)
-	return true, err
+	return importCooperationCreated, err
 }
 
 func normalizeImportedCooperationLink(value string) (string, error) {

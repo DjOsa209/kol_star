@@ -37,6 +37,8 @@ Viper watches the config file and hot-reloads runtime settings. MySQL account/pa
 
 Platform-synced resource images are stored under `uploads/resource-images/{resourceId}/`. Each resource avatar and platform-post cover uses a stable filename, so later syncs replace the existing image instead of creating timestamped copies. Post covers keep their original remote URL in `cover_remote_url` and their local cache path in `cover_url`; APIs prefer the remote URL and expose the local path as a fallback. Image downloads retry temporary network failures and reuse `platform_apis.youtube_proxy_url` when it is configured.
 
+Website cooperation content uses a real 1280×720 page screenshot as its thumbnail. The server discovers Chrome or Chromium from `PATH`; set `KOL_CHROME_BIN=/absolute/path/to/chrome` when the browser binary is installed elsewhere. Social platforms such as TikTok, Instagram, and YouTube continue to use cover images returned by their platform APIs and do not use webpage screenshots.
+
 Default seeded login:
 
 - username: `admin`

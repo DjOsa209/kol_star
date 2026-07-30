@@ -29,7 +29,7 @@ const fieldDefinitions = [
     key: "collaboratorTier",
     label: "层级",
     description:
-      "系统按同名合作方的多平台粉丝数或媒体 UVM 合计自动分级：头部 > 100 万，腰部 10 万–100 万，尾部 < 10 万。",
+      "系统按同名合作方的多平台粉丝数或媒体月独立访客（UMV）自动分级：头部 > 100 万，腰部 10 万–100 万，尾部 < 10 万。",
     icon: "ri:bar-chart-grouped-line",
     readonly: true
   },

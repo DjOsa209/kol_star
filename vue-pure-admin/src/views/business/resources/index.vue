@@ -3,6 +3,8 @@ import { computed, reactive, ref, onMounted, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
+import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
+import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import {
   getResourceList,
   createResource,
@@ -31,8 +33,24 @@ const syncingAll = ref(false);
 const showSyncCard = ref(false);
 const syncDialogVisible = ref(false);
 const syncScope = ref<"all" | "selected">("all");
-const selectedSyncPlatforms = ref<string[]>(["YouTube", "Instagram", "TikTok"]);
-const syncPlatformOptions = ["YouTube", "Instagram", "TikTok"];
+const selectedSyncPlatforms = ref<string[]>([
+  "YouTube",
+  "Instagram",
+  "TikTok",
+  "X",
+  "LinkedIn",
+  "Reddit",
+  "Website"
+]);
+const syncPlatformOptions = [
+  "YouTube",
+  "Instagram",
+  "TikTok",
+  "X",
+  "LinkedIn",
+  "Reddit",
+  "Website"
+];
 const syncingResourceIds = reactive<Record<number, boolean>>({});
 const syncingCooperationIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
@@ -91,7 +109,8 @@ const defaultPlatformOptions = [
   "Website",
   "X",
   "Facebook",
-  "LinkedIn"
+  "LinkedIn",
+  "Reddit"
 ];
 const platformOptions = ref<string[]>(loadPlatformOptions());
 
@@ -302,19 +321,6 @@ function openUrl(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-function platformIcon(platform: unknown) {
-  const value = String(platform || "").toLowerCase();
-  if (value.includes("youtube")) return "ri:youtube-line";
-  if (value.includes("tiktok")) return "ri:tiktok-line";
-  if (value.includes("instagram")) return "ri:instagram-line";
-  if (value === "x" || value.includes("twitter")) return "ri:twitter-x-line";
-  if (value.includes("facebook")) return "ri:facebook-circle-line";
-  if (value.includes("website") || value.includes("newsletter")) {
-    return "ri:global-line";
-  }
-  return "ri:links-line";
-}
-
 function marketText(row: any) {
   const parts = [row.region, row.market || row.country || row.city]
     .map(item => displayText(item, ""))
@@ -335,6 +341,13 @@ function cooperationTypes(row: any) {
     .map(item => displayText(item.cooperationType, ""))
     .filter(Boolean);
   return Array.from(new Set(values)).join("、") || "-";
+}
+
+function resourceAudience(row: any) {
+  if (/媒体|media/i.test(String(row?.resourceType || ""))) {
+    return numberValue(row?.audienceSize);
+  }
+  return numberValue(row?.followers) || numberValue(row?.audienceSize);
 }
 
 function cooperationProjects(row: any) {
@@ -791,7 +804,9 @@ function openEdit(row: any) {
   resetForm();
   editingId.value = row.id;
   Object.assign(form, row);
-  form.followers = numberValue(row.followers);
+  form.followers = /媒体|media/i.test(String(row.resourceType || ""))
+    ? numberValue(row.audienceSize)
+    : numberValue(row.followers);
   form.avgViews = numberValue(row.avgViews);
   form.engagementRate = numberValue(row.engagementRate);
   form.score = numberValue(row.score);
@@ -1549,7 +1564,7 @@ onUnmounted(() => {
                 <span>{{ marketText(row) }}</span>
                 <span>{{ tierText(row) }}</span>
                 <span>
-                  <IconifyIconOnline :icon="platformIcon(row.platform)" />
+                  <PlatformIconBadge :platform="row.platform" />
                   {{ displayText(row.platform) }}
                 </span>
               </p>
@@ -1559,7 +1574,7 @@ onUnmounted(() => {
           <dl class="compact-base-metrics">
             <div>
               <dt>多平台粉丝 / 访问量</dt>
-              <dd>{{ compactCount(row.audienceSize || row.followers) }}</dd>
+              <dd>{{ compactCount(resourceAudience(row)) }}</dd>
             </div>
             <div>
               <dt>月均播放量</dt>
@@ -1573,7 +1588,7 @@ onUnmounted(() => {
 
           <div class="compact-cooperation">
             <div class="compact-cooperation__meta">
-              <span>{{ cooperationTypes(row) }}</span>
+              <CooperationTypeTags :value="cooperationTypes(row)" />
               <strong>{{ cooperationProjects(row) }}</strong>
             </div>
             <dl>
@@ -1730,7 +1745,7 @@ onUnmounted(() => {
                   <div>
                     <dt>多平台粉丝 / 访问量</dt>
                     <dd>
-                      {{ formatCount(row.audienceSize || row.followers) }}
+                      {{ formatCount(resourceAudience(row)) }}
                     </dd>
                   </div>
                   <div>
@@ -1942,7 +1957,7 @@ onUnmounted(() => {
           <template #default="{ row }">
             <div class="metric-cell">
               <strong>{{
-                formatCount(row.audienceSize || row.followers)
+                formatCount(resourceAudience(row))
               }}</strong>
               <span>本平台 {{ formatCount(row.followers) }}</span>
             </div>
@@ -2415,13 +2430,19 @@ onUnmounted(() => {
             <div>
               <strong>规模表现</strong>
               <span
-                >每条资源填写本平台粉丝数；媒体填写 UVM（Similarweb
-                暂为预置来源）。系统按同名合作方跨平台加和并自动分级</span
+                >达人填写本平台粉丝数；媒体只填写月独立访客（UMV），Website
+                数据可由 Similarweb 同步。系统自动计算对应层级</span
               >
             </div>
           </div>
           <div class="editor-form-grid editor-form-grid--metrics">
-            <el-form-item label="本平台粉丝数 / UVM">
+            <el-form-item
+              :label="
+                form.resourceType === '媒体'
+                  ? '月独立访客（UMV）'
+                  : '本平台粉丝数'
+              "
+            >
               <el-input-number
                 v-model="form.followers"
                 :min="0"
@@ -2969,7 +2990,7 @@ onUnmounted(() => {
             <span>多平台粉丝 / 访问</span>
             <strong>{{
               formatCount(
-                selectedResource.audienceSize || selectedResource.followers
+                resourceAudience(selectedResource)
               )
             }}</strong>
           </div>

@@ -43,3 +43,42 @@ func TestNormalizePlatformResourceName(t *testing.T) {
 		t.Fatalf("normalized name = %q", got)
 	}
 }
+
+func TestImportCooperationRowKeyNormalizesTrackingParameters(t *testing.T) {
+	base := map[string]any{
+		"influencer":       "https://www.instagram.com/creator/?utm_source=sheet",
+		"platform":         "Instagram",
+		"deliverableLinks": "https://www.instagram.com/p/POST/?utm_campaign=launch",
+		"cooperationType":  "付费合作",
+		"quoteAmount":      float64(1200),
+		"owner":            "Mia",
+		"vendor":           "Vendor A",
+	}
+	same := map[string]any{}
+	for key, value := range base {
+		same[key] = value
+	}
+	same["influencer"] = "https://www.instagram.com/creator/"
+	same["deliverableLinks"] = "https://www.instagram.com/p/POST/"
+
+	first, err := importCooperationRowKey(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := importCooperationRowKey(same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("equivalent rows must share a dedupe key:\n%s\n%s", first, second)
+	}
+
+	same["quoteAmount"] = float64(1500)
+	changed, err := importCooperationRowKey(same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == first {
+		t.Fatal("different cooperation data must not be treated as the same row")
+	}
+}

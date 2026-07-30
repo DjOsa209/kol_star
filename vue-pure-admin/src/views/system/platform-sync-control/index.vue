@@ -11,8 +11,24 @@ const saving = ref(false);
 const syncing = ref(false);
 const syncDialogVisible = ref(false);
 const syncScope = ref<"all" | "selected">("all");
-const selectedSyncPlatforms = ref<string[]>(["YouTube", "Instagram", "TikTok"]);
-const syncPlatformOptions = ["YouTube", "Instagram", "TikTok"];
+const selectedSyncPlatforms = ref<string[]>([
+  "YouTube",
+  "Instagram",
+  "TikTok",
+  "X",
+  "LinkedIn",
+  "Reddit",
+  "Website"
+]);
+const syncPlatformOptions = [
+  "YouTube",
+  "Instagram",
+  "TikTok",
+  "X",
+  "LinkedIn",
+  "Reddit",
+  "Website"
+];
 const apiConfigDirty = ref(false);
 const settings = ref<any[]>([]);
 const tokenStatus = ref<Record<string, any>>({});
@@ -31,7 +47,10 @@ const apiConfig = ref<any>({
   tiktokAccessTokenLast4: "",
   tikhubApiKey: "",
   tikhubApiKeyConfigured: false,
-  tikhubApiKeyLast4: ""
+  tikhubApiKeyLast4: "",
+  similarwebApiKey: "",
+  similarwebApiKeyConfigured: false,
+  similarwebApiKeyLast4: ""
 });
 const latestJob = ref<any>(null);
 const resourceCounts = ref<any[]>([]);
@@ -93,6 +112,7 @@ async function loadData() {
     apiConfig.value.instagramAccessToken = "";
     apiConfig.value.tiktokAccessToken = "";
     apiConfig.value.tikhubApiKey = "";
+    apiConfig.value.similarwebApiKey = "";
   }
   latestJob.value = data.latestJob || null;
   resourceCounts.value = data.resourceCounts || [];
@@ -105,7 +125,8 @@ async function save() {
     youtubeApiKey: apiConfig.value.youtubeApiKey,
     instagramAccessToken: apiConfig.value.instagramAccessToken,
     tiktokAccessToken: apiConfig.value.tiktokAccessToken,
-    tikhubApiKey: apiConfig.value.tikhubApiKey
+    tikhubApiKey: apiConfig.value.tikhubApiKey,
+    similarwebApiKey: apiConfig.value.similarwebApiKey
   };
   saving.value = true;
   const res = await savePlatformSyncControl({
@@ -121,6 +142,7 @@ async function save() {
     apiConfig.value.instagramAccessToken = typedSecrets.instagramAccessToken;
     apiConfig.value.tiktokAccessToken = typedSecrets.tiktokAccessToken;
     apiConfig.value.tikhubApiKey = typedSecrets.tikhubApiKey;
+    apiConfig.value.similarwebApiKey = typedSecrets.similarwebApiKey;
   }
 }
 
@@ -313,6 +335,24 @@ onUnmounted(stopPolling);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
+            <el-form-item label="Similarweb API Key">
+              <el-input
+                v-model="apiConfig.similarwebApiKey"
+                type="password"
+                show-password
+                placeholder="用于 Website 媒体 UMV，留空不修改"
+                @input="apiConfigDirty = true"
+              />
+              <div class="field-tip">
+                {{
+                  apiConfig.similarwebApiKeyConfigured
+                    ? `已配置，尾号 ${apiConfig.similarwebApiKeyLast4}`
+                    : "未配置"
+                }}
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
             <el-form-item label="YouTube 代理地址（可选）">
               <el-input
                 v-model="apiConfig.youtubeProxyUrl"
@@ -328,7 +368,7 @@ onUnmounted(stopPolling);
           <el-col :xs="24" :md="12">
             <el-form-item label="TikHub 接入说明">
               <el-input
-                model-value="TikTok 与 Instagram 抓取共用该 Key"
+                model-value="TikTok、Instagram、X、LinkedIn 与 Reddit 抓取共用该 Key"
                 disabled
               />
             </el-form-item>

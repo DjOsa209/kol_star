@@ -47,6 +47,7 @@ type PlatformAPIConfig struct {
 	InstagramUserID      string `mapstructure:"instagram_user_id"`
 	TikTokAccessToken    string `mapstructure:"tiktok_access_token"`
 	TikHubAPIKey         string `mapstructure:"tikhub_api_key"`
+	SimilarwebAPIKey     string `mapstructure:"similarweb_api_key"`
 }
 
 type CollectorConfig struct {

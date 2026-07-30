@@ -3,6 +3,12 @@ import { computed, nextTick, reactive, ref, shallowRef, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
+import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
+import {
+  countryOptionsWithLegacyValues,
+  parseProjectTargetMarkets,
+  serializeProjectTargetMarkets
+} from "@/utils/worldCountries";
 import {
   getProjectList,
   createProject,
@@ -42,9 +48,12 @@ const importParseError = ref("");
 const contentUploadKey = ref(0);
 const editingProjectId = ref<number | null>(null);
 const editingCooperationId = ref<number | null>(null);
+const importTargetMode = ref<"new" | "existing">("new");
 const importProjectId = ref<number | null>(null);
 const importProjectNameDraft = ref("");
 const importProjectCreating = ref(false);
+const importProjectOptionsLoading = ref(false);
+const importProjectOptionsError = ref("");
 const importWorkbookSheets = shallowRef<{ name: string; rows: any[] }[]>([]);
 const importRows = shallowRef<any[]>([]);
 const importFileName = ref("");
@@ -205,15 +214,31 @@ const sampleInfluencers = reactive([
 
 const projectForm = reactive({
   name: "",
-  targetMarket: "",
+  targetMarkets: [] as string[],
   language: "",
-  platform: "",
   campaignType: "",
   budget: 0,
   currency: "USD",
   status: "需求创建",
   owner: "",
-  brief: ""
+  brief: "",
+  cycleStartDate: "",
+  cycleEndDate: ""
+});
+
+const projectCountryOptions = computed(() =>
+  countryOptionsWithLegacyValues(projectForm.targetMarkets)
+);
+
+const projectCycleRange = computed({
+  get: () =>
+    projectForm.cycleStartDate && projectForm.cycleEndDate
+      ? [projectForm.cycleStartDate, projectForm.cycleEndDate]
+      : [],
+  set: (value: string[]) => {
+    projectForm.cycleStartDate = value?.[0] || "";
+    projectForm.cycleEndDate = value?.[1] || "";
+  }
 });
 
 const campaignWizardForm = reactive({
@@ -306,6 +331,16 @@ const duplicateImportRows = computed(() =>
 
 const linkedImportRows = computed(() =>
   validImportRows.value.filter(row => String(row.deliverableLinks || "").trim())
+);
+
+const importedTargetMarkets = computed(() =>
+  Array.from(
+    new Set(
+      validImportRows.value
+        .flatMap(row => parseProjectTargetMarkets(row.country))
+        .filter(Boolean)
+    )
+  )
 );
 
 const visibleImportRows = computed(() => importRows.value.slice(0, 10));
@@ -469,7 +504,6 @@ const visibleProjects = computed(() => {
     return [
       project.name,
       project.targetMarket,
-      project.platform,
       project.campaignType,
       project.owner
     ]
@@ -478,34 +512,144 @@ const visibleProjects = computed(() => {
   });
 });
 
+type ProjectMarketItem = {
+  name: string;
+  outputCount: number;
+  configuredOrder: number;
+};
+
+const projectMarketsById = computed(() => {
+  const result = new Map<number, ProjectMarketItem[]>();
+  const marketMaps = new Map<number, Map<string, ProjectMarketItem>>();
+
+  for (const project of projects.value) {
+    const projectId = Number(project.id);
+    const markets = new Map<string, ProjectMarketItem>();
+    parseProjectTargetMarkets(project.targetMarket).forEach((name, index) => {
+      markets.set(name, {
+        name,
+        outputCount: 0,
+        configuredOrder: index
+      });
+    });
+    marketMaps.set(projectId, markets);
+  }
+
+  for (const row of cooperations.value) {
+    const projectId = Number(row.projectId);
+    const markets = marketMaps.get(projectId);
+    if (!markets) continue;
+    const rowMarkets = Array.from(
+      new Set(parseProjectTargetMarkets(row.market || row.country))
+    );
+    for (const name of rowMarkets) {
+      const current = markets.get(name);
+      if (current) {
+        current.outputCount += 1;
+      } else {
+        markets.set(name, {
+          name,
+          outputCount: 1,
+          configuredOrder: Number.MAX_SAFE_INTEGER
+        });
+      }
+    }
+  }
+
+  for (const [projectId, markets] of marketMaps) {
+    result.set(
+      projectId,
+      Array.from(markets.values()).sort(
+        (left, right) =>
+          right.outputCount - left.outputCount ||
+          left.configuredOrder - right.configuredOrder ||
+          left.name.localeCompare(right.name, "zh-CN")
+      )
+    );
+  }
+  return result;
+});
+
+function projectMarketItems(project: any) {
+  return projectMarketsById.value.get(Number(project.id)) || [];
+}
+
+function projectCycleText(project: any) {
+  const start = String(project.cycleStartDate || "").trim();
+  const end = String(project.cycleEndDate || "").trim();
+  if (start && end) return `${start} 至 ${end}`;
+  if (start) return `${start} 起`;
+  if (end) return `截至 ${end}`;
+  return "未设置";
+}
+
+function projectCreatedDate(project: any) {
+  const timestamp = Number(project.createdAt || 0);
+  if (!timestamp) return "创建日期未知";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "创建日期未知";
+  return `创建于 ${date.toLocaleDateString("zh-CN")}`;
+}
+
 async function loadData() {
-  try {
-    const [projectRes, cooperationRes] = await Promise.all([
-      getProjectList(),
-      getCooperationList()
-    ]);
+  const [projectResult, cooperationResult] = await Promise.allSettled([
+    getProjectList(),
+    getCooperationList()
+  ]);
+  if (projectResult.status === "fulfilled") {
+    const projectRes = projectResult.value;
     projects.value =
       projectRes.code === 0 && Array.isArray(projectRes.data?.list)
         ? projectRes.data.list
         : [];
+  }
+  if (cooperationResult.status === "fulfilled") {
+    const cooperationRes = cooperationResult.value;
     cooperations.value =
       cooperationRes.code === 0 && Array.isArray(cooperationRes.data?.list)
         ? cooperationRes.data.list
         : [];
+  }
 
-    if (
-      !projects.value.some(
-        project => Number(project.id) === Number(selectedProjectId.value)
-      )
-    ) {
-      selectedProjectId.value = projects.value[0]?.id ?? null;
-    }
-  } catch {
-    projects.value = [];
-    cooperations.value = [];
-    selectedProjectId.value = null;
+  if (
+    !projects.value.some(
+      project => Number(project.id) === Number(selectedProjectId.value)
+    )
+  ) {
+    selectedProjectId.value = projects.value[0]?.id ?? null;
+  }
+  if (projectResult.status === "rejected") {
     ElMessage.warning("项目列表加载失败，请稍后重试");
   }
+}
+
+async function refreshImportProjectOptions(showError = true) {
+  if (importProjectOptionsLoading.value) return;
+  importProjectOptionsLoading.value = true;
+  importProjectOptionsError.value = "";
+  try {
+    const res = await getProjectList();
+    if (res.code !== 0 || !Array.isArray(res.data?.list)) {
+      throw new Error(res.message || "已有项目加载失败");
+    }
+    projects.value = res.data.list;
+    if (!projects.value.length) {
+      importProjectOptionsError.value = "暂无可选择的已有项目";
+    }
+  } catch {
+    importProjectOptionsError.value = "已有项目加载失败，请刷新后重试";
+    if (showError) ElMessage.error(importProjectOptionsError.value);
+  } finally {
+    importProjectOptionsLoading.value = false;
+  }
+}
+
+async function handleImportTargetModeChange(value: "new" | "existing") {
+  if (value === "existing") await refreshImportProjectOptions();
+}
+
+async function handleImportProjectDropdownVisible(visible: boolean) {
+  if (visible && !projects.value.length) await refreshImportProjectOptions();
 }
 
 async function loadMarkets() {
@@ -553,7 +697,9 @@ async function removeMarketOption(value: string, event?: Event) {
   const res = await deleteMarketOption({ name });
   if (res.code === 0) {
     marketOptions.value = marketOptions.value.filter(item => item !== name);
-    if (projectForm.targetMarket === name) projectForm.targetMarket = "";
+    projectForm.targetMarkets = projectForm.targetMarkets.filter(
+      market => market !== name
+    );
     ElMessage.success("市场选项已删除");
   } else {
     ElMessage.warning(res.message || "市场删除失败");
@@ -564,15 +710,16 @@ function resetProjectForm() {
   editingProjectId.value = null;
   Object.assign(projectForm, {
     name: "",
-    targetMarket: "",
+    targetMarkets: [],
     language: "",
-    platform: "",
     campaignType: "",
     budget: 0,
     currency: "USD",
     status: "需求创建",
     owner: "",
-    brief: ""
+    brief: "",
+    cycleStartDate: "",
+    cycleEndDate: ""
   });
 }
 
@@ -745,25 +892,21 @@ function openCreateProject() {
   campaignWizardDialog.value = true;
 }
 
-function openQuickProject() {
-  resetProjectForm();
-  projectDialog.value = true;
-}
-
 function openEditProject(row: any) {
   resetProjectForm();
   editingProjectId.value = Number(row.id);
   Object.assign(projectForm, {
     name: row.name || "",
-    targetMarket: row.targetMarket || "",
+    targetMarkets: parseProjectTargetMarkets(row.targetMarket),
     language: row.language || "",
-    platform: row.platform || "",
     campaignType: row.campaignType || "",
     budget: numberValue(row.budget),
     currency: row.currency || "USD",
     status: row.status || "需求创建",
     owner: row.owner || "",
-    brief: row.brief || ""
+    brief: row.brief || "",
+    cycleStartDate: row.cycleStartDate || "",
+    cycleEndDate: row.cycleEndDate || ""
   });
   projectDialog.value = true;
 }
@@ -808,10 +951,20 @@ function openEditCooperation(row: any) {
 }
 
 async function submitProject() {
-  await handleMarketChange(projectForm.targetMarket);
-  const payload = editingProjectId.value
-    ? { id: editingProjectId.value, ...projectForm }
-    : projectForm;
+  if (
+    projectForm.cycleStartDate &&
+    projectForm.cycleEndDate &&
+    projectForm.cycleStartDate > projectForm.cycleEndDate
+  ) {
+    ElMessage.warning("项目周期的结束日期不能早于开始日期");
+    return;
+  }
+  const { targetMarkets, ...formValues } = projectForm;
+  const payload = {
+    ...(editingProjectId.value ? { id: editingProjectId.value } : {}),
+    ...formValues,
+    targetMarket: serializeProjectTargetMarkets(targetMarkets)
+  };
   const res = editingProjectId.value
     ? await updateProject(payload)
     : await createProject(payload);
@@ -1594,44 +1747,41 @@ function normalizeImportPreviewSheet(sheet: any) {
   };
 }
 
-function queryImportProjects(query: string, callback: (items: any[]) => void) {
-  const keyword = query.trim().toLowerCase();
-  callback(
-    projects.value.filter(
-      project =>
-        !keyword ||
-        String(project.name || "")
-          .toLowerCase()
-          .includes(keyword)
-    )
-  );
-}
-
-function selectImportProject(project: any) {
-  importProjectId.value = Number(project?.id) || null;
-  importProjectNameDraft.value = String(project?.name || "");
-}
-
 async function ensureImportProject() {
+  if (importTargetMode.value === "existing") {
+    const projectId = Number(importProjectId.value || 0);
+    if (!projectId) {
+      ElMessage.warning("请选择需要增量导入的已有项目");
+      return false;
+    }
+    const existing = projects.value.find(
+      project => Number(project.id) === projectId
+    );
+    if (!existing) {
+      ElMessage.warning("选择的项目不存在，请重新选择");
+      return false;
+    }
+    importProjectNameDraft.value = String(existing.name || "");
+    return true;
+  }
+
   const name = importProjectNameDraft.value.trim();
   importProjectId.value = null;
   if (!name) {
-    ElMessage.warning("请输入或选择归属项目");
+    ElMessage.warning("请输入新项目名称");
     return false;
   }
   const existing = projects.value.find(project => project.name === name);
   if (existing) {
-    importProjectId.value = Number(existing.id);
-    importProjectNameDraft.value = String(existing.name || name);
-    return true;
+    ElMessage.warning("已存在同名项目，请切换到“已有项目增量导入”");
+    return false;
   }
   importProjectCreating.value = true;
   try {
     const res = await createProject({
       name,
-      targetMarket: "",
+      targetMarket: serializeProjectTargetMarkets(importedTargetMarkets.value),
       language: "",
-      platform: "",
       campaignType: "内容导入",
       budget: 0,
       currency: "USD",
@@ -1706,6 +1856,7 @@ async function handleUploadFile(file: any) {
       importParseError.value = res.message || "Excel 解析失败";
       return;
     }
+    importTargetMode.value = "new";
     importProjectId.value = null;
     importProjectNameDraft.value =
       String(res.data?.projectName || "").trim() ||
@@ -1717,6 +1868,7 @@ async function handleUploadFile(file: any) {
           .filter(sheet => sheet.name)
       : [];
     refreshImportRows();
+    await refreshImportProjectOptions(false);
   } catch {
     importParseError.value = "Excel 解析失败，请确认文件未损坏后重试。";
     ElMessage.error(importParseError.value);
@@ -1739,12 +1891,15 @@ async function submitImport() {
   importLoading.value = true;
   const res = await importCooperations({
     projectId: importProjectId.value,
+    incremental: importTargetMode.value === "existing",
     rows: validImportRows.value
   });
   importLoading.value = false;
   if (res.code === 0) {
+    const modeText =
+      importTargetMode.value === "existing" ? "增量导入完成" : "导入完成";
     ElMessage.success(
-      `导入成功 ${res.data.imported} 行，其中内容 ${res.data.importedContent || 0} 条；平台数据正在后台同步`
+      `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条`
     );
     if (res.data.failed) {
       const failures = (res.data.errors || [])
@@ -1800,9 +1955,6 @@ onMounted(() => {
               导入项目数据</el-button
             >
           </el-upload>
-          <el-button @click="openQuickProject"
-            ><IconifyIconOnline icon="ri:add-line" /> 创建项目</el-button
-          >
         </div>
       </header>
 
@@ -1829,7 +1981,7 @@ onMounted(() => {
           <el-input
             v-model="projectSearch"
             clearable
-            placeholder="搜索项目、市场、平台或负责人"
+            placeholder="搜索项目、市场或负责人"
             class="project-search"
           >
             <template #prefix
@@ -1859,12 +2011,69 @@ onMounted(() => {
                 /></span>
                 <div>
                   <strong>{{ row.name }}</strong
-                  ><small
-                    >{{ row.targetMarket || "未设置市场" }} ·
-                    {{ row.platform || "未设置平台" }}</small
-                  >
+                  ><small>{{ projectCreatedDate(row) }}</small>
                 </div>
               </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="目标市场" min-width="310">
+            <template #default="{ row }">
+              <div
+                v-if="projectMarketItems(row).length"
+                class="project-market-summary"
+              >
+                <div class="project-market-tags">
+                  <el-tag
+                    v-for="market in projectMarketItems(row).slice(0, 3)"
+                    :key="market.name"
+                    effect="plain"
+                    type="info"
+                  >
+                    {{ market.name }}
+                    <small>{{ market.outputCount }} 次</small>
+                  </el-tag>
+                </div>
+                <el-popover
+                  v-if="projectMarketItems(row).length > 3"
+                  trigger="click"
+                  placement="bottom-start"
+                  :width="300"
+                  popper-class="project-market-popover"
+                >
+                  <template #reference>
+                    <el-button
+                      link
+                      type="primary"
+                      class="project-market-expand"
+                      @click.stop
+                    >
+                      展开全部（{{ projectMarketItems(row).length }}）
+                    </el-button>
+                  </template>
+                  <div class="project-market-popover-list" @click.stop>
+                    <strong>全部目标市场</strong>
+                    <small>按该项目市场维度出品次数降序</small>
+                    <div
+                      v-for="(market, index) in projectMarketItems(row)"
+                      :key="market.name"
+                      class="project-market-popover-row"
+                    >
+                      <span
+                        ><b>{{ index + 1 }}</b> {{ market.name }}</span
+                      >
+                      <em>{{ market.outputCount }} 次</em>
+                    </div>
+                  </div>
+                </el-popover>
+              </div>
+              <span v-else class="project-empty-value">未设置</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="项目周期" width="210">
+            <template #default="{ row }">
+              <span class="project-cycle-value">{{
+                projectCycleText(row)
+              }}</span>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="130" sortable>
@@ -1958,23 +2167,41 @@ onMounted(() => {
           /></el-form-item>
           <el-form-item label="目标市场"
             ><el-select
-              v-model="projectForm.targetMarket"
-              allow-create
+              v-model="projectForm.targetMarkets"
+              multiple
               filterable
-              default-first-option
+              collapse-tags
+              collapse-tags-tooltip
+              :max-collapse-tags="3"
+              placeholder="搜索中文、英文或国家代码"
               class="w-full!"
-              @change="handleMarketChange"
               ><el-option
-                v-for="market in marketOptions"
-                :key="market"
-                :label="market"
-                :value="market" /></el-select
-          ></el-form-item>
-          <el-form-item label="平台"
-            ><el-input
-              v-model="projectForm.platform"
-              placeholder="TikTok, Instagram"
-          /></el-form-item>
+                v-for="country in projectCountryOptions"
+                :key="country.code || country.name"
+                :label="country.label"
+                :value="country.name"
+              >
+                <span>{{ country.name }}</span>
+                <small class="country-option-meta">
+                  {{ country.englishName }}
+                  {{ country.code ? `· ${country.code}` : "" }}
+                </small>
+              </el-option></el-select
+            ></el-form-item
+          >
+          <el-form-item label="项目周期">
+            <el-date-picker
+              v-model="projectCycleRange"
+              type="daterange"
+              unlink-panels
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              class="w-full!"
+            />
+          </el-form-item>
           <el-form-item label="负责人"
             ><el-input v-model="projectForm.owner"
           /></el-form-item>
@@ -2097,27 +2324,85 @@ onMounted(() => {
           :closable="false"
           :title="importParseError"
         />
-        <el-form label-width="80px" class="mb-3">
-          <el-form-item label="项目名称" required>
-            <el-autocomplete
+        <el-form label-width="96px" class="import-target-form mb-3">
+          <el-form-item label="导入方式" required>
+            <el-radio-group
+              v-model="importTargetMode"
+              @change="handleImportTargetModeChange"
+            >
+              <el-radio-button value="new">新建项目并导入</el-radio-button>
+              <el-radio-button value="existing"
+                >已有项目增量导入</el-radio-button
+              >
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item
+            v-if="importTargetMode === 'existing'"
+            label="已有项目"
+            required
+          >
+            <el-select
+              v-model="importProjectId"
+              filterable
+              clearable
+              :teleported="true"
+              placement="bottom-start"
+              :fallback-placements="['bottom-start', 'top-start']"
+              popper-class="import-project-select-popper"
+              :loading="importProjectOptionsLoading"
+              :no-data-text="
+                importProjectOptionsError || '暂无可选择的已有项目'
+              "
+              class="import-project-select"
+              placeholder="搜索并选择已有项目"
+              @visible-change="handleImportProjectDropdownVisible"
+            >
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :value="Number(project.id)"
+                :label="project.name"
+              >
+                <div class="import-project-option">
+                  <span>{{ project.name }}</span>
+                  <small>
+                    {{ project.targetMarket || "未设置市场" }} ·
+                    {{ projectCycleText(project) }}
+                  </small>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item v-else label="新项目名称" required>
+            <el-input
               v-model="importProjectNameDraft"
-              :fetch-suggestions="queryImportProjects"
-              :trigger-on-focus="true"
               clearable
               class="import-project-select"
-              placeholder="输入项目名称新建，或选择已有项目"
-              :loading="importProjectCreating"
-              @select="selectImportProject"
-            >
-              <template #default="{ item }">
-                <div class="import-project-option">
-                  <span>{{ item.name }}</span>
-                  <small>{{ item.targetMarket || "未设置市场" }}</small>
-                </div>
-              </template>
-            </el-autocomplete>
+              placeholder="输入要创建的新项目名称"
+              :disabled="importProjectCreating"
+            />
           </el-form-item>
         </el-form>
+        <el-alert
+          v-if="importTargetMode === 'existing'"
+          class="mb-3"
+          type="info"
+          :closable="false"
+          show-icon
+          title="增量导入不会修改已有项目、达人/媒体资料或历史合作。达人一致时新增合作；达人不存在时新增达人和合作；完全相同的内容链接将跳过。"
+        />
+        <el-alert
+          v-else
+          class="mb-3"
+          type="info"
+          :closable="false"
+          show-icon
+          :title="
+            importedTargetMarkets.length
+              ? `确认后将创建新项目，并自动采用模板中的目标市场：${importedTargetMarkets.join('、')}。`
+              : '确认后将创建新项目；模板未填写市场，目标市场将保持为空。'
+          "
+        />
         <el-alert
           class="mb-3"
           type="success"
@@ -2183,11 +2468,14 @@ onMounted(() => {
               importParsing ||
               Boolean(importParseError) ||
               validImportRows.length === 0 ||
-              importProjectCreating
+              importProjectCreating ||
+              (importTargetMode === 'existing' && !importProjectId) ||
+              (importTargetMode === 'new' && !importProjectNameDraft.trim())
             "
             @click="submitImport"
           >
-            确认导入 {{ validImportRows.length }} 行（内容
+            {{ importTargetMode === "existing" ? "确认增量导入" : "确认导入" }}
+            {{ validImportRows.length }} 行（内容
             {{ linkedImportRows.length }} 条）
           </el-button>
         </template>
@@ -2198,7 +2486,7 @@ onMounted(() => {
       <section class="page-hero">
         <div>
           <span>项目运营工作台</span>
-          <h1>营销项目执行中心</h1>
+          <h1>项目管理</h1>
           <p>
             从达人邀约、议价、内容交付到发布复盘，统一掌握每个营销项目
             的执行节奏与待处理事项。
@@ -2741,10 +3029,10 @@ onMounted(() => {
                               selectedProject?.name
                             }}
                             <span />
-                            {{
-                              focusedCooperation.cooperationType ||
-                              "未设置合作形式"
-                            }}
+                            <CooperationTypeTags
+                              :value="focusedCooperation.cooperationType"
+                              empty-text="未设置合作形式"
+                            />
                             <span />
                             {{ selectedProject?.platform || "全平台" }}
                           </p>
@@ -3115,11 +3403,11 @@ onMounted(() => {
                 label="资源"
                 min-width="160"
               />
-              <el-table-column
-                prop="cooperationType"
-                label="合作形式"
-                width="120"
-              />
+              <el-table-column label="合作形式" min-width="150">
+                <template #default="{ row }">
+                  <CooperationTypeTags :value="row.cooperationType" />
+                </template>
+              </el-table-column>
               <el-table-column label="报价" width="120">
                 <template #default="{ row }">
                   {{ moneyText(row.quoteAmount, row.currency) }}
@@ -3613,37 +3901,31 @@ onMounted(() => {
           /></el-form-item>
           <el-form-item label="目标市场"
             ><el-select
-              v-model="projectForm.targetMarket"
-              allow-create
+              v-model="projectForm.targetMarkets"
+              multiple
               filterable
-              default-first-option
-              placeholder="选择或输入目标市场"
+              collapse-tags
+              placeholder="搜索国家"
               class="w-full!"
-              @change="handleMarketChange"
             >
               <el-option
-                v-for="market in marketOptions"
-                :key="market"
-                :label="market"
-                :value="market"
-              >
-                <div class="market-option">
-                  <span>{{ market }}</span>
-                  <el-button
-                    link
-                    type="danger"
-                    @mousedown.stop
-                    @click="removeMarketOption(market, $event)"
-                  >
-                    删除
-                  </el-button>
-                </div>
-              </el-option>
-            </el-select></el-form-item
-          >
-          <el-form-item label="平台"
-            ><el-input v-model="projectForm.platform"
-          /></el-form-item>
+                v-for="country in projectCountryOptions"
+                :key="country.code || country.name"
+                :label="country.label"
+                :value="country.name"
+              /> </el-select
+          ></el-form-item>
+          <el-form-item label="项目周期">
+            <el-date-picker
+              v-model="projectCycleRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              value-format="YYYY-MM-DD"
+              class="w-full!"
+            />
+          </el-form-item>
           <el-form-item label="合作目标"
             ><el-input v-model="projectForm.campaignType"
           /></el-form-item>
@@ -5369,6 +5651,10 @@ onMounted(() => {
   width: min(100%, 420px);
 }
 
+:global(.import-project-select-popper) {
+  z-index: 6001 !important;
+}
+
 .import-preview-more {
   margin: 10px 0 0;
   color: #64748b;
@@ -5664,6 +5950,84 @@ onMounted(() => {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.project-market-summary {
+  display: grid;
+  gap: 7px;
+  align-items: start;
+  min-width: 0;
+}
+.project-market-tags {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+}
+.project-market-tags :deep(.el-tag) {
+  max-width: 82px;
+}
+.project-market-tags :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-market-tags small {
+  margin-left: 3px;
+  color: #92959d;
+  font-size: 10px;
+}
+.project-market-expand {
+  justify-self: start;
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+.project-cycle-value {
+  color: #51545c;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.project-empty-value {
+  color: #a0a3aa;
+  font-size: 13px;
+}
+:global(.project-market-popover-list) {
+  display: grid;
+  gap: 8px;
+}
+:global(.project-market-popover-list > strong) {
+  color: #2c2e34;
+  font-size: 14px;
+}
+:global(.project-market-popover-list > small) {
+  margin-top: -4px;
+  color: #92959d;
+  font-size: 11px;
+}
+:global(.project-market-popover-row) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 0;
+  border-top: 1px solid #f0f1f3;
+}
+:global(.project-market-popover-row span) {
+  color: #4f525a;
+}
+:global(.project-market-popover-row b) {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  color: #72757d;
+  font-size: 11px;
+  background: #f4f5f7;
+  border-radius: 50%;
+}
+:global(.project-market-popover-row em) {
+  color: #73767e;
+  font-size: 12px;
+  font-style: normal;
 }
 :deep(.campaign-center .el-button--primary) {
   --el-button-bg-color: #2f63e7;

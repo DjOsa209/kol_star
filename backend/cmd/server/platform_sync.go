@@ -376,7 +376,7 @@ func (a *app) syncableResourceByID(ctx context.Context, id int) (syncResourceRow
 		`select id, name, platform, platform_url, platform_user_id, platform_handle
 		   from biz_resources
 		  where id = ?
-		    and lower(trim(platform)) in ('youtube', 'instagram', 'ins', 'tiktok')
+		    and lower(trim(platform)) in ('youtube', 'instagram', 'ins', 'tiktok', 'x', 'twitter', 'x.com', 'facebook', 'fb', 'linkedin', 'reddit', 'website', 'web')
 		  limit 1`,
 		id,
 	).Scan(&resource.ID, &resource.Name, &resource.Platform, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle)
@@ -461,7 +461,7 @@ func syncPlatformScopeLabel(selected map[string]bool) string {
 		return "全部平台"
 	}
 	platforms := make([]string, 0, len(selected))
-	for _, platform := range []string{"YouTube", "Instagram", "TikTok"} {
+	for _, platform := range []string{"YouTube", "Instagram", "TikTok", "X", "Facebook", "LinkedIn", "Reddit", "Website"} {
 		if selected[platform] {
 			platforms = append(platforms, platform)
 		}
@@ -488,6 +488,16 @@ func (a *app) syncResourceProfileAndPostsByPlatform(ctx context.Context, resourc
 		_, err = a.syncInstagramResource(ctx, resource.ID, resource.Name, resource.PlatformURL, resource.PlatformUserID, resource.PlatformHandle)
 	case "TikTok":
 		_, err = a.syncTikTokResource(ctx, resource.ID)
+	case "X":
+		_, err = a.syncXResource(ctx, resource.ID)
+	case "Facebook":
+		_, err = a.syncFacebookResource(ctx, resource.ID)
+	case "LinkedIn":
+		_, err = a.syncLinkedInResource(ctx, resource.ID)
+	case "Reddit":
+		_, err = a.syncRedditResource(ctx, resource.ID)
+	case "Website":
+		_, err = a.syncWebsiteResource(ctx, resource.ID)
 	default:
 		return fmt.Errorf("当前平台暂不支持官方 API 同步")
 	}
@@ -523,7 +533,10 @@ func refreshAllResourceAudienceClassifications(ctx context.Context, executor aud
 		            when trim(name) = '' then concat('__resource__', id)
 		            else lower(trim(name))
 		          end as collaborator_key,
-		          sum(greatest(followers, 0)) as total_audience
+		          case
+		            when resource_type = '媒体' then max(greatest(audience_size, 0))
+		            else sum(greatest(followers, 0))
+		          end as total_audience
 		     from biz_resources
 		    group by resource_type,
 		             case
@@ -537,7 +550,7 @@ func refreshAllResourceAudienceClassifications(ctx context.Context, executor aud
 		        else lower(trim(r.name))
 		      end
 		 set r.audience_size = totals.total_audience,
-		     r.audience_size_unit = case when r.resource_type = '媒体' then 'UVM' else 'Followers' end,
+		     r.audience_size_unit = case when r.resource_type = '媒体' then 'UMV' else 'Followers' end,
 		     r.tier = case
 		       when totals.total_audience <= 0 then ''
 		       when totals.total_audience > 1000000 then '头部'
@@ -552,7 +565,7 @@ func (a *app) syncableResources(ctx context.Context) ([]syncResourceRow, error) 
 	rows, err := a.DB().QueryContext(ctx,
 		`select id, name, platform, platform_url, platform_user_id, platform_handle
 		   from biz_resources
-		  where lower(trim(platform)) in ('youtube', 'instagram', 'ins', 'tiktok')
+		  where lower(trim(platform)) in ('youtube', 'instagram', 'ins', 'tiktok', 'x', 'twitter', 'x.com', 'facebook', 'fb', 'linkedin', 'reddit', 'website', 'web')
 		  order by id asc`,
 	)
 	if err != nil {
@@ -626,7 +639,7 @@ func (a *app) platformSyncStatus(ctx context.Context) (map[string]any, error) {
 		        sync_posts as syncPosts, post_limit as postLimit,
 		        cast(unix_timestamp(updated_at) * 1000 as unsigned) as updatedAt
 		   from biz_platform_sync_settings
-		  order by field(platform, 'YouTube', 'Instagram', 'TikTok'), platform`,
+		  order by field(platform, 'YouTube', 'Instagram', 'TikTok', 'X', 'Facebook', 'LinkedIn', 'Reddit', 'Website'), platform`,
 	)
 	if err != nil {
 		return nil, err
@@ -643,7 +656,7 @@ func (a *app) platformSyncStatus(ctx context.Context) (map[string]any, error) {
 		`select platform, count(*) as total,
 		        sum(case when last_sync_status = '成功' then 1 else 0 end) as synced
 		   from biz_resources
-		  where lower(platform) in ('youtube', 'instagram', 'ins', 'tiktok')
+		  where lower(platform) in ('youtube', 'instagram', 'ins', 'tiktok', 'x', 'twitter', 'facebook', 'fb', 'linkedin', 'reddit', 'website', 'web')
 		  group by platform
 		  order by platform`,
 	)
@@ -732,7 +745,12 @@ func (a *app) ensurePlatformSyncSettings(ctx context.Context) error {
 		 values
 		  ('YouTube', 1, 1, 1, 25),
 		  ('Instagram', 1, 1, 1, 25),
-		  ('TikTok', 1, 1, 1, 20)`,
+		  ('TikTok', 1, 1, 1, 20),
+		  ('X', 1, 1, 1, 20),
+		  ('Facebook', 0, 1, 1, 20),
+		  ('LinkedIn', 1, 1, 1, 20),
+		  ('Reddit', 1, 1, 1, 20),
+		  ('Website', 1, 1, 0, 1)`,
 	)
 	return err
 }
@@ -751,6 +769,26 @@ func (a *app) platformTokenStatus(ctx context.Context) map[string]any {
 		"TikTok": map[string]any{
 			"configured": strings.TrimSpace(tikHubAPIKey(cfg)) != "",
 			"message":    tokenStatusMessage(strings.TrimSpace(tikHubAPIKey(cfg)) != "", "TikHub API Key 未配置"),
+		},
+		"X": map[string]any{
+			"configured": strings.TrimSpace(tikHubAPIKey(cfg)) != "",
+			"message":    tokenStatusMessage(strings.TrimSpace(tikHubAPIKey(cfg)) != "", "TikHub API Key 未配置"),
+		},
+		"Facebook": map[string]any{
+			"configured": false,
+			"message":    "TikHub 当前未开放 Facebook 接口",
+		},
+		"LinkedIn": map[string]any{
+			"configured": strings.TrimSpace(tikHubAPIKey(cfg)) != "",
+			"message":    tokenStatusMessage(strings.TrimSpace(tikHubAPIKey(cfg)) != "", "TikHub API Key 未配置"),
+		},
+		"Reddit": map[string]any{
+			"configured": strings.TrimSpace(tikHubAPIKey(cfg)) != "",
+			"message":    tokenStatusMessage(strings.TrimSpace(tikHubAPIKey(cfg)) != "", "TikHub API Key 未配置"),
+		},
+		"Website": map[string]any{
+			"configured": strings.TrimSpace(cfg.SimilarwebAPIKey) != "",
+			"message":    tokenStatusMessage(strings.TrimSpace(cfg.SimilarwebAPIKey) != "", "Similarweb API Key 未配置"),
 		},
 	}
 }
@@ -778,6 +816,9 @@ func (a *app) savePlatformAPIConfig(ctx context.Context, data map[string]any) er
 	if token := optionalConfigValue(data["tikhubApiKey"]); token != "" {
 		current.TikHubAPIKey = token
 		current.TikTokAccessToken = token
+	}
+	if token := optionalConfigValue(data["similarwebApiKey"]); token != "" {
+		current.SimilarwebAPIKey = token
 	}
 	content := platformAPIConfigStoredContent(current)
 	raw, err := json.Marshal(content)
@@ -825,6 +866,7 @@ func writePlatformAPIConfigToConfig(cfg PlatformAPIConfig) error {
 	platformAPIs["instagram_user_id"] = strings.TrimSpace(cfg.InstagramUserID)
 	platformAPIs["tiktok_access_token"] = strings.TrimSpace(cfg.TikTokAccessToken)
 	platformAPIs["tikhub_api_key"] = strings.TrimSpace(tikHubAPIKey(cfg))
+	platformAPIs["similarweb_api_key"] = strings.TrimSpace(cfg.SimilarwebAPIKey)
 	raw["platform_apis"] = platformAPIs
 
 	output, err := yaml.Marshal(raw)
@@ -855,6 +897,8 @@ func platformAPIConfigPublicContent(cfg PlatformAPIConfig) map[string]any {
 		"tiktokAccessTokenLast4":         lastN(strings.TrimSpace(tikHubAPIKey(cfg)), 4),
 		"tikhubApiKeyConfigured":         strings.TrimSpace(tikHubAPIKey(cfg)) != "",
 		"tikhubApiKeyLast4":              lastN(strings.TrimSpace(tikHubAPIKey(cfg)), 4),
+		"similarwebApiKeyConfigured":     strings.TrimSpace(cfg.SimilarwebAPIKey) != "",
+		"similarwebApiKeyLast4":          lastN(strings.TrimSpace(cfg.SimilarwebAPIKey), 4),
 	}
 }
 
@@ -864,6 +908,7 @@ func platformAPIConfigStoredContent(cfg PlatformAPIConfig) map[string]any {
 	public["instagramAccessToken"] = strings.TrimSpace(cfg.InstagramAccessToken)
 	public["tiktokAccessToken"] = strings.TrimSpace(cfg.TikTokAccessToken)
 	public["tikhubApiKey"] = strings.TrimSpace(tikHubAPIKey(cfg))
+	public["similarwebApiKey"] = strings.TrimSpace(cfg.SimilarwebAPIKey)
 	return public
 }
 
@@ -904,6 +949,9 @@ func (a *app) effectivePlatformAPIConfig(ctx context.Context) PlatformAPIConfig 
 	if value := optionalConfigValue(data["tikhubApiKey"]); value != "" {
 		cfg.TikHubAPIKey = value
 	}
+	if value := optionalConfigValue(data["similarwebApiKey"]); value != "" {
+		cfg.SimilarwebAPIKey = value
+	}
 	return cfg
 }
 
@@ -927,6 +975,16 @@ func platformDisplayName(value string) string {
 		return "Instagram"
 	case "tiktok":
 		return "TikTok"
+	case "x", "twitter", "x.com":
+		return "X"
+	case "facebook", "fb":
+		return "Facebook"
+	case "linkedin":
+		return "LinkedIn"
+	case "reddit":
+		return "Reddit"
+	case "website", "web", "媒体网站":
+		return "Website"
 	default:
 		return ""
 	}
