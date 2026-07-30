@@ -543,7 +543,10 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 				value = mergedValues[cell]
 			}
 			if key == "deliverableLinks" || key == "influencer" {
-				if ok, link, _ := book.GetCellHyperLink(sheet, cell); ok && strings.TrimSpace(link) != "" {
+				visibleLinks := httpExcelURLs(value)
+				if len(visibleLinks) > 0 {
+					value = visibleLinks[0]
+				} else if ok, link, _ := book.GetCellHyperLink(sheet, cell); ok && strings.TrimSpace(link) != "" {
 					value = strings.ReplaceAll(link, "&amp;", "&")
 				}
 			}
@@ -746,11 +749,6 @@ func fallbackContentLinks(book *excelize.File, sheet string, rowIndex int, heade
 
 func excelCellLinks(book *excelize.File, sheet string, rowIndex, column int, row []string, mergedValues map[string]string) []string {
 	cell, _ := excelize.CoordinatesToCellName(column+1, rowIndex+1)
-	links := make([]string, 0)
-	if ok, link, _ := book.GetCellHyperLink(sheet, cell); ok {
-		link = strings.ReplaceAll(link, "&amp;", "&")
-		links = append(links, httpExcelURLs(link)...)
-	}
 	value := ""
 	if column < len(row) {
 		value = row[column]
@@ -758,8 +756,16 @@ func excelCellLinks(book *excelize.File, sheet string, rowIndex, column int, row
 	if strings.TrimSpace(value) == "" {
 		value = mergedValues[cell]
 	}
-	links = append(links, httpExcelURLs(value)...)
-	return uniqueExcelLinks(links)
+	if visibleLinks := uniqueExcelLinks(httpExcelURLs(value)); len(visibleLinks) > 0 {
+		// Excel may retain an old hyperlink relationship after the user edits
+		// the displayed URL. In that case the visible value is the current
+		// source of truth; combining both values would duplicate one sheet row.
+		return visibleLinks
+	}
+	if ok, link, _ := book.GetCellHyperLink(sheet, cell); ok {
+		return uniqueExcelLinks(httpExcelURLs(strings.ReplaceAll(link, "&amp;", "&")))
+	}
+	return nil
 }
 
 func firstHTTPExcelURL(value string) string {

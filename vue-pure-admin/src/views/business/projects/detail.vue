@@ -15,6 +15,7 @@ import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
 import {
   addProjectResource,
+  deleteProjectContent,
   deleteProjectResource,
   downloadProjectData,
   getProjectDetail,
@@ -23,6 +24,7 @@ import {
   renewProject,
   reportProjectInfluencer,
   searchOnlineProjectResource,
+  syncCooperation,
   updateProject,
   updateProjectBudget,
   updateProjectContent,
@@ -82,7 +84,10 @@ const contentSort = ref("latest");
 const contentEditing = ref(false);
 const contentSaving = ref(false);
 const websiteScreenshotLoading = ref(false);
+const syncingContentIds = reactive<Record<string, boolean>>({});
 const attemptedWebsiteScreenshotIds = new Set<string>();
+const scheduledContentTitleProjectIds = new Set<number>();
+const contentTitleRefreshTimers = new Set<number>();
 const contentEditForm = reactive({
   contentId: "",
   cooperationId: 0,
@@ -314,9 +319,34 @@ function importedContentCover(item: any, postUrl: string) {
 function importedContentTitle(item: any) {
   const creativeName = String(item?.creativeName || "").trim();
   const cooperationType = String(item?.cooperationType || "").trim();
-  return creativeName && creativeName !== cooperationType
-    ? creativeName
-    : "已导入发布内容";
+  if (
+    creativeName &&
+    creativeName !== cooperationType &&
+    !["已导入发布内容", "已同步内容"].includes(creativeName)
+  ) {
+    return creativeName;
+  }
+  return contentTitleFromUrl(item?.finalLink || item?.deliverableLinks);
+}
+
+function contentTitleFromUrl(value: unknown) {
+  const raw = String(value || "")
+    .match(/https?:\/\/[^\s,，;；]+/)?.[0]
+    ?.trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    const segments = decodeURIComponent(parsed.pathname)
+      .split("/")
+      .filter(Boolean);
+    const last = segments.at(-1) || "";
+    if (last && !/^\d+$/.test(last)) {
+      return last.replace(/[-_]+/g, " ").trim();
+    }
+    return `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname}`;
+  } catch {
+    return "";
+  }
 }
 
 const projectContentPosts = computed(() => {
@@ -459,6 +489,10 @@ const filteredContentPosts = computed(() => {
       return postExposure(right) - postExposure(left);
     if (contentSort.value === "engagement")
       return postEngagement(right) - postEngagement(left);
+    if (contentSort.value === "playbackRate")
+      return contentPlaybackRate(right) - contentPlaybackRate(left);
+    if (contentSort.value === "cpm")
+      return contentCPM(right) - contentCPM(left);
     return contentDateRank(right) - contentDateRank(left);
   });
 });
@@ -678,6 +712,9 @@ async function loadDetail() {
     reportSummary.value = res.data.reportSummary || {};
     budget.value = res.data.budget || {};
     billingEvents.value = res.data.billingEvents || [];
+    scheduleContentTitleReload(
+      Number(project.value?.id || selectedProjectId.value)
+    );
     activeCooperation.value = focusedCooperation.value;
     syncFormsFromProject();
     await nextTick();
@@ -685,6 +722,31 @@ async function loadDetail() {
   } finally {
     loading.value = false;
   }
+}
+
+function scheduleContentTitleReload(projectId: number) {
+  if (!projectId || scheduledContentTitleProjectIds.has(projectId)) return;
+  const hasMissingTitle = cooperations.value.some(item => {
+    const title = String(item.creativeName || "").trim();
+    const cooperationType = String(item.cooperationType || "").trim();
+    const hasContentURL = Boolean(
+      String(item.finalLink || item.deliverableLinks || "").trim()
+    );
+    return (
+      hasContentURL &&
+      (!title ||
+        title === cooperationType ||
+        ["已导入发布内容", "已同步内容"].includes(title))
+    );
+  });
+  if (!hasMissingTitle) return;
+
+  scheduledContentTitleProjectIds.add(projectId);
+  const timer = window.setTimeout(() => {
+    contentTitleRefreshTimers.delete(timer);
+    if (Number(selectedProjectId.value) === projectId) void loadDetail();
+  }, 7500);
+  contentTitleRefreshTimers.add(timer);
 }
 
 function syncFormsFromProject() {
@@ -777,10 +839,14 @@ function closeContentDetail() {
 function startContentEdit() {
   const post = selectedContentPost.value;
   if (!post) return;
+  prepareContentEdit(post);
+}
+
+function prepareContentEdit(post: any) {
   const cooperation = contentCooperation(post);
   if (!cooperation?.id) {
     ElMessage.warning("未找到该内容对应的合作记录，暂时无法编辑");
-    return;
+    return false;
   }
   Object.assign(contentEditForm, {
     contentId: String(post.id),
@@ -790,6 +856,15 @@ function startContentEdit() {
     postUrl: String(post.postUrl || "").trim()
   });
   contentEditing.value = true;
+  return true;
+}
+
+function editContentFromCard(post: any) {
+  if (!prepareContentEdit(post)) return;
+  router.push({
+    path: route.path,
+    query: { ...route.query, contentId: String(post.id) }
+  });
 }
 
 function cancelContentEdit() {
@@ -833,7 +908,7 @@ async function ensureWebsiteScreenshot(post: any) {
   if (
     !project.value ||
     !post ||
-    !isWebsiteContent(post) ||
+    !usesPageScreenshot(post) ||
     post.coverUrl ||
     contentEditing.value
   ) {
@@ -851,7 +926,7 @@ async function ensureWebsiteScreenshot(post: any) {
       contentId,
       cooperationId: Number(cooperation.id),
       resourceId: Number(post.resourceId),
-      platform: "Website",
+      platform: normalizePlatformName(post.platform),
       postUrl: String(post.postUrl || "").trim()
     });
     if (res.code === 0 && res.data?.coverUrl) {
@@ -862,6 +937,95 @@ async function ensureWebsiteScreenshot(post: any) {
   } finally {
     websiteScreenshotLoading.value = false;
   }
+}
+
+function contentOperationKey(post: any) {
+  return String(contentCooperation(post)?.id || post?.id || "");
+}
+
+async function syncContentFromCard(post: any) {
+  if (!project.value) return;
+  const cooperation = contentCooperation(post);
+  if (!cooperation?.id) {
+    ElMessage.warning("未找到该内容对应的合作记录，暂时无法同步");
+    return;
+  }
+  const key = contentOperationKey(post);
+  if (!key || syncingContentIds[key]) return;
+  syncingContentIds[key] = true;
+  try {
+    const res = isWebsiteContent(post)
+      ? await updateProjectContent({
+          projectId: Number(project.value.id),
+          contentId: String(post.id),
+          cooperationId: Number(cooperation.id),
+          resourceId: Number(post.resourceId),
+          platform: "Website",
+          postUrl: String(post.postUrl || "").trim()
+        })
+      : await syncCooperation({ id: Number(cooperation.id) });
+    if (res.code !== 0) {
+      ElMessage.warning(res.message || "内容同步失败");
+      return;
+    }
+    if (!isWebsiteContent(post) && !res.data?.synced) {
+      ElMessage.warning(res.data?.message || "平台未返回可用的内容数据");
+      return;
+    }
+    await loadDetail();
+    if (res.data?.previewWarning) {
+      ElMessage.warning(res.data.previewWarning);
+    } else {
+      ElMessage.success(res.data?.message || "内容数据已同步");
+    }
+  } finally {
+    syncingContentIds[key] = false;
+  }
+}
+
+async function deleteContentFromCard(post: any) {
+  if (!project.value) return;
+  const cooperation = contentCooperation(post);
+  if (!cooperation?.id) {
+    ElMessage.warning("未找到该内容对应的合作记录，暂时无法删除");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认从当前项目删除「${contentDisplayTitle(post)}」吗？达人/媒体资料和平台内容库不会被删除。`,
+      "删除合作内容",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消"
+      }
+    );
+  } catch {
+    return;
+  }
+  const res = await deleteProjectContent({
+    projectId: Number(project.value.id),
+    cooperationId: Number(cooperation.id),
+    resourceId: Number(post.resourceId)
+  });
+  if (res.code !== 0) {
+    ElMessage.warning(res.message || "内容删除失败");
+    return;
+  }
+  await loadDetail();
+  ElMessage.success("合作内容已删除");
+}
+
+function handleContentCardCommand(command: string, post: any) {
+  if (command === "edit") {
+    editContentFromCard(post);
+    return;
+  }
+  if (command === "sync") {
+    void syncContentFromCard(post);
+    return;
+  }
+  if (command === "delete") void deleteContentFromCard(post);
 }
 
 function contentResource(post: any) {
@@ -879,6 +1043,10 @@ function contentFollowers(post: any) {
 
 function isWebsiteContent(post: any) {
   return normalizePlatformName(post?.platform) === "Website";
+}
+
+function usesPageScreenshot(post: any) {
+  return ["Website", "X"].includes(normalizePlatformName(post?.platform));
 }
 
 function contentAudienceLabel(post: any) {
@@ -899,8 +1067,17 @@ function contentOpenLabel(post: any) {
   return isWebsiteContent(post) ? "打开网页" : "前往平台查看";
 }
 
-function contentRateHint(post: any) {
-  return isWebsiteContent(post) ? "互动量 / 访问量" : "互动量 / 播放量";
+function contentPlaybackRate(post: any) {
+  const audience = contentFollowers(post);
+  return audience > 0 ? postExposure(post) / audience : 0;
+}
+
+function contentPlaybackRateText(post: any) {
+  return ratioPercent(postExposure(post), contentFollowers(post));
+}
+
+function contentPlaybackRateHint(post: any) {
+  return isWebsiteContent(post) ? "访问量 / UMV" : "播放量 / 粉丝量";
 }
 
 function contentCPMHint(post: any) {
@@ -941,6 +1118,14 @@ function contentCooperationType(post: any) {
   return String(
     post?.cooperationType || contentCooperation(post)?.cooperationType || ""
   ).trim();
+}
+
+function contentDisplayTitle(post: any) {
+  return (
+    String(post?.title || post?.description || "").trim() ||
+    contentTitleFromUrl(post?.postUrl) ||
+    "标题获取中"
+  );
 }
 
 function contentCPM(post: any) {
@@ -1993,6 +2178,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("resize", renderReportChart);
   window.removeEventListener("resize", renderOverviewCharts);
+  contentTitleRefreshTimers.forEach(timer => window.clearTimeout(timer));
+  contentTitleRefreshTimers.clear();
   reportChart?.dispose();
   platformDistributionChart?.dispose();
   platformPerformanceChart?.dispose();
@@ -2169,13 +2356,7 @@ onBeforeUnmount(() => {
                     <PlatformIconBadge :platform="contentDetailView.platform" />
                     {{ contentDetailView.platform || "合作内容" }}
                   </span>
-                  <h2>
-                    {{
-                      contentDetailView.title ||
-                      contentDetailView.description ||
-                      "已发布合作内容"
-                    }}
-                  </h2>
+                  <h2>{{ contentDisplayTitle(contentDetailView) }}</h2>
                   <CooperationTypeTags
                     v-if="contentCooperationType(contentDetailView)"
                     class="content-detail-cooperation-types"
@@ -2221,14 +2402,9 @@ onBeforeUnmount(() => {
               <small>点赞、评论、分享与收藏</small>
             </article>
             <article>
-              <span>互动率</span>
-              <strong>{{
-                ratioPercent(
-                  postEngagement(contentDetailView),
-                  postExposure(contentDetailView)
-                )
-              }}</strong>
-              <small>{{ contentRateHint(contentDetailView) }}</small>
+              <span>播放率</span>
+              <strong>{{ contentPlaybackRateText(contentDetailView) }}</strong>
+              <small>{{ contentPlaybackRateHint(contentDetailView) }}</small>
             </article>
             <article>
               <span>CPM</span>
@@ -2810,6 +2986,8 @@ onBeforeUnmount(() => {
             <el-option label="最新发布" value="latest" />
             <el-option label="播放量从高到低" value="views" />
             <el-option label="互动量从高到低" value="engagement" />
+            <el-option label="播放率从高到低" value="playbackRate" />
+            <el-option label="CPM 从高到低" value="cpm" />
           </el-select>
           <span class="content-count"
             >共 {{ filteredContentPosts.length }} 条内容</span
@@ -2837,10 +3015,43 @@ onBeforeUnmount(() => {
                   {{ contentAudienceLabel(post) }}
                 </span>
               </div>
-              <PlatformIconBadge
-                class="content-platform-badge"
-                :platform="post.platform"
-              />
+              <div class="content-card-actions" @click.stop>
+                <PlatformIconBadge
+                  class="content-platform-badge"
+                  :platform="post.platform"
+                />
+                <el-dropdown
+                  trigger="click"
+                  @command="command => handleContentCardCommand(command, post)"
+                >
+                  <el-button
+                    circle
+                    text
+                    size="small"
+                    aria-label="内容操作"
+                    :loading="syncingContentIds[contentOperationKey(post)]"
+                    @click.stop
+                  >
+                    <IconifyIconOnline icon="ri:more-2-fill" />
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="edit">
+                        <IconifyIconOnline icon="ri:edit-line" />
+                        编辑
+                      </el-dropdown-item>
+                      <el-dropdown-item command="sync">
+                        <IconifyIconOnline icon="ri:refresh-line" />
+                        同步
+                      </el-dropdown-item>
+                      <el-dropdown-item command="delete" divided>
+                        <IconifyIconOnline icon="ri:delete-bin-line" />
+                        删除
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
             </div>
             <div class="content-cover-wrap">
               <img
@@ -2861,15 +3072,24 @@ onBeforeUnmount(() => {
                 class="content-card-cooperation-types"
                 :value="contentCooperationType(post)"
               />
-              <p>{{ post.title || post.description || "已同步内容" }}</p>
-              <div>
-                <span
-                  ><IconifyIconOnline icon="ri:play-circle-line" />
-                  {{ formatCount(postExposure(post)) }}</span
-                ><span
-                  ><IconifyIconOnline icon="ri:heart-3-line" />
-                  {{ formatCount(postEngagement(post)) }}</span
-                >
+              <p>{{ contentDisplayTitle(post) }}</p>
+              <div class="content-card-metrics">
+                <span>
+                  <small>{{ contentExposureLabel(post) }}</small>
+                  <strong>{{ formatCount(postExposure(post)) }}</strong>
+                </span>
+                <span>
+                  <small>互动量</small>
+                  <strong>{{ formatCount(postEngagement(post)) }}</strong>
+                </span>
+                <span>
+                  <small>播放率</small>
+                  <strong>{{ contentPlaybackRateText(post) }}</strong>
+                </span>
+                <span>
+                  <small>CPM</small>
+                  <strong>{{ moneyText(contentCPM(post)) }}</strong>
+                </span>
               </div>
             </div>
           </article>
@@ -5385,9 +5605,14 @@ onBeforeUnmount(() => {
   color: #8a8f97;
   font-size: 11px;
 }
-.content-author .el-tag,
-.content-platform-badge {
+.content-card-actions {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
   margin-left: auto;
+}
+.content-card-actions .el-button {
+  color: #747983;
 }
 .content-cover-wrap {
   position: relative;
@@ -5452,6 +5677,29 @@ onBeforeUnmount(() => {
   margin-top: 11px;
   color: #777a81;
   font-size: 12px;
+}
+.content-info > .content-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.content-info .content-card-metrics > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  background: #f7f8fa;
+}
+.content-card-metrics small {
+  color: #8a8f97;
+  font-size: 10px;
+}
+.content-card-metrics strong {
+  overflow: hidden;
+  color: #30343a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .content-info span {
   display: inline-flex;

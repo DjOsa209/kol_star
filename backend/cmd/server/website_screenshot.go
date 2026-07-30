@@ -50,15 +50,7 @@ func captureWebsiteScreenshot(
 	command := exec.CommandContext(
 		captureCtx,
 		browserPath,
-		"--headless=new",
-		"--disable-gpu",
-		"--hide-scrollbars",
-		"--window-size=1280,720",
-		"--force-device-scale-factor=1",
-		"--run-all-compositor-stages-before-draw",
-		"--virtual-time-budget=4000",
-		"--screenshot="+tempPath,
-		pageURL,
+		websiteScreenshotArgs(pageURL, tempPath, os.Geteuid() == 0)...,
 	)
 	output, err := command.CombinedOutput()
 	if captureCtx.Err() != nil {
@@ -82,6 +74,26 @@ func captureWebsiteScreenshot(
 	}
 	return "/api/uploads/resource-images/" +
 		filepath.ToSlash(filepath.Join(relativeDir, "website.png")), ""
+}
+
+func websiteScreenshotArgs(pageURL, screenshotPath string, runningAsRoot bool) []string {
+	args := []string{
+		"--headless=new",
+		"--disable-gpu",
+		"--hide-scrollbars",
+		"--window-size=1280,720",
+		"--force-device-scale-factor=1",
+		"--run-all-compositor-stages-before-draw",
+		"--virtual-time-budget=4000",
+		"--screenshot=" + screenshotPath,
+	}
+	// Chromium refuses to start as root with its sandbox enabled. Production
+	// containers commonly run the backend as root, so disable it only in that
+	// environment and keep the stronger default for regular service accounts.
+	if runningAsRoot {
+		args = append(args, "--no-sandbox")
+	}
+	return append(args, pageURL)
 }
 
 func websiteScreenshotBrowserPath() string {

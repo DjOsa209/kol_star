@@ -3776,6 +3776,11 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	incremental := boolField(body, "incremental")
+	replaceExisting := boolField(body, "replaceExisting")
+	if incremental && replaceExisting {
+		writeError(w, http.StatusOK, 10001, "增量导入与覆盖导入不能同时启用")
+		return
+	}
 	rows, ok := body["rows"].([]any)
 	if !ok || len(rows) == 0 {
 		writeError(w, http.StatusOK, 10001, "导入数据不能为空")
@@ -3798,7 +3803,7 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	batchID := fmt.Sprintf("IMP%s", time.Now().Format("20060102150405"))
+	batchID := fmt.Sprintf("IMP%d", time.Now().UnixNano())
 	imported := 0
 	importedContent := 0
 	importedProfiles := 0
@@ -3886,6 +3891,24 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusOK, 10002, "没有可导入的有效数据")
 		return
 	}
+	if replaceExisting && len(errors) > 0 {
+		writeError(w, http.StatusOK, 10002, "覆盖导入存在异常行，已取消本次更新，请修正后重试")
+		return
+	}
+	removedContent := int64(0)
+	removedResources := int64(0)
+	if replaceExisting {
+		removedContent, removedResources, err = cleanupReplacedProjectImport(
+			r.Context(),
+			tx,
+			projectID,
+			batchID,
+		)
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		writeDBError(w, err)
 		return
@@ -3909,6 +3932,7 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 	writeOK(w, map[string]any{
 		"batchId":             batchID,
 		"incremental":         incremental,
+		"replaceExisting":     replaceExisting,
 		"imported":            imported,
 		"importedContent":     importedContent,
 		"importedProfiles":    importedProfiles,
@@ -3918,9 +3942,51 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		"matchedResources":    len(matchedResourceIDs),
 		"failed":              len(errors),
 		"createdResources":    createdResources,
+		"removedContent":      removedContent,
+		"removedResources":    removedResources,
 		"platformSyncStarted": imported > 0,
 		"errors":              errors,
 	})
+}
+
+func cleanupReplacedProjectImport(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID int,
+	currentBatchID string,
+) (int64, int64, error) {
+	contentResult, err := tx.ExecContext(ctx,
+		`delete from biz_cooperations
+		  where project_id = ?
+		    and coalesce(import_batch_id, '') <> ?`,
+		projectID,
+		currentBatchID,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	removedContent, err := contentResult.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	resourceResult, err := tx.ExecContext(ctx,
+		`delete project_resource from biz_project_resources project_resource
+		   left join biz_cooperations cooperation
+		     on cooperation.project_id = project_resource.project_id
+		    and cooperation.resource_id = project_resource.resource_id
+		  where project_resource.project_id = ?
+		    and cooperation.id is null`,
+		projectID,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	removedResources, err := resourceResult.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+	return removedContent, removedResources, nil
 }
 
 func ensureImportProjectResource(ctx context.Context, tx *sql.Tx, projectID int, resourceID int64, preserveExisting bool) error {

@@ -45,6 +45,8 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.scheduleProjectContentTitleRefresh(projectID)
+
 	cooperations, err := a.projectCooperationRows(r.Context(), projectID)
 	if err != nil {
 		writeDBError(w, err)
@@ -226,6 +228,23 @@ func normalizeEditableContentPlatform(value string) string {
 	return editableContentPlatforms[strings.ToLower(strings.TrimSpace(value))]
 }
 
+func projectContentPlatformUsesPageScreenshot(platform string) bool {
+	switch normalizeEditableContentPlatform(platform) {
+	case "Website", "X":
+		return true
+	default:
+		return false
+	}
+}
+
+func updateResourcePlatformForContent(ctx context.Context, tx *sql.Tx, resourceID int, platform string) error {
+	_, err := tx.ExecContext(ctx,
+		`update biz_resources set platform = ? where id = ?`,
+		platform, resourceID,
+	)
+	return err
+}
+
 func validEditableContentURL(value string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
@@ -320,13 +339,19 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 	remoteCoverURL := ""
 	localCoverURL := ""
 	previewWarning := ""
-	if platform == "Website" {
+	if projectContentPlatformUsesPageScreenshot(platform) {
 		localCoverURL, previewWarning = captureWebsiteScreenshot(
 			r.Context(),
 			resourceID,
 			cooperationID,
 			postURL,
 		)
+	}
+	titleContext, cancelTitle := context.WithTimeout(r.Context(), 10*time.Second)
+	contentTitle := fetchContentMetadataTitle(titleContext, platform, postURL)
+	cancelTitle()
+	if contentTitle == "" {
+		contentTitle = contentTitleFromURL(postURL)
 	}
 
 	tx, err := a.DB().BeginTx(r.Context(), nil)
@@ -343,11 +368,13 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		`update biz_cooperations
 		    set final_link = ?, deliverable_links = ?, content_platform = ?,
 		        content_cover_url = ?, content_cover_remote_url = ?,
+		        creative_name = if(? <> '', ?, creative_name),
 		        views = if(?, 0, views), impressions = if(?, 0, impressions),
 		        engagement_count = if(?, 0, engagement_count),
 		        comments_count = if(?, 0, comments_count)
 		  where id = ? and project_id = ? and resource_id = ?`,
 		postURL, nextDeliverableLinks, platform, localCoverURL, remoteCoverURL,
+		contentTitle, contentTitle,
 		contentChanged, contentChanged, contentChanged, contentChanged,
 		cooperationID, projectID, resourceID,
 	)
@@ -355,24 +382,32 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		writeDBError(w, err)
 		return
 	}
+	if err = updateResourcePlatformForContent(r.Context(), tx, resourceID, platform); err != nil {
+		writeDBError(w, err)
+		return
+	}
 
 	if postID > 0 {
 		platformOrURLChanged := !strings.EqualFold(strings.TrimSpace(oldPostPlatform), platform) ||
 			strings.TrimSpace(oldPostURL) != postURL
-		if platform == "Website" {
+		if projectContentPlatformUsesPageScreenshot(platform) {
+			mediaType := "POST"
+			if platform == "Website" {
+				mediaType = "webpage"
+			}
 			_, err = tx.ExecContext(r.Context(),
 				`update biz_resource_platform_posts
 				    set platform = ?, post_url = ?, platform_post_id = '',
-				        media_type = 'webpage', cover_url = ?, cover_remote_url = ?,
-				        title = if(?, '', title), description = if(?, '', description),
+				        media_type = ?, cover_url = ?, cover_remote_url = ?,
+				        title = ?, description = if(?, '', description),
 				        published_at = if(?, null, published_at),
 				        duration_seconds = if(?, 0, duration_seconds),
 				        view_count = if(?, 0, view_count), like_count = if(?, 0, like_count),
 				        comment_count = if(?, 0, comment_count), share_count = if(?, 0, share_count),
 				        save_count = if(?, 0, save_count)
 				  where id = ? and resource_id = ?`,
-				platform, postURL, localCoverURL, remoteCoverURL,
-				contentChanged, contentChanged, contentChanged, contentChanged,
+				platform, postURL, mediaType, localCoverURL, remoteCoverURL,
+				contentTitle, contentChanged, contentChanged, contentChanged,
 				contentChanged, contentChanged, contentChanged, contentChanged, contentChanged,
 				postID, resourceID,
 			)
@@ -380,12 +415,12 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 			_, err = tx.ExecContext(r.Context(),
 				`update biz_resource_platform_posts
 				    set platform = ?, post_url = ?, platform_post_id = '',
-				        title = '', description = '', cover_url = '', cover_remote_url = '',
+				        title = ?, description = '', cover_url = '', cover_remote_url = '',
 				        published_at = null, duration_seconds = 0,
 				        view_count = 0, like_count = 0, comment_count = 0,
 				        share_count = 0, save_count = 0
 				  where id = ? and resource_id = ?`,
-				platform, postURL, postID, resourceID,
+				platform, postURL, contentTitle, postID, resourceID,
 			)
 		}
 		if err != nil {
@@ -405,6 +440,7 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		"updated":         true,
 		"platform":        platform,
 		"postUrl":         postURL,
+		"title":           contentTitle,
 		"coverUrl":        firstNonEmpty(remoteCoverURL, localCoverURL),
 		"coverRemoteUrl":  remoteCoverURL,
 		"coverLocalUrl":   localCoverURL,
@@ -412,6 +448,45 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		"cooperationId":   cooperationID,
 		"contentRecordId": postID,
 	})
+}
+
+func (a *app) deleteBusinessProjectContent(w http.ResponseWriter, r *http.Request) {
+	body := readBody(r)
+	projectID := intField(body, "projectId")
+	cooperationID := intField(body, "cooperationId")
+	resourceID := intField(body, "resourceId")
+	if projectID <= 0 || cooperationID <= 0 || resourceID <= 0 {
+		writeError(w, http.StatusOK, 10001, "项目、合作记录和合作方不能为空")
+		return
+	}
+
+	result, err := a.DB().ExecContext(r.Context(),
+		`update biz_cooperations
+		    set final_link = '', deliverable_links = '', content_platform = '',
+		        content_cover_url = '', content_cover_remote_url = '', creative_name = '',
+		        impressions = 0, views = 0, clicks = 0, conversions = 0,
+		        engagement_count = 0, comments_count = 0, roi = 0,
+		        release_date = null, publish_time = null,
+		        tracking_link = '', ad_authorization_code = ''
+		  where id = ? and project_id = ? and resource_id = ?`,
+		cooperationID,
+		projectID,
+		resourceID,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if affected == 0 {
+		writeError(w, http.StatusOK, 10004, "合作内容不存在")
+		return
+	}
+	writeOK(w, map[string]any{"deleted": true, "cooperationId": cooperationID})
 }
 
 func normalizedProjectContentURL(value string) string {

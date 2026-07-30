@@ -129,10 +129,6 @@ export const importProjects = (data?: object) => {
   return http.request<Result>("post", "/business/projects/import", { data });
 };
 
-export const syncProject = (data?: object) => {
-  return http.request<Result>("post", "/business/projects/sync", { data });
-};
-
 export const previewProjectExcelImport = (file: File) => {
   const data = new FormData();
   data.append("file", file);
@@ -181,6 +177,12 @@ export const updateProjectContent = (data?: object) => {
     { data },
     { timeout: 30000 }
   );
+};
+
+export const deleteProjectContent = (data?: object) => {
+  return http.request<Result>("post", "/business/projects/content/delete", {
+    data
+  });
 };
 
 export const updateProjectStatus = (data?: object) => {

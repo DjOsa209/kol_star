@@ -13,12 +13,10 @@ import {
   getProjectList,
   createProject,
   importProjects,
-  syncProject,
   previewProjectExcelImport,
   downloadProjectExcelImportTemplate,
   downloadProjectData,
   updateProject,
-  updateProjectStatus,
   deleteProject,
   getCooperationList,
   createCooperation,
@@ -49,7 +47,8 @@ const importParseError = ref("");
 const contentUploadKey = ref(0);
 const editingProjectId = ref<number | null>(null);
 const editingCooperationId = ref<number | null>(null);
-const importTargetMode = ref<"new" | "existing">("new");
+type ImportTargetMode = "new" | "replace" | "incremental";
+const importTargetMode = ref<ImportTargetMode>("new");
 const importProjectId = ref<number | null>(null);
 const importProjectNameDraft = ref("");
 const importProjectCreating = ref(false);
@@ -63,12 +62,9 @@ const selectedProjectId = ref<number | null>(null);
 const activePipelineStage = ref("all");
 const activeCooperation = ref<any>(null);
 const syncingCooperationIds = reactive<Record<number, boolean>>({});
-const syncingProjectIds = reactive<Record<number, boolean>>({});
 const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
-const projectStatusFilter = ref("all");
-const updatingProjectStatusIds = reactive<Record<number, boolean>>({});
 const projectStatusOptions = ["未开始", "进行中", "已结束"] as const;
 
 const defaultMarketOptions = [
@@ -328,25 +324,126 @@ const invalidImportRows = computed(() =>
   importRows.value.filter(row => (row.errors || []).length > 0)
 );
 
-const duplicateImportRows = computed(() =>
+const fileDuplicateImportRows = computed(() =>
   importRows.value.filter(row => row.duplicate)
 );
 
+function normalizeImportIdentity(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+    return `${hostname}${pathname}`.toLowerCase();
+  } catch {
+    return raw
+      .toLowerCase()
+      .replace(/^@/, "")
+      .replace(/\s+/g, " ")
+      .replace(/\/+$/, "");
+  }
+}
+
+function importRowContentKeys(row: any) {
+  const raw = String(row?.deliverableLinks || "");
+  return Array.from(
+    new Set(
+      (raw.match(/https?:\/\/[^\s,，;；]+/gi) || [raw])
+        .map(normalizeImportIdentity)
+        .filter(Boolean)
+    )
+  );
+}
+
+function cooperationContentKeys(row: any) {
+  return Array.from(
+    new Set(
+      [row?.finalLink, row?.deliverableLinks]
+        .flatMap(value => {
+          const raw = String(value || "");
+          return raw.match(/https?:\/\/[^\s,，;；]+/gi) || [raw];
+        })
+        .map(normalizeImportIdentity)
+        .filter(Boolean)
+    )
+  );
+}
+
+function importRowMatchesExistingCooperation(row: any) {
+  const projectId = Number(importProjectId.value || 0);
+  if (!projectId) return false;
+  const existingRows = cooperations.value.filter(
+    item => Number(item.projectId) === projectId
+  );
+  const contentKeys = importRowContentKeys(row);
+  if (contentKeys.length) {
+    return existingRows.some(item =>
+      cooperationContentKeys(item).some(key => contentKeys.includes(key))
+    );
+  }
+
+  const platform = normalizeImportIdentity(row?.platform);
+  const influencer = normalizeImportIdentity(row?.influencer);
+  if (!influencer) return false;
+  return existingRows.some(item => {
+    const existingPlatform = normalizeImportIdentity(
+      item?.contentPlatform || item?.platform
+    );
+    if (platform && existingPlatform && platform !== existingPlatform) {
+      return false;
+    }
+    return [
+      item?.platformUrl,
+      item?.resourceName,
+      item?.platformHandle
+    ].some(value => normalizeImportIdentity(value) === influencer);
+  });
+}
+
+const existingProjectDuplicateRows = computed(() => {
+  if (importTargetMode.value !== "incremental") return [];
+  return validImportRows.value.filter(
+    row => !row.duplicate && importRowMatchesExistingCooperation(row)
+  );
+});
+
+const rowsForImport = computed(() => {
+  if (importTargetMode.value !== "incremental") {
+    return validImportRows.value.filter(row => !row.duplicate);
+  }
+  const existing = new Set(existingProjectDuplicateRows.value);
+  return validImportRows.value.filter(
+    row => !row.duplicate && !existing.has(row)
+  );
+});
+
+const duplicateImportRows = computed(() => [
+  ...fileDuplicateImportRows.value,
+  ...existingProjectDuplicateRows.value
+]);
+
 const linkedImportRows = computed(() =>
-  validImportRows.value.filter(row => String(row.deliverableLinks || "").trim())
+  rowsForImport.value.filter(row => String(row.deliverableLinks || "").trim())
 );
 
 const importedTargetMarkets = computed(() =>
   Array.from(
     new Set(
-      validImportRows.value
+      rowsForImport.value
         .flatMap(row => parseProjectTargetMarkets(row.country))
         .filter(Boolean)
     )
   )
 );
 
-const visibleImportRows = computed(() => importRows.value.slice(0, 10));
+const previewImportRows = computed(() =>
+  importTargetMode.value === "incremental"
+    ? rowsForImport.value
+    : importRows.value.filter(row => !row.duplicate)
+);
+
+const visibleImportRows = computed(() => previewImportRows.value.slice(0, 10));
 
 const validProjectImportRows = computed(() =>
   projectImportRows.value.filter(row => row.errors.length === 0)
@@ -497,12 +594,6 @@ const campaignHealth = computed(() => {
 const visibleProjects = computed(() => {
   const keyword = projectSearch.value.trim().toLowerCase();
   return projects.value.filter(project => {
-    const status = normalizeProjectStatus(project.status);
-    if (
-      projectStatusFilter.value !== "all" &&
-      status !== projectStatusFilter.value
-    )
-      return false;
     if (!keyword) return true;
     return [
       project.name,
@@ -631,11 +722,21 @@ async function refreshImportProjectOptions(showError = true) {
   importProjectOptionsLoading.value = true;
   importProjectOptionsError.value = "";
   try {
-    const res = await getProjectList();
-    if (res.code !== 0 || !Array.isArray(res.data?.list)) {
-      throw new Error(res.message || "已有项目加载失败");
+    const [projectRes, cooperationRes] = await Promise.all([
+      getProjectList(),
+      getCooperationList()
+    ]);
+    if (projectRes.code !== 0 || !Array.isArray(projectRes.data?.list)) {
+      throw new Error(projectRes.message || "已有项目加载失败");
     }
-    projects.value = res.data.list;
+    projects.value = projectRes.data.list;
+    if (
+      cooperationRes.code !== 0 ||
+      !Array.isArray(cooperationRes.data?.list)
+    ) {
+      throw new Error(cooperationRes.message || "已有合作内容加载失败");
+    }
+    cooperations.value = cooperationRes.data.list;
     if (!projects.value.length) {
       importProjectOptionsError.value = "暂无可选择的已有项目";
     }
@@ -647,8 +748,14 @@ async function refreshImportProjectOptions(showError = true) {
   }
 }
 
-async function handleImportTargetModeChange(value: "new" | "existing") {
-  if (value === "existing") await refreshImportProjectOptions();
+async function handleImportTargetModeChange(value: ImportTargetMode) {
+  if (value !== "new") await refreshImportProjectOptions();
+}
+
+async function handleImportProjectChange() {
+  if (importTargetMode.value === "incremental") {
+    await refreshImportProjectOptions(false);
+  }
 }
 
 async function handleImportProjectDropdownVisible(visible: boolean) {
@@ -926,33 +1033,6 @@ function normalizeProjectStatus(status: unknown) {
   if (/^(active|进行中|执行中)$/i.test(value)) return "进行中";
   if (/^(completed|已完成|已结束|结束)$/i.test(value)) return "已结束";
   return "未开始";
-}
-
-async function handleProjectStatusChange(row: any, status: string) {
-  const projectId = Number(row.id);
-  if (!projectId || updatingProjectStatusIds[projectId]) return;
-
-  const nextStatus = normalizeProjectStatus(status);
-  const previousStatus = row.status;
-  updatingProjectStatusIds[projectId] = true;
-  row.status = nextStatus;
-  try {
-    const res = await updateProjectStatus({
-      id: projectId,
-      status: nextStatus
-    });
-    if (res.code !== 0) {
-      row.status = previousStatus;
-      ElMessage.warning(res.message || "项目状态更新失败");
-      return;
-    }
-    ElMessage.success("项目状态已更新");
-  } catch {
-    row.status = previousStatus;
-    ElMessage.warning("项目状态更新失败，请稍后重试");
-  } finally {
-    updatingProjectStatusIds[projectId] = false;
-  }
 }
 
 function openCreateCooperation() {
@@ -1361,28 +1441,6 @@ function projectNameFromFileName(fileName: string) {
     .trim();
 }
 
-async function syncProjectData(row: any) {
-  const projectId = Number(row?.id || 0);
-  if (!projectId || syncingProjectIds[projectId]) return;
-  syncingProjectIds[projectId] = true;
-  try {
-    const res = await syncProject({ id: projectId });
-    if (res.code !== 0) {
-      ElMessage.warning(res.message || "项目同步启动失败");
-      return;
-    }
-    if (res.data?.started === false) {
-      ElMessage.warning(res.data?.message || "已有同步任务正在运行");
-      return;
-    }
-    ElMessage.success(res.data?.message || "项目数据同步任务已启动");
-  } catch {
-    ElMessage.error("项目同步启动失败，请稍后重试");
-  } finally {
-    syncingProjectIds[projectId] = false;
-  }
-}
-
 async function handleProjectImportFile(file: any) {
   // Keep legacy upload controls on the same workflow: one workbook becomes one
   // project, then the user chooses the Sheet(s) whose content should be imported.
@@ -1782,10 +1840,10 @@ function normalizeImportPreviewSheet(sheet: any) {
 }
 
 async function ensureImportProject() {
-  if (importTargetMode.value === "existing") {
+  if (importTargetMode.value !== "new") {
     const projectId = Number(importProjectId.value || 0);
     if (!projectId) {
-      ElMessage.warning("请选择需要增量导入的已有项目");
+      ElMessage.warning("请选择要导入的已有项目");
       return false;
     }
     const existing = projects.value.find(
@@ -1918,22 +1976,27 @@ async function submitImport() {
     return;
   }
   if (!(await ensureImportProject())) return;
-  if (validImportRows.value.length === 0) {
+  if (rowsForImport.value.length === 0) {
     ElMessage.warning("没有可导入的有效行");
     return;
   }
   importLoading.value = true;
   const res = await importCooperations({
     projectId: importProjectId.value,
-    incremental: importTargetMode.value === "existing",
-    rows: validImportRows.value
+    incremental: importTargetMode.value === "incremental",
+    replaceExisting: importTargetMode.value === "replace",
+    rows: rowsForImport.value
   });
   importLoading.value = false;
   if (res.code === 0) {
     const modeText =
-      importTargetMode.value === "existing" ? "增量导入完成" : "导入完成";
+      importTargetMode.value === "incremental"
+        ? "增量导入完成"
+        : importTargetMode.value === "replace"
+          ? "覆盖导入完成"
+          : "导入完成";
     ElMessage.success(
-      `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条`
+      `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，移除旧内容 ${res.data.removedContent || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条`
     );
     if (res.data.failed) {
       const failures = (res.data.errors || [])
@@ -2022,15 +2085,6 @@ onMounted(() => {
               ><IconifyIconOnline icon="ri:search-line"
             /></template>
           </el-input>
-          <el-select v-model="projectStatusFilter" class="status-filter">
-            <el-option label="全部状态" value="all" />
-            <el-option
-              v-for="status in projectStatusOptions"
-              :key="status"
-              :label="status"
-              :value="status"
-            />
-          </el-select>
           <span>{{ visibleProjects.length }} 个项目</span>
         </div>
         <el-table
@@ -2051,25 +2105,6 @@ onMounted(() => {
                   ><small>{{ projectCreatedDate(row) }}</small>
                 </div>
               </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="130" sortable>
-            <template #default="{ row }">
-              <el-select
-                :model-value="normalizeProjectStatus(row.status)"
-                size="small"
-                class="project-status-editor"
-                :loading="updatingProjectStatusIds[row.id]"
-                @click.stop
-                @change="value => handleProjectStatusChange(row, value)"
-              >
-                <el-option
-                  v-for="status in projectStatusOptions"
-                  :key="status"
-                  :label="status"
-                  :value="status"
-                />
-              </el-select>
             </template>
           </el-table-column>
           <el-table-column
@@ -2170,7 +2205,7 @@ onMounted(() => {
               }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="280" fixed="right" align="right">
+          <el-table-column label="操作" width="240" fixed="right" align="right">
             <template #default="{ row }">
               <el-button
                 link
@@ -2180,13 +2215,6 @@ onMounted(() => {
               >
               <el-button link @click.stop="openEditProject(row)"
                 >编辑</el-button
-              >
-              <el-button
-                link
-                type="primary"
-                :loading="syncingProjectIds[row.id]"
-                @click.stop="syncProjectData(row)"
-                >同步</el-button
               >
               <el-button
                 link
@@ -2214,16 +2242,6 @@ onMounted(() => {
               v-model="projectForm.name"
               placeholder="例如：Infinix NOTE 60 新品推广"
           /></el-form-item>
-          <el-form-item label="状态">
-            <el-select v-model="projectForm.status" class="w-full!">
-              <el-option
-                v-for="status in projectStatusOptions"
-                :key="status"
-                :label="status"
-                :value="status"
-              />
-            </el-select>
-          </el-form-item>
           <el-form-item label="负责人"
             ><el-input v-model="projectForm.owner"
           /></el-form-item>
@@ -2390,13 +2408,12 @@ onMounted(() => {
               @change="handleImportTargetModeChange"
             >
               <el-radio-button value="new">新建项目并导入</el-radio-button>
-              <el-radio-button value="existing"
-                >已有项目增量导入</el-radio-button
-              >
+              <el-radio-button value="replace">覆盖已有项目</el-radio-button>
+              <el-radio-button value="incremental">增量追加</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item
-            v-if="importTargetMode === 'existing'"
+            v-if="importTargetMode !== 'new'"
             label="已有项目"
             required
           >
@@ -2414,6 +2431,7 @@ onMounted(() => {
               "
               class="import-project-select"
               placeholder="搜索并选择已有项目"
+              @change="handleImportProjectChange"
               @visible-change="handleImportProjectDropdownVisible"
             >
               <el-option
@@ -2443,12 +2461,20 @@ onMounted(() => {
           </el-form-item>
         </el-form>
         <el-alert
-          v-if="importTargetMode === 'existing'"
+          v-if="importTargetMode === 'incremental'"
           class="mb-3"
           type="info"
           :closable="false"
           show-icon
-          title="增量导入不会修改已有项目、达人/媒体资料或历史合作。达人一致时新增合作；达人不存在时新增达人和合作；完全相同的内容链接将跳过。"
+          :title="`增量导入仅展示并提交新增数据；已隐藏文件内或项目中已有的重复数据 ${duplicateImportRows.length} 条。`"
+        />
+        <el-alert
+          v-else-if="importTargetMode === 'replace'"
+          class="mb-3"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="覆盖导入会以本次文件解析结果为准更新项目，并移除该项目中未出现在本次文件里的历史合作与项目关联；全局达人/媒体资料不会被删除。"
         />
         <el-alert
           v-else
@@ -2466,7 +2492,7 @@ onMounted(() => {
           class="mb-3"
           type="success"
           :closable="false"
-          :title="`标准数据区已自动识别。文件：${importFileName || '-'}，共 ${importRows.length} 行，可导入 ${validImportRows.length} 行，其中合作内容 ${linkedImportRows.length} 行，异常 ${invalidImportRows.length} 行，疑似重复 ${duplicateImportRows.length} 行`"
+          :title="`标准数据区已自动识别。文件：${importFileName || '-'}，共 ${importRows.length} 行，当前模式展示并导入 ${rowsForImport.length} 行，其中合作内容 ${linkedImportRows.length} 行，异常 ${invalidImportRows.length} 行，已隐藏重复 ${duplicateImportRows.length} 行`"
         />
         <el-table
           :data="visibleImportRows"
@@ -2512,11 +2538,11 @@ onMounted(() => {
           </el-table-column>
         </el-table>
         <p
-          v-if="visibleImportRows.length < importRows.length"
+          v-if="visibleImportRows.length < previewImportRows.length"
           class="import-preview-more"
         >
           当前仅预览前 {{ visibleImportRows.length }} 条，确认后将导入全部
-          {{ validImportRows.length }} 条有效数据
+          {{ rowsForImport.length }} 条有效数据
         </p>
         <template #footer>
           <el-button @click="importDialog = false">取消</el-button>
@@ -2526,15 +2552,21 @@ onMounted(() => {
             :disabled="
               importParsing ||
               Boolean(importParseError) ||
-              validImportRows.length === 0 ||
+              rowsForImport.length === 0 ||
               importProjectCreating ||
-              (importTargetMode === 'existing' && !importProjectId) ||
+              (importTargetMode !== 'new' && !importProjectId) ||
               (importTargetMode === 'new' && !importProjectNameDraft.trim())
             "
             @click="submitImport"
           >
-            {{ importTargetMode === "existing" ? "确认增量导入" : "确认导入" }}
-            {{ validImportRows.length }} 行（内容
+            {{
+              importTargetMode === "incremental"
+                ? "确认增量导入"
+                : importTargetMode === "replace"
+                  ? "确认覆盖导入"
+                  : "确认导入"
+            }}
+            {{ rowsForImport.length }} 行（内容
             {{ linkedImportRows.length }} 条）
           </el-button>
         </template>
@@ -5966,12 +5998,6 @@ onMounted(() => {
 }
 .project-search {
   width: min(430px, 100%);
-}
-.status-filter {
-  width: 145px;
-}
-.project-status-editor {
-  width: 108px;
 }
 .projects-table {
   width: 100%;

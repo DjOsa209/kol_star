@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,11 +18,12 @@ type cooperationPostLink struct {
 }
 
 type cooperationPostSyncResult struct {
-	Synced   bool   `json:"synced"`
-	Source   string `json:"source,omitempty"`
-	Platform string `json:"platform,omitempty"`
-	PostID   string `json:"postId,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Synced         bool   `json:"synced"`
+	Source         string `json:"source,omitempty"`
+	Platform       string `json:"platform,omitempty"`
+	PostID         string `json:"postId,omitempty"`
+	Message        string `json:"message,omitempty"`
+	PreviewWarning string `json:"previewWarning,omitempty"`
 }
 
 func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowAPI bool) (cooperationPostSyncResult, error) {
@@ -49,7 +51,7 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		return cooperationPostSyncResult{}, err
 	}
 	source := "作品库"
-	if !found && allowAPI {
+	if allowAPI {
 		post, err = a.fetchCooperationPlatformPost(ctx, resourceID, link)
 		if err != nil {
 			return cooperationPostSyncResult{
@@ -71,13 +73,65 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	if err := a.applyPlatformPostToCooperation(ctx, cooperationID, post); err != nil {
 		return cooperationPostSyncResult{}, err
 	}
+	previewWarning := ""
+	if projectContentPlatformUsesPageScreenshot(link.Platform) {
+		localCoverURL, warning := captureWebsiteScreenshot(ctx, resourceID, cooperationID, link.URL)
+		previewWarning = warning
+		if localCoverURL != "" {
+			if err := storeCooperationPageScreenshot(
+				ctx,
+				a.DB(),
+				cooperationID,
+				resourceID,
+				link.Platform,
+				link.PostID,
+				localCoverURL,
+			); err != nil {
+				return cooperationPostSyncResult{}, err
+			}
+		}
+	}
 	return cooperationPostSyncResult{
-		Synced:   true,
-		Source:   source,
-		Platform: link.Platform,
-		PostID:   post.PlatformPostID,
-		Message:  fmt.Sprintf("已通过%s同步合作作品数据", source),
+		Synced:         true,
+		Source:         source,
+		Platform:       link.Platform,
+		PostID:         post.PlatformPostID,
+		Message:        fmt.Sprintf("已通过%s同步合作作品数据", source),
+		PreviewWarning: previewWarning,
 	}, nil
+}
+
+func storeCooperationPageScreenshot(
+	ctx context.Context,
+	db *sql.DB,
+	cooperationID int,
+	resourceID int,
+	platform string,
+	platformPostID string,
+	localCoverURL string,
+) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx,
+		`update biz_cooperations
+		    set content_platform = ?, content_cover_url = ?, content_cover_remote_url = ''
+		  where id = ? and resource_id = ?`,
+		platform, localCoverURL, cooperationID, resourceID,
+	); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx,
+		`update biz_resource_platform_posts
+		    set cover_url = ?, cover_remote_url = ''
+		  where resource_id = ? and platform = ? and platform_post_id = ?`,
+		localCoverURL, resourceID, platform, platformPostID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func cooperationPostSource(finalLink, deliverableLinks string) string {
@@ -100,42 +154,6 @@ func (a *app) syncCooperationsForResource(ctx context.Context, resourceID int, a
 	}
 	defer rows.Close()
 	var cooperationIDs []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		cooperationIDs = append(cooperationIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range cooperationIDs {
-		result, err := a.syncCooperationPost(ctx, id, allowAPI)
-		if err != nil {
-			return err
-		}
-		if allowAPI {
-			if err := cooperationPostSyncFailure(result); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (a *app) syncCooperationsForProjectResource(ctx context.Context, projectID, resourceID int, allowAPI bool) error {
-	rows, err := a.DB().QueryContext(ctx,
-		`select id from biz_cooperations
-		  where project_id = ? and resource_id = ?
-		    and coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '') <> ''`,
-		projectID, resourceID,
-	)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	cooperationIDs := make([]int, 0)
 	for rows.Next() {
 		var id int
 		if err := rows.Scan(&id); err != nil {
@@ -272,9 +290,23 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 			if len(segments) >= 2 && (segments[0] == "p" || segments[0] == "reel" || segments[0] == "reels" || segments[0] == "tv") {
 				return cooperationPostLink{Platform: "Instagram", PostID: segments[1], URL: candidate}, nil
 			}
+		case (host == "x.com" || host == "twitter.com" || host == "mobile.twitter.com") && len(segments) >= 3:
+			if strings.EqualFold(segments[1], "status") {
+				return cooperationPostLink{Platform: "X", PostID: segments[2], URL: candidate}, nil
+			}
+		case strings.HasSuffix(host, "linkedin.com"):
+			if strings.Contains(strings.ToLower(parsed.Path), "/feed/update/") || strings.Contains(strings.ToLower(parsed.Path), "/posts/") {
+				return cooperationPostLink{Platform: "LinkedIn", URL: candidate}, nil
+			}
+		case strings.HasSuffix(host, "reddit.com"):
+			if slices.Contains(segments, "comments") {
+				return cooperationPostLink{Platform: "Reddit", URL: candidate}, nil
+			}
+		case strings.HasSuffix(host, "facebook.com"):
+			return cooperationPostLink{Platform: "Facebook", URL: candidate}, nil
 		}
 	}
-	return cooperationPostLink{}, fmt.Errorf("发布链接不是可识别的 YouTube、TikTok 或 Instagram 作品链接")
+	return cooperationPostLink{}, fmt.Errorf("发布链接不是可识别的受支持平台内容链接")
 }
 
 func (a *app) findStoredPlatformPost(ctx context.Context, resourceID int, link cooperationPostLink) (platformPost, bool, error) {
@@ -322,8 +354,14 @@ func platformPostMatchesLink(post platformPost, link cooperationPostLink) bool {
 	if link.PostID != "" && strings.EqualFold(strings.TrimSpace(post.PlatformPostID), link.PostID) {
 		return true
 	}
+	if normalizedProjectContentURL(post.PostURL) == normalizedProjectContentURL(link.URL) {
+		return true
+	}
 	postLink, err := parseCooperationPostLink(post.PostURL)
-	return err == nil && postLink.Platform == link.Platform && postLink.PostID == link.PostID
+	return err == nil &&
+		link.PostID != "" &&
+		postLink.Platform == link.Platform &&
+		postLink.PostID == link.PostID
 }
 
 func (a *app) applyPlatformPostToCooperation(ctx context.Context, cooperationID int, post platformPost) error {
@@ -349,6 +387,33 @@ func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, 
 		return a.fetchTikTokPostByID(ctx, resourceID, link.PostID)
 	case "Instagram":
 		return a.fetchInstagramPostByURL(ctx, resourceID, link.URL)
+	case "X", "LinkedIn", "Reddit":
+		var resource syncResourceRow
+		if err := a.DB().QueryRowContext(ctx,
+			`select id, name, platform, platform_url, platform_user_id, platform_handle
+			   from biz_resources where id = ? limit 1`,
+			resourceID,
+		).Scan(
+			&resource.ID,
+			&resource.Name,
+			&resource.Platform,
+			&resource.PlatformURL,
+			&resource.PlatformUserID,
+			&resource.PlatformHandle,
+		); err != nil {
+			return platformPost{}, err
+		}
+		if err := a.syncResourceProfileAndPostsByPlatform(ctx, resource); err != nil {
+			return platformPost{}, err
+		}
+		post, found, err := a.findStoredPlatformPost(ctx, resourceID, link)
+		if err != nil {
+			return platformPost{}, err
+		}
+		if !found {
+			return platformPost{}, fmt.Errorf("%s 未返回对应内容，请确认抓取控制已启用作品同步", link.Platform)
+		}
+		return post, nil
 	default:
 		return platformPost{}, fmt.Errorf("暂不支持平台 %s", link.Platform)
 	}
