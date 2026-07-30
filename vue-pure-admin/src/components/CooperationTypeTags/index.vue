@@ -26,14 +26,6 @@ function tagType(value: string) {
   return "info";
 }
 
-function tagIcon(value: string) {
-  if (value.includes("付费")) return "ri:money-dollar-circle-line";
-  if (value.includes("置换")) return "ri:gift-line";
-  if (value.includes("联盟")) return "ri:links-line";
-  if (value.includes("活动")) return "ri:calendar-event-line";
-  return "ri:handshake-line";
-}
-
 function tagClass(value: string) {
   if (value.includes("付费")) return "is-paid";
   if (value.includes("置换")) return "is-barter";
@@ -49,10 +41,8 @@ function tagClass(value: string) {
       :type="tagType(tag)"
       :class="tagClass(tag)"
       effect="light"
-      round
       size="small"
     >
-      <IconifyIconOnline :icon="tagIcon(tag)" />
       {{ tag }}
     </el-tag>
   </span>
@@ -70,14 +60,11 @@ function tagClass(value: string) {
 
 .cooperation-type-tags :deep(.el-tag) {
   gap: 4px;
-  height: 24px;
-  padding: 0 9px;
+  height: 22px;
+  padding: 0 7px;
   font-weight: 600;
   border-width: 1px;
-}
-
-.cooperation-type-tags :deep(.el-tag svg) {
-  font-size: 13px;
+  border-radius: 0;
 }
 
 .cooperation-type-tags :deep(.el-tag.is-paid) {

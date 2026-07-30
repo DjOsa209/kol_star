@@ -336,11 +336,18 @@ function tierText(row: any) {
   return displayText(row.tier, "待同步");
 }
 
+function cooperationTypeValues(row: any) {
+  return Array.from(
+    new Set(
+      cooperationsFor(row)
+        .map(item => displayText(item.cooperationType, ""))
+        .filter(Boolean)
+    )
+  );
+}
+
 function cooperationTypes(row: any) {
-  const values = cooperationsFor(row)
-    .map(item => displayText(item.cooperationType, ""))
-    .filter(Boolean);
-  return Array.from(new Set(values)).join("、") || "-";
+  return cooperationTypeValues(row).join("、") || "-";
 }
 
 function resourceAudience(row: any) {
@@ -1588,7 +1595,10 @@ onUnmounted(() => {
 
           <div class="compact-cooperation">
             <div class="compact-cooperation__meta">
-              <CooperationTypeTags :value="cooperationTypes(row)" />
+              <CooperationTypeTags
+                :value="cooperationTypeValues(row)"
+                empty-text="-"
+              />
               <strong>{{ cooperationProjects(row) }}</strong>
             </div>
             <dl>
@@ -1782,7 +1792,12 @@ onUnmounted(() => {
                 <dl class="detail-grid detail-grid--metrics">
                   <div>
                     <dt>合作类型</dt>
-                    <dd>{{ cooperationTypes(row) }}</dd>
+                    <dd>
+                      <CooperationTypeTags
+                        :value="cooperationTypeValues(row)"
+                        empty-text="-"
+                      />
+                    </dd>
                   </div>
                   <div>
                     <dt>合作项目</dt>
@@ -1817,11 +1832,14 @@ onUnmounted(() => {
                     label="合作项目"
                     min-width="150"
                   />
-                  <el-table-column
-                    prop="cooperationType"
-                    label="合作类型"
-                    width="120"
-                  />
+                  <el-table-column label="合作类型" width="120">
+                    <template #default="{ row: cooperation }">
+                      <CooperationTypeTags
+                        :value="cooperation.cooperationType"
+                        empty-text="-"
+                      />
+                    </template>
+                  </el-table-column>
                   <el-table-column label="合作费用" width="130">
                     <template #default="{ row: cooperation }">
                       {{
@@ -2657,11 +2675,14 @@ onUnmounted(() => {
               label="合作项目"
               min-width="150"
             />
-            <el-table-column
-              prop="cooperationType"
-              label="合作类型"
-              width="120"
-            />
+            <el-table-column label="合作类型" width="120">
+              <template #default="{ row }">
+                <CooperationTypeTags
+                  :value="row.cooperationType"
+                  empty-text="-"
+                />
+              </template>
+            </el-table-column>
             <el-table-column label="合作费用（USD）" width="150">
               <template #default="{ row }">{{
                 currencyText(row.quoteAmount, "USD")
@@ -2920,7 +2941,12 @@ onUnmounted(() => {
           </div>
           <div>
             <dt>合作类型</dt>
-            <dd>{{ cooperationTypes(selectedResource) }}</dd>
+            <dd>
+              <CooperationTypeTags
+                :value="cooperationTypeValues(selectedResource)"
+                empty-text="-"
+              />
+            </dd>
           </div>
           <div>
             <dt>合作项目</dt>
@@ -3046,11 +3072,14 @@ onUnmounted(() => {
           class="business-table"
         >
           <el-table-column prop="projectName" label="项目" min-width="160" />
-          <el-table-column
-            prop="cooperationType"
-            label="合作形式"
-            width="120"
-          />
+          <el-table-column label="合作形式" width="120">
+            <template #default="{ row }">
+              <CooperationTypeTags
+                :value="row.cooperationType"
+                empty-text="-"
+              />
+            </template>
+          </el-table-column>
           <el-table-column prop="releaseDate" label="发布日期" width="120" />
           <el-table-column label="触达" width="120">
             <template #default="{ row }">{{

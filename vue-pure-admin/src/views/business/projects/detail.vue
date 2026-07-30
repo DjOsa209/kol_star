@@ -83,6 +83,7 @@ const contentPlatform = ref("all");
 const contentSort = ref("latest");
 const contentEditing = ref(false);
 const contentSaving = ref(false);
+const editingContentPost = ref<any>(null);
 const websiteScreenshotLoading = ref(false);
 const syncingContentIds = reactive<Record<string, boolean>>({});
 const attemptedWebsiteScreenshotIds = new Set<string>();
@@ -506,40 +507,7 @@ const selectedContentPost = computed(() => {
   );
 });
 
-const contentDetailView = computed(() => {
-  if (!selectedContentPost.value || !contentEditing.value) {
-    return selectedContentPost.value;
-  }
-  const platform = normalizePlatformName(contentEditForm.platform);
-  const platformChanged =
-    platform !== normalizePlatformName(selectedContentPost.value.platform);
-  const linkChanged =
-    normalizedContentUrl(contentEditForm.postUrl) !==
-    normalizedContentUrl(selectedContentPost.value.postUrl);
-  const contentChanged = platformChanged || linkChanged;
-  return {
-    ...selectedContentPost.value,
-    platform,
-    postUrl: contentEditForm.postUrl,
-    coverUrl: contentChanged ? "" : selectedContentPost.value.coverUrl,
-    coverRemoteUrl: contentChanged
-      ? ""
-      : selectedContentPost.value.coverRemoteUrl,
-    coverLocalUrl: contentChanged
-      ? ""
-      : selectedContentPost.value.coverLocalUrl,
-    viewCount: contentChanged ? 0 : selectedContentPost.value.viewCount,
-    views: contentChanged ? 0 : selectedContentPost.value.views,
-    impressions: contentChanged ? 0 : selectedContentPost.value.impressions,
-    engagementCount: contentChanged
-      ? 0
-      : selectedContentPost.value.engagementCount,
-    likeCount: contentChanged ? 0 : selectedContentPost.value.likeCount,
-    commentCount: contentChanged ? 0 : selectedContentPost.value.commentCount,
-    shareCount: contentChanged ? 0 : selectedContentPost.value.shareCount,
-    saveCount: contentChanged ? 0 : selectedContentPost.value.saveCount
-  };
-});
+const contentDetailView = computed(() => selectedContentPost.value);
 
 const campaignOverview = computed(() => {
   const posts = projectContentPosts.value;
@@ -830,16 +798,9 @@ function openContentDetail(post: any) {
 }
 
 function closeContentDetail() {
-  contentEditing.value = false;
   const query = { ...route.query };
   delete query.contentId;
   router.replace({ path: route.path, query });
-}
-
-function startContentEdit() {
-  const post = selectedContentPost.value;
-  if (!post) return;
-  prepareContentEdit(post);
 }
 
 function prepareContentEdit(post: any) {
@@ -855,24 +816,25 @@ function prepareContentEdit(post: any) {
     platform: normalizePlatformName(post.platform),
     postUrl: String(post.postUrl || "").trim()
   });
+  editingContentPost.value = post;
   contentEditing.value = true;
   return true;
 }
 
 function editContentFromCard(post: any) {
-  if (!prepareContentEdit(post)) return;
-  router.push({
-    path: route.path,
-    query: { ...route.query, contentId: String(post.id) }
-  });
+  prepareContentEdit(post);
 }
 
 function cancelContentEdit() {
   contentEditing.value = false;
 }
 
+function resetContentEdit() {
+  editingContentPost.value = null;
+}
+
 async function saveContentEdit() {
-  if (!project.value || !selectedContentPost.value) return;
+  if (!project.value || !editingContentPost.value) return;
   const postUrl = contentEditForm.postUrl.trim();
   try {
     const parsed = new URL(postUrl);
@@ -2282,10 +2244,6 @@ onBeforeUnmount(() => {
               <IconifyIconOnline icon="ri:arrow-left-line" />
               返回合作内容
             </button>
-            <el-button v-if="!contentEditing" plain @click="startContentEdit">
-              <IconifyIconOnline icon="ri:edit-line" />
-              编辑内容
-            </el-button>
           </div>
 
           <div class="content-detail-hero">
@@ -2356,7 +2314,6 @@ onBeforeUnmount(() => {
                     <PlatformIconBadge :platform="contentDetailView.platform" />
                     {{ contentDetailView.platform || "合作内容" }}
                   </span>
-                  <h2>{{ contentDisplayTitle(contentDetailView) }}</h2>
                   <CooperationTypeTags
                     v-if="contentCooperationType(contentDetailView)"
                     class="content-detail-cooperation-types"
@@ -2414,51 +2371,14 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="content-detail-link-row">
-            <template v-if="contentEditing">
-              <div class="content-edit-field">
-                <span>所属平台</span>
-                <el-select v-model="contentEditForm.platform" filterable>
-                  <el-option
-                    v-for="platform in editableContentPlatformOptions"
-                    :key="platform"
-                    :label="platform"
-                    :value="platform"
-                  >
-                    <div class="content-platform-option">
-                      <PlatformIconBadge :platform="platform" />
-                      <span>{{ platform }}</span>
-                    </div>
-                  </el-option>
-                </el-select>
-              </div>
-              <div class="content-edit-field">
-                <span>内容链接</span>
-                <el-input
-                  v-model="contentEditForm.postUrl"
-                  clearable
-                  placeholder="https://..."
-                />
-              </div>
-              <div class="content-edit-actions">
-                <el-button @click="cancelContentEdit">取消</el-button>
-                <el-button
-                  type="primary"
-                  :loading="contentSaving"
-                  @click="saveContentEdit"
-                  >保存修改</el-button
-                >
-              </div>
-            </template>
-            <template v-else>
-              <span>内容链接</span>
-              <el-link
-                :href="contentDetailView.postUrl"
-                target="_blank"
-                type="primary"
-              >
-                {{ contentDetailView.postUrl || "暂无链接" }}
-              </el-link>
-            </template>
+            <span>内容链接</span>
+            <el-link
+              :href="contentDetailView.postUrl"
+              target="_blank"
+              type="primary"
+            >
+              {{ contentDetailView.postUrl || "暂无链接" }}
+            </el-link>
           </div>
         </section>
       </template>
@@ -3072,7 +2992,6 @@ onBeforeUnmount(() => {
                 class="content-card-cooperation-types"
                 :value="contentCooperationType(post)"
               />
-              <p>{{ contentDisplayTitle(post) }}</p>
               <div class="content-card-metrics">
                 <span>
                   <small>{{ contentExposureLabel(post) }}</small>
@@ -3097,6 +3016,57 @@ onBeforeUnmount(() => {
       </section>
     </main>
   </div>
+
+  <el-dialog
+    v-model="contentEditing"
+    title="编辑内容"
+    width="520px"
+    destroy-on-close
+    @closed="resetContentEdit"
+  >
+    <el-form
+      :model="contentEditForm"
+      label-position="top"
+      @submit.prevent="saveContentEdit"
+    >
+      <el-form-item label="所属平台" required>
+        <el-select
+          v-model="contentEditForm.platform"
+          filterable
+          class="w-full!"
+        >
+          <el-option
+            v-for="platform in editableContentPlatformOptions"
+            :key="platform"
+            :label="platform"
+            :value="platform"
+          >
+            <div class="content-platform-option">
+              <PlatformIconBadge :platform="platform" />
+              <span>{{ platform }}</span>
+            </div>
+          </el-option>
+        </el-select>
+      </el-form-item>
+      <el-form-item label="内容链接" required>
+        <el-input
+          v-model="contentEditForm.postUrl"
+          clearable
+          placeholder="https://..."
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="cancelContentEdit">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="contentSaving"
+        @click="saveContentEdit"
+      >
+        保存修改
+      </el-button>
+    </template>
+  </el-dialog>
 
   <el-dialog
     v-model="creatorDialog"
@@ -5652,17 +5622,6 @@ onBeforeUnmount(() => {
 .content-card-cooperation-types {
   margin-bottom: 9px;
 }
-.content-info p {
-  display: -webkit-box;
-  min-height: 34px;
-  margin: 0;
-  overflow: hidden;
-  color: #32343a;
-  font-size: 13px;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
 .content-post-link {
   display: block;
   max-width: 100%;
@@ -5858,12 +5817,6 @@ onBeforeUnmount(() => {
   width: 15px;
   height: 15px;
 }
-.content-detail-title-row h2 {
-  margin: 5px 0 0;
-  color: #23272e;
-  font-size: 22px;
-  line-height: 1.35;
-}
 .content-detail-cooperation-types {
   margin-top: 10px;
 }
@@ -5930,24 +5883,6 @@ onBeforeUnmount(() => {
   background: #f8fafc;
   border: 1px solid #e7eaf0;
   border-radius: 10px;
-}
-.content-detail-link-row:has(.content-edit-field) {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) auto;
-  align-items: end;
-}
-.content-edit-field {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-.content-edit-field > span {
-  color: #737983;
-  font-size: 12px;
-}
-.content-edit-actions {
-  display: flex;
-  gap: 8px;
 }
 .content-platform-option {
   display: flex;
@@ -6092,13 +6027,6 @@ onBeforeUnmount(() => {
   }
   .content-detail-metrics article:nth-child(-n + 2) {
     border-bottom: 1px solid #e7e9ed;
-  }
-  .content-detail-link-row:has(.content-edit-field) {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-  .content-edit-actions {
-    justify-content: flex-end;
   }
   .toolbar-actions {
     width: 100%;
