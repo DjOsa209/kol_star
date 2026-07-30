@@ -783,10 +783,12 @@ func findSinglePlatformItemValue(value any, depth int) map[string]any {
 		}
 		return map[string]any{}
 	}
-	if firstNonEmpty(
-		anyString(data["id"]), anyString(data["pk"]), anyString(data["aweme_id"]),
-		anyString(data["shortcode"]), anyString(data["code"]),
-	) != "" {
+	if media := mapAt(data, "media"); len(media) > 0 && singlePlatformItemID(media) != "" {
+		// Instagram's single-post response can return the media and its author as
+		// siblings. Keep the wrapper so normalization can retain the author.
+		return data
+	}
+	if singlePlatformItemID(data) != "" {
 		return data
 	}
 	for _, key := range []string{"aweme_detail", "aweme", "item", "item_info", "item_struct", "media", "post", "data"} {
@@ -804,4 +806,11 @@ func findSinglePlatformItemValue(value any, depth int) map[string]any {
 		}
 	}
 	return map[string]any{}
+}
+
+func singlePlatformItemID(data map[string]any) string {
+	return firstNonEmpty(
+		anyString(data["id"]), anyString(data["pk"]), anyString(data["aweme_id"]),
+		anyString(data["shortcode"]), anyString(data["code"]),
+	)
 }
