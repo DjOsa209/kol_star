@@ -2035,10 +2035,20 @@ func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, p
 }
 
 func (a *app) upsertSingleContentPlatformPost(ctx context.Context, resourceID int, platform string, post platformPost) error {
-	return a.persistResourcePlatformPosts(ctx, resourceID, platform, []platformPost{post})
+	return a.persistResourcePlatformPostsWithImageLocalization(ctx, resourceID, platform, []platformPost{post}, false)
 }
 
 func (a *app) persistResourcePlatformPosts(ctx context.Context, resourceID int, platform string, posts []platformPost) error {
+	return a.persistResourcePlatformPostsWithImageLocalization(ctx, resourceID, platform, posts, true)
+}
+
+func (a *app) persistResourcePlatformPostsWithImageLocalization(
+	ctx context.Context,
+	resourceID int,
+	platform string,
+	posts []platformPost,
+	localizeImages bool,
+) error {
 	for index := range posts {
 		post := &posts[index]
 		if strings.TrimSpace(post.PlatformPostID) == "" {
@@ -2047,7 +2057,7 @@ func (a *app) persistResourcePlatformPosts(ctx context.Context, resourceID int, 
 		incomingCoverURL := strings.TrimSpace(post.CoverURL)
 		remoteCoverURL := normalizedRemoteImageURL(incomingCoverURL)
 		localCoverURL := ""
-		if remoteCoverURL != "" {
+		if localizeImages && remoteCoverURL != "" {
 			localizedURL := localizeResourceImage(
 				ctx,
 				resourceID,

@@ -515,31 +515,17 @@ func (a *app) applyPlatformPostToCooperation(
 		localCoverURL = post.CoverLocalURL
 	} else if isLocalResourceImageURL(post.CoverURL) {
 		localCoverURL = post.CoverURL
-	} else if remoteCoverURL != "" {
-		localizedURL := localizeResourceImage(
-			ctx,
-			resourceID,
-			fmt.Sprintf("posts/%s_%s", link.Platform, post.PlatformPostID),
-			remoteCoverURL,
-		)
-		if isLocalResourceImageURL(localizedURL) {
-			localCoverURL = localizedURL
-		}
 	}
 	if _, err := a.DB().ExecContext(ctx,
 		`update biz_cooperations set content_platform = ?,
 		  content_cover_url = ?, content_cover_remote_url = ?
 		 where id = ?`,
-		link.Platform, localCoverURL, remoteCoverURL, cooperationID,
+		link.Platform, firstNonEmpty(localCoverURL, remoteCoverURL), remoteCoverURL, cooperationID,
 	); err != nil {
 		return err
 	}
 
 	identity := cooperationResourceIdentityFromPost(link, post)
-	avatarURL := ""
-	if identity.AvatarURL != "" {
-		avatarURL = localizeResourceImage(ctx, resourceID, "avatar", identity.AvatarURL)
-	}
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set platform = ?,
 		  platform_url = if(? <> '', ?, platform_url),
@@ -553,7 +539,7 @@ func (a *app) applyPlatformPostToCooperation(
 		identity.PlatformURL, identity.PlatformURL,
 		identity.PlatformUserID, identity.PlatformUserID,
 		identity.PlatformHandle, identity.PlatformHandle,
-		avatarURL, avatarURL,
+		identity.AvatarURL, identity.AvatarURL,
 		identity.AvatarURL, identity.AvatarURL,
 		resourceID,
 	)
