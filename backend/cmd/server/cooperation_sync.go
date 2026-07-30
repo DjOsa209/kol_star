@@ -136,13 +136,15 @@ func storeCooperationPageScreenshot(
 	); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx,
-		`update biz_resource_platform_posts
-		    set cover_url = ?, cover_remote_url = ''
-		  where resource_id = ? and platform = ? and platform_post_id = ?`,
-		localCoverURL, resourceID, platform, platformPostID,
-	); err != nil {
-		return err
+	if strings.TrimSpace(platformPostID) != "" {
+		if _, err = tx.ExecContext(ctx,
+			`update biz_resource_platform_posts
+			    set cover_url = ?, cover_remote_url = ''
+			  where resource_id = ? and platform = ? and platform_post_id = ?`,
+			localCoverURL, resourceID, platform, platformPostID,
+		); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -240,6 +242,108 @@ func (a *app) syncImportedCooperations(ctx context.Context, batchID string) (int
 		}
 	}
 	return synced, warnings
+}
+
+type importedWebsiteScreenshotCapture func(
+	context.Context,
+	int,
+	int,
+	string,
+) (string, string)
+
+func (a *app) captureImportedPageScreenshots(ctx context.Context, batchID string) (int, []string) {
+	return a.captureImportedPageScreenshotsWith(ctx, batchID, captureWebsiteScreenshot)
+}
+
+func (a *app) captureImportedPageScreenshotsWith(
+	ctx context.Context,
+	batchID string,
+	capture importedWebsiteScreenshotCapture,
+) (int, []string) {
+	rows, err := a.DB().QueryContext(ctx,
+		`select c.id, c.resource_id,
+		        coalesce(nullif(c.final_link, ''), nullif(c.deliverable_links, ''), '') as post_url,
+		        coalesce(nullif(c.content_platform, ''), nullif(r.platform, ''), 'Website') as platform
+		   from biz_cooperations c
+		   left join biz_resources r on r.id = c.resource_id
+		  where c.import_batch_id = ?
+		    and coalesce(nullif(c.final_link, ''), nullif(c.deliverable_links, ''), '') <> ''
+		    and coalesce(c.content_cover_url, '') = ''
+		  order by c.id`,
+		batchID,
+	)
+	if err != nil {
+		return 0, []string{err.Error()}
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		cooperationID int
+		resourceID    int
+		postURL       string
+		platform      string
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(
+			&item.cooperationID,
+			&item.resourceID,
+			&item.postURL,
+			&item.platform,
+		); err != nil {
+			return 0, []string{err.Error()}
+		}
+		item.platform = normalizeEditableContentPlatform(item.platform)
+		if projectContentPlatformUsesPageScreenshot(item.platform) {
+			candidates = append(candidates, item)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, []string{err.Error()}
+	}
+
+	captured := 0
+	var warnings []string
+	for _, item := range candidates {
+		if !validEditableContentURL(item.postURL) {
+			warnings = append(warnings, fmt.Sprintf("合作记录 %d：网页地址无效", item.cooperationID))
+			continue
+		}
+		localCoverURL, warning := capture(
+			ctx,
+			item.resourceID,
+			item.cooperationID,
+			item.postURL,
+		)
+		if localCoverURL == "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"合作记录 %d：%s",
+				item.cooperationID,
+				firstNonEmpty(warning, "网页缩略图抓取失败"),
+			))
+			continue
+		}
+		platformPostID := ""
+		if link, err := parseCooperationPostLink(item.postURL); err == nil &&
+			link.Platform == item.platform {
+			platformPostID = link.PostID
+		}
+		if err := storeCooperationPageScreenshot(
+			ctx,
+			a.DB(),
+			item.cooperationID,
+			item.resourceID,
+			item.platform,
+			platformPostID,
+			localCoverURL,
+		); err != nil {
+			warnings = append(warnings, fmt.Sprintf("合作记录 %d：%v", item.cooperationID, err))
+			continue
+		}
+		captured++
+	}
+	return captured, warnings
 }
 
 func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int) (int, []string) {
@@ -432,12 +536,9 @@ func (a *app) applyPlatformPostToCooperation(
 	}
 
 	identity := cooperationResourceIdentityFromPost(link, post)
-	localAvatarURL := ""
+	avatarURL := ""
 	if identity.AvatarURL != "" {
-		localizedURL := localizeResourceImage(ctx, resourceID, "avatar", identity.AvatarURL)
-		if isLocalResourceImageURL(localizedURL) {
-			localAvatarURL = localizedURL
-		}
+		avatarURL = localizeResourceImage(ctx, resourceID, "avatar", identity.AvatarURL)
 	}
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set platform = ?,
@@ -452,7 +553,7 @@ func (a *app) applyPlatformPostToCooperation(
 		identity.PlatformURL, identity.PlatformURL,
 		identity.PlatformUserID, identity.PlatformUserID,
 		identity.PlatformHandle, identity.PlatformHandle,
-		localAvatarURL, localAvatarURL,
+		avatarURL, avatarURL,
 		identity.AvatarURL, identity.AvatarURL,
 		resourceID,
 	)
@@ -479,12 +580,7 @@ func cooperationResourceIdentityFromPost(
 	post platformPost,
 ) cooperationPostResourceIdentity {
 	raw, _ := post.Raw.(map[string]any)
-	author := firstMapAt(raw, "author", "user", "owner")
-	if len(author) == 0 {
-		if item := firstMapAt(raw, "item", "media", "video"); len(item) > 0 {
-			author = firstMapAt(item, "author", "user", "owner")
-		}
-	}
+	author := cooperationPostAuthor(raw, link.Platform)
 	identity := cooperationPostResourceIdentity{}
 	switch link.Platform {
 	case "TikTok":
@@ -554,6 +650,49 @@ func cooperationResourceIdentityFromPost(
 		}
 	}
 	return identity
+}
+
+func cooperationPostAuthor(raw map[string]any, platform string) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	if author := firstMapAt(raw, "author", "user", "owner"); len(author) > 0 {
+		return author
+	}
+	for _, candidate := range collectNestedMaps(raw) {
+		if author := firstMapAt(candidate, "author", "user", "owner"); len(author) > 0 {
+			return author
+		}
+		switch platform {
+		case "TikTok":
+			if firstNonEmpty(
+				anyString(candidate["uniqueId"]),
+				anyString(candidate["unique_id"]),
+				anyString(candidate["secUid"]),
+				anyString(candidate["sec_uid"]),
+			) != "" {
+				return candidate
+			}
+		case "Instagram":
+			if anyString(candidate["username"]) != "" &&
+				firstNonEmpty(
+					imageURL(candidate["profile_pic_url"]),
+					imageURL(candidate["profile_pic_url_hd"]),
+					imageURL(candidate["profile_picture_url"]),
+				) != "" {
+				return candidate
+			}
+		case "YouTube":
+			if firstNonEmpty(
+				anyString(candidate["channelId"]),
+				anyString(candidate["channel_id"]),
+				anyString(candidate["customUrl"]),
+			) != "" {
+				return candidate
+			}
+		}
+	}
+	return map[string]any{}
 }
 
 func tikTokHandleFromContentURL(value string) string {

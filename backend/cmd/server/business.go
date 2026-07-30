@@ -1820,11 +1820,25 @@ func normalizeTikHubInstagramPosts(timeline map[string]any, username string) []p
 		if !ok {
 			continue
 		}
+		author := firstMapAt(item, "user", "owner", "author")
 		if node := mapAt(item, "node"); len(node) > 0 {
 			item = node
+			if len(author) == 0 {
+				author = firstMapAt(item, "user", "owner", "author")
+			}
 		}
 		if media := mapAt(item, "media"); len(media) > 0 {
 			item = media
+			if len(author) == 0 {
+				author = firstMapAt(item, "user", "owner", "author")
+			}
+		}
+		rawPost := make(map[string]any, len(item)+1)
+		for key, value := range item {
+			rawPost[key] = value
+		}
+		if len(author) > 0 {
+			rawPost["user"] = author
 		}
 		postID := firstNonEmpty(anyString(item["id"]), anyString(item["pk"]), anyString(item["media_id"]), anyString(item["shortcode"]), anyString(item["code"]))
 		if postID == "" {
@@ -1846,7 +1860,7 @@ func normalizeTikHubInstagramPosts(timeline map[string]any, username string) []p
 			LikeCount:      firstNonZeroInt64(item["like_count"], nestedInt64(item, "edge_liked_by", "count"), nestedInt64(item, "edge_media_preview_like", "count")),
 			CommentCount:   firstNonZeroInt64(item["comment_count"], nestedInt64(item, "edge_media_to_comment", "count")),
 			ShareCount:     firstNonZeroInt64(item["share_count"]),
-			Raw:            item,
+			Raw:            rawPost,
 		})
 	}
 	return posts
@@ -3994,12 +4008,14 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		go func() {
 			profileSynced, profileWarnings := a.syncImportedResources(context.Background(), importedResourceIDs)
 			synced, warnings := a.syncImportedCooperations(context.Background(), batchID)
+			screenshots, screenshotWarnings := a.captureImportedPageScreenshots(context.Background(), batchID)
 			warnings = append(profileWarnings, warnings...)
+			warnings = append(warnings, screenshotWarnings...)
 			if len(warnings) > 0 {
-				log.Printf("import batch %s platform sync completed: profiles=%d content=%d warnings=%s", batchID, profileSynced, synced, redactSensitiveText(strings.Join(warnings, "; ")))
+				log.Printf("import batch %s platform sync completed: profiles=%d content=%d screenshots=%d warnings=%s", batchID, profileSynced, synced, screenshots, redactSensitiveText(strings.Join(warnings, "; ")))
 				return
 			}
-			log.Printf("import batch %s platform sync completed: profiles=%d content=%d", batchID, profileSynced, synced)
+			log.Printf("import batch %s platform sync completed: profiles=%d content=%d screenshots=%d", batchID, profileSynced, synced, screenshots)
 		}()
 	}
 	writeOK(w, map[string]any{
