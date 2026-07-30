@@ -51,7 +51,7 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		return cooperationPostSyncResult{}, err
 	}
 	source := "作品库"
-	if allowAPI {
+	if allowAPI && cooperationPlatformSupportsSinglePostFetch(link.Platform) {
 		post, err = a.fetchCooperationPlatformPost(ctx, resourceID, link)
 		if err != nil {
 			return cooperationPostSyncResult{
@@ -70,7 +70,11 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 			Message:  "作品库中未找到匹配作品",
 		}, nil
 	}
-	if err := a.applyPlatformPostToCooperation(ctx, cooperationID, post); err != nil {
+	if allowAPI {
+		if err := a.applyPlatformPostToCooperation(ctx, cooperationID, resourceID, link, post); err != nil {
+			return cooperationPostSyncResult{}, err
+		}
+	} else if err := a.applyPlatformPostMetricsToCooperation(ctx, cooperationID, post); err != nil {
 		return cooperationPostSyncResult{}, err
 	}
 	previewWarning := ""
@@ -99,6 +103,15 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		Message:        fmt.Sprintf("已通过%s同步合作作品数据", source),
 		PreviewWarning: previewWarning,
 	}, nil
+}
+
+func cooperationPlatformSupportsSinglePostFetch(platform string) bool {
+	switch platform {
+	case "YouTube", "TikTok", "Instagram":
+		return true
+	default:
+		return false
+	}
 }
 
 func storeCooperationPageScreenshot(
@@ -135,6 +148,13 @@ func storeCooperationPageScreenshot(
 }
 
 func cooperationPostSource(finalLink, deliverableLinks string) string {
+	for _, raw := range []string{finalLink, deliverableLinks} {
+		for _, candidate := range contentURLPattern.FindAllString(raw, -1) {
+			if _, err := parseCooperationPostLink(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
 	return firstNonEmpty(strings.TrimSpace(finalLink), strings.TrimSpace(deliverableLinks))
 }
 
@@ -364,7 +384,82 @@ func platformPostMatchesLink(post platformPost, link cooperationPostLink) bool {
 		postLink.PostID == link.PostID
 }
 
-func (a *app) applyPlatformPostToCooperation(ctx context.Context, cooperationID int, post platformPost) error {
+type cooperationPostResourceIdentity struct {
+	PlatformURL    string
+	PlatformUserID string
+	PlatformHandle string
+	AvatarURL      string
+}
+
+func (a *app) applyPlatformPostToCooperation(
+	ctx context.Context,
+	cooperationID int,
+	resourceID int,
+	link cooperationPostLink,
+	post platformPost,
+) error {
+	if err := a.applyPlatformPostMetricsToCooperation(ctx, cooperationID, post); err != nil {
+		return err
+	}
+
+	remoteCoverURL := firstNonEmpty(
+		normalizedRemoteImageURL(post.CoverRemoteURL),
+		normalizedRemoteImageURL(post.CoverURL),
+	)
+	localCoverURL := ""
+	if isLocalResourceImageURL(post.CoverLocalURL) {
+		localCoverURL = post.CoverLocalURL
+	} else if isLocalResourceImageURL(post.CoverURL) {
+		localCoverURL = post.CoverURL
+	} else if remoteCoverURL != "" {
+		localizedURL := localizeResourceImage(
+			ctx,
+			resourceID,
+			fmt.Sprintf("posts/%s_%s", link.Platform, post.PlatformPostID),
+			remoteCoverURL,
+		)
+		if isLocalResourceImageURL(localizedURL) {
+			localCoverURL = localizedURL
+		}
+	}
+	if _, err := a.DB().ExecContext(ctx,
+		`update biz_cooperations set content_platform = ?,
+		  content_cover_url = ?, content_cover_remote_url = ?
+		 where id = ?`,
+		link.Platform, localCoverURL, remoteCoverURL, cooperationID,
+	); err != nil {
+		return err
+	}
+
+	identity := cooperationResourceIdentityFromPost(link, post)
+	localAvatarURL := ""
+	if identity.AvatarURL != "" {
+		localizedURL := localizeResourceImage(ctx, resourceID, "avatar", identity.AvatarURL)
+		if isLocalResourceImageURL(localizedURL) {
+			localAvatarURL = localizedURL
+		}
+	}
+	_, err := a.DB().ExecContext(ctx,
+		`update biz_resources set platform = ?,
+		  platform_url = if(? <> '', ?, platform_url),
+		  platform_user_id = if(? <> '', ?, platform_user_id),
+		  platform_handle = if(? <> '', ?, platform_handle),
+		  avatar_url = if(? <> '', ?, avatar_url),
+		  avatar_remote_url = if(? <> '', ?, avatar_remote_url),
+		  last_sync_status = '成功', last_sync_error = '', last_sync_at = now()
+		 where id = ?`,
+		link.Platform,
+		identity.PlatformURL, identity.PlatformURL,
+		identity.PlatformUserID, identity.PlatformUserID,
+		identity.PlatformHandle, identity.PlatformHandle,
+		localAvatarURL, localAvatarURL,
+		identity.AvatarURL, identity.AvatarURL,
+		resourceID,
+	)
+	return err
+}
+
+func (a *app) applyPlatformPostMetricsToCooperation(ctx context.Context, cooperationID int, post platformPost) error {
 	var releaseDate any
 	if post.PublishedAt != nil {
 		releaseDate = post.PublishedAt.Format("2006-01-02")
@@ -379,6 +474,100 @@ func (a *app) applyPlatformPostToCooperation(ctx context.Context, cooperationID 
 	return err
 }
 
+func cooperationResourceIdentityFromPost(
+	link cooperationPostLink,
+	post platformPost,
+) cooperationPostResourceIdentity {
+	raw, _ := post.Raw.(map[string]any)
+	author := firstMapAt(raw, "author", "user", "owner")
+	if len(author) == 0 {
+		if item := firstMapAt(raw, "item", "media", "video"); len(item) > 0 {
+			author = firstMapAt(item, "author", "user", "owner")
+		}
+	}
+	identity := cooperationPostResourceIdentity{}
+	switch link.Platform {
+	case "TikTok":
+		identity.PlatformHandle = normalizeTikTokUsername(firstNonEmpty(
+			anyString(author["uniqueId"]),
+			anyString(author["unique_id"]),
+			tikTokHandleFromContentURL(link.URL),
+		))
+		identity.PlatformUserID = firstNonEmpty(
+			anyString(author["secUid"]),
+			anyString(author["sec_uid"]),
+			anyString(author["id"]),
+			anyString(author["uid"]),
+		)
+		identity.AvatarURL = firstNonEmpty(
+			imageURL(author["avatarLarger"]),
+			imageURL(author["avatarMedium"]),
+			imageURL(author["avatarThumb"]),
+			imageURL(author["avatar_url"]),
+			imageURL(author["avatar_url_list"]),
+		)
+		if identity.PlatformHandle != "" {
+			identity.PlatformURL = "https://www.tiktok.com/@" + identity.PlatformHandle
+		}
+	case "Instagram":
+		identity.PlatformHandle = sanitizeInstagramHandle(firstNonEmpty(
+			anyString(author["username"]),
+			anyString(author["user_name"]),
+		))
+		identity.PlatformUserID = firstNonEmpty(
+			anyString(author["pk"]),
+			anyString(author["id"]),
+			anyString(author["user_id"]),
+		)
+		identity.AvatarURL = firstNonEmpty(
+			imageURL(author["profile_pic_url_hd"]),
+			imageURL(author["profile_pic_url"]),
+			imageURL(author["profile_picture_url"]),
+			imageURL(author["hd_profile_pic_url_info"]),
+		)
+		if identity.PlatformHandle != "" {
+			identity.PlatformURL = "https://www.instagram.com/" + identity.PlatformHandle + "/"
+		}
+	case "YouTube":
+		identity.PlatformHandle = strings.TrimSpace(firstNonEmpty(
+			anyString(author["customUrl"]),
+			anyString(author["custom_url"]),
+			anyString(author["handle"]),
+		))
+		identity.PlatformUserID = firstNonEmpty(
+			anyString(author["channelId"]),
+			anyString(author["channel_id"]),
+			anyString(author["id"]),
+		)
+		identity.AvatarURL = firstNonEmpty(
+			imageURL(author["avatar"]),
+			imageURL(author["thumbnails"]),
+			imageURL(author["thumbnail"]),
+		)
+		if identity.PlatformHandle != "" {
+			identity.PlatformURL = "https://www.youtube.com/" + strings.TrimPrefix(identity.PlatformHandle, "@")
+			if strings.HasPrefix(identity.PlatformHandle, "@") {
+				identity.PlatformURL = "https://www.youtube.com/" + identity.PlatformHandle
+			}
+		} else if identity.PlatformUserID != "" {
+			identity.PlatformURL = "https://www.youtube.com/channel/" + identity.PlatformUserID
+		}
+	}
+	return identity
+}
+
+func tikTokHandleFromContentURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(segments) == 0 || !strings.HasPrefix(segments[0], "@") {
+		return ""
+	}
+	return strings.TrimPrefix(segments[0], "@")
+}
+
 func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, link cooperationPostLink) (platformPost, error) {
 	switch link.Platform {
 	case "YouTube":
@@ -387,35 +576,8 @@ func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, 
 		return a.fetchTikTokPostByID(ctx, resourceID, link.PostID)
 	case "Instagram":
 		return a.fetchInstagramPostByURL(ctx, resourceID, link.URL)
-	case "X", "LinkedIn", "Reddit":
-		var resource syncResourceRow
-		if err := a.DB().QueryRowContext(ctx,
-			`select id, name, platform, platform_url, platform_user_id, platform_handle
-			   from biz_resources where id = ? limit 1`,
-			resourceID,
-		).Scan(
-			&resource.ID,
-			&resource.Name,
-			&resource.Platform,
-			&resource.PlatformURL,
-			&resource.PlatformUserID,
-			&resource.PlatformHandle,
-		); err != nil {
-			return platformPost{}, err
-		}
-		if err := a.syncResourceProfileAndPostsByPlatform(ctx, resource); err != nil {
-			return platformPost{}, err
-		}
-		post, found, err := a.findStoredPlatformPost(ctx, resourceID, link)
-		if err != nil {
-			return platformPost{}, err
-		}
-		if !found {
-			return platformPost{}, fmt.Errorf("%s 未返回对应内容，请确认抓取控制已启用作品同步", link.Platform)
-		}
-		return post, nil
 	default:
-		return platformPost{}, fmt.Errorf("暂不支持平台 %s", link.Platform)
+		return platformPost{}, fmt.Errorf("平台 %s 暂不支持按单条链接实时抓取", link.Platform)
 	}
 }
 
@@ -435,7 +597,7 @@ func (a *app) fetchTikTokPostByID(ctx context.Context, resourceID int, postID st
 		return platformPost{}, fmt.Errorf("TikHub 未返回 TikTok 作品数据")
 	}
 	post := posts[0]
-	if err := a.upsertResourcePlatformPosts(ctx, resourceID, "TikTok", []platformPost{post}); err != nil {
+	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "TikTok", post); err != nil {
 		return platformPost{}, err
 	}
 	return post, nil
@@ -457,7 +619,7 @@ func (a *app) fetchInstagramPostByURL(ctx context.Context, resourceID int, postU
 		return platformPost{}, fmt.Errorf("TikHub 未返回 Instagram 作品数据")
 	}
 	post := posts[0]
-	if err := a.upsertResourcePlatformPosts(ctx, resourceID, "Instagram", []platformPost{post}); err != nil {
+	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "Instagram", post); err != nil {
 		return platformPost{}, err
 	}
 	return post, nil

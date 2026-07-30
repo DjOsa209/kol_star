@@ -1043,6 +1043,8 @@ type platformPost struct {
 	Description    string     `json:"description"`
 	PostURL        string     `json:"postUrl"`
 	CoverURL       string     `json:"coverUrl"`
+	CoverLocalURL  string     `json:"coverLocalUrl,omitempty"`
+	CoverRemoteURL string     `json:"coverRemoteUrl,omitempty"`
 	MediaType      string     `json:"mediaType"`
 	PublishedAt    *time.Time `json:"publishedAt"`
 	Duration       int        `json:"duration"`
@@ -1110,10 +1112,12 @@ func (a *app) fetchYouTubePosts(ctx context.Context, client *http.Client, apiKey
 		Items []struct {
 			ID      string `json:"id"`
 			Snippet struct {
-				PublishedAt string `json:"publishedAt"`
-				Title       string `json:"title"`
-				Description string `json:"description"`
-				Thumbnails  map[string]struct {
+				PublishedAt  string `json:"publishedAt"`
+				Title        string `json:"title"`
+				Description  string `json:"description"`
+				ChannelID    string `json:"channelId"`
+				ChannelTitle string `json:"channelTitle"`
+				Thumbnails   map[string]struct {
 					URL string `json:"url"`
 				} `json:"thumbnails"`
 			} `json:"snippet"`
@@ -1181,10 +1185,12 @@ func (a *app) fetchYouTubePostByID(ctx context.Context, resourceID int, postID s
 		Items []struct {
 			ID      string `json:"id"`
 			Snippet struct {
-				PublishedAt string `json:"publishedAt"`
-				Title       string `json:"title"`
-				Description string `json:"description"`
-				Thumbnails  map[string]struct {
+				PublishedAt  string `json:"publishedAt"`
+				Title        string `json:"title"`
+				Description  string `json:"description"`
+				ChannelID    string `json:"channelId"`
+				ChannelTitle string `json:"channelTitle"`
+				Thumbnails   map[string]struct {
 					URL string `json:"url"`
 				} `json:"thumbnails"`
 			} `json:"snippet"`
@@ -1205,6 +1211,10 @@ func (a *app) fetchYouTubePostByID(ctx context.Context, resourceID int, postID s
 		return platformPost{}, fmt.Errorf("YouTube 未找到对应作品")
 	}
 	item := payload.Items[0]
+	author, err := fetchYouTubeChannelIdentity(ctx, client, apiKey, item.Snippet.ChannelID)
+	if err != nil {
+		author = map[string]any{"channelId": item.Snippet.ChannelID}
+	}
 	post := platformPost{
 		PlatformPostID: item.ID,
 		Title:          item.Snippet.Title,
@@ -1217,12 +1227,62 @@ func (a *app) fetchYouTubePostByID(ctx context.Context, resourceID int, postID s
 		ViewCount:      parseCount(item.Statistics.ViewCount),
 		LikeCount:      parseCount(item.Statistics.LikeCount),
 		CommentCount:   parseCount(item.Statistics.CommentCount),
-		Raw:            item,
+		Raw: map[string]any{
+			"author": author,
+		},
 	}
-	if err := a.upsertResourcePlatformPosts(ctx, resourceID, "YouTube", []platformPost{post}); err != nil {
+	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "YouTube", post); err != nil {
 		return platformPost{}, err
 	}
 	return post, nil
+}
+
+func fetchYouTubeChannelIdentity(
+	ctx context.Context,
+	client *http.Client,
+	apiKey string,
+	channelID string,
+) (map[string]any, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return map[string]any{}, nil
+	}
+	params := url.Values{}
+	params.Set("part", "snippet")
+	params.Set("id", channelID)
+	params.Set("key", apiKey)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/youtube/v3/channels?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var payload struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Snippet struct {
+				CustomURL  string `json:"customUrl"`
+				Thumbnails map[string]struct {
+					URL string `json:"url"`
+				} `json:"thumbnails"`
+			} `json:"snippet"`
+		} `json:"items"`
+	}
+	if err := decodePlatformResponse(resp, "YouTube", &payload); err != nil {
+		return nil, err
+	}
+	if len(payload.Items) == 0 {
+		return map[string]any{"channelId": channelID}, nil
+	}
+	channel := payload.Items[0]
+	return map[string]any{
+		"channelId": channel.ID,
+		"customUrl": channel.Snippet.CustomURL,
+		"avatar":    bestThumbnailURL(channel.Snippet.Thumbnails),
+	}, nil
 }
 
 func (a *app) syncInstagramResource(ctx context.Context, id int, name, platformURL, platformUserID, platformHandle string) (map[string]any, error) {
@@ -1954,6 +2014,17 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, pr
 }
 
 func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, platform string, posts []platformPost) error {
+	if err := a.persistResourcePlatformPosts(ctx, resourceID, platform, posts); err != nil {
+		return err
+	}
+	return a.syncCooperationsFromStoredPostsForResource(ctx, resourceID)
+}
+
+func (a *app) upsertSingleContentPlatformPost(ctx context.Context, resourceID int, platform string, post platformPost) error {
+	return a.persistResourcePlatformPosts(ctx, resourceID, platform, []platformPost{post})
+}
+
+func (a *app) persistResourcePlatformPosts(ctx context.Context, resourceID int, platform string, posts []platformPost) error {
 	for index := range posts {
 		post := &posts[index]
 		if strings.TrimSpace(post.PlatformPostID) == "" {
@@ -1976,6 +2047,8 @@ func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, p
 			localCoverURL = incomingCoverURL
 		}
 		post.CoverURL = firstNonEmpty(remoteCoverURL, localCoverURL)
+		post.CoverLocalURL = localCoverURL
+		post.CoverRemoteURL = remoteCoverURL
 		var rawJSON any
 		if post.Raw != nil {
 			data, err := json.Marshal(post.Raw)
@@ -2014,7 +2087,7 @@ func (a *app) upsertResourcePlatformPosts(ctx context.Context, resourceID int, p
 			return err
 		}
 	}
-	return a.syncCooperationsFromStoredPostsForResource(ctx, resourceID)
+	return nil
 }
 
 func decodePlatformResponse(resp *http.Response, platform string, target any) error {
