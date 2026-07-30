@@ -311,6 +311,14 @@ function importedContentCover(item: any, postUrl: string) {
   return "";
 }
 
+function importedContentTitle(item: any) {
+  const creativeName = String(item?.creativeName || "").trim();
+  const cooperationType = String(item?.cooperationType || "").trim();
+  return creativeName && creativeName !== cooperationType
+    ? creativeName
+    : "已导入发布内容";
+}
+
 const projectContentPosts = computed(() => {
   const seenLinks = new Set<string>();
   const posts = contentPosts.value
@@ -341,7 +349,7 @@ const projectContentPosts = computed(() => {
         platformHandle: item.platformHandle,
         cooperationId: item.id,
         platform: item.contentPlatform || item.platform || "Website",
-        title: item.creativeName || item.cooperationType || "已导入发布内容",
+        title: importedContentTitle(item),
         description: item.notes,
         postUrl,
         coverUrl: item.contentCoverUrl || importedContentCover(item, postUrl),
@@ -927,6 +935,12 @@ function contentCooperation(post: any) {
       });
     }) || null
   );
+}
+
+function contentCooperationType(post: any) {
+  return String(
+    post?.cooperationType || contentCooperation(post)?.cooperationType || ""
+  ).trim();
 }
 
 function contentCPM(post: any) {
@@ -2162,6 +2176,11 @@ onBeforeUnmount(() => {
                       "已发布合作内容"
                     }}
                   </h2>
+                  <CooperationTypeTags
+                    v-if="contentCooperationType(contentDetailView)"
+                    class="content-detail-cooperation-types"
+                    :value="contentCooperationType(contentDetailView)"
+                  />
                 </div>
                 <el-button type="primary" @click="openPost(contentDetailView)">
                   {{ contentOpenLabel(contentDetailView) }}
@@ -2837,6 +2856,11 @@ onBeforeUnmount(() => {
               <span v-if="isViralContent(post)" class="viral-badge">爆 🔥</span>
             </div>
             <div class="content-info">
+              <CooperationTypeTags
+                v-if="contentCooperationType(post)"
+                class="content-card-cooperation-types"
+                :value="contentCooperationType(post)"
+              />
               <p>{{ post.title || post.description || "已同步内容" }}</p>
               <div>
                 <span
@@ -5400,6 +5424,9 @@ onBeforeUnmount(() => {
 .content-info {
   padding: 12px 13px 14px;
 }
+.content-card-cooperation-types {
+  margin-bottom: 9px;
+}
 .content-info p {
   display: -webkit-box;
   min-height: 34px;
@@ -5588,6 +5615,9 @@ onBeforeUnmount(() => {
   color: #23272e;
   font-size: 22px;
   line-height: 1.35;
+}
+.content-detail-cooperation-types {
+  margin-top: 10px;
 }
 .content-detail-author {
   display: flex;

@@ -3153,7 +3153,7 @@ func (a *app) createBusinessProject(w http.ResponseWriter, r *http.Request) {
 		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		str(body, "name"), targetMarket, str(body, "language"), str(body, "platform"),
 		str(body, "campaignType"), floatField(body, "budget"), defaultString(str(body, "currency"), "USD"),
-		defaultString(str(body, "status"), "需求创建"), str(body, "owner"), str(body, "brief"),
+		projectStatusValue(body["status"]), str(body, "owner"), str(body, "brief"),
 		nullableDate(str(body, "cycleStartDate")), nullableDate(str(body, "cycleEndDate")),
 		nullableDate(str(body, "reportUpdateDate")),
 	)
@@ -3222,7 +3222,7 @@ func (a *app) importBusinessProjects(w http.ResponseWriter, r *http.Request) {
 			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			name, targetMarket, str(row, "language"), str(row, "platform"), str(row, "campaignType"),
 			floatField(row, "budget"), defaultString(strings.ToUpper(str(row, "currency")), "USD"),
-			defaultString(str(row, "status"), "需求创建"), str(row, "owner"), str(row, "brief"),
+			projectStatusValue(row["status"]), str(row, "owner"), str(row, "brief"),
 			nullableDate(str(row, "cycleStartDate")), nullableDate(str(row, "cycleEndDate")),
 		)
 		if err != nil {
@@ -3254,7 +3254,7 @@ func (a *app) updateBusinessProject(w http.ResponseWriter, r *http.Request) {
 		 where id = ?`,
 		str(body, "name"), targetMarket, str(body, "language"),
 		str(body, "campaignType"), floatField(body, "budget"), defaultString(str(body, "currency"), "USD"),
-		defaultString(str(body, "status"), "需求创建"), str(body, "owner"), str(body, "brief"),
+		projectStatusValue(body["status"]), str(body, "owner"), str(body, "brief"),
 		nullableDate(str(body, "cycleStartDate")), nullableDate(str(body, "cycleEndDate")),
 		nullableDate(str(body, "reportUpdateDate")), id,
 	)
@@ -3295,6 +3295,18 @@ func projectTargetMarketValue(value any) string {
 		result = append(result, value)
 	}
 	return strings.Join(result, ",")
+}
+
+func projectStatusValue(value any) string {
+	status := strings.TrimSpace(fmt.Sprint(value))
+	switch {
+	case strings.EqualFold(status, "active"), status == "进行中", status == "执行中":
+		return "进行中"
+	case strings.EqualFold(status, "completed"), status == "已完成", status == "已结束", status == "结束":
+		return "已结束"
+	default:
+		return "未开始"
+	}
 }
 
 func (a *app) deleteBusinessProject(w http.ResponseWriter, r *http.Request) {

@@ -18,6 +18,7 @@ import {
   downloadProjectExcelImportTemplate,
   downloadProjectData,
   updateProject,
+  updateProjectStatus,
   deleteProject,
   getCooperationList,
   createCooperation,
@@ -67,6 +68,8 @@ const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
 const projectStatusFilter = ref("all");
+const updatingProjectStatusIds = reactive<Record<number, boolean>>({});
+const projectStatusOptions = ["未开始", "进行中", "已结束"] as const;
 
 const defaultMarketOptions = [
   "美国",
@@ -219,7 +222,7 @@ const projectForm = reactive({
   campaignType: "",
   budget: 0,
   currency: "USD",
-  status: "需求创建",
+  status: "未开始",
   owner: "",
   brief: "",
   cycleStartDate: "",
@@ -494,10 +497,10 @@ const campaignHealth = computed(() => {
 const visibleProjects = computed(() => {
   const keyword = projectSearch.value.trim().toLowerCase();
   return projects.value.filter(project => {
-    const status = String(project.status || "").toLowerCase();
+    const status = normalizeProjectStatus(project.status);
     if (
       projectStatusFilter.value !== "all" &&
-      !status.includes(projectStatusFilter.value)
+      status !== projectStatusFilter.value
     )
       return false;
     if (!keyword) return true;
@@ -715,7 +718,7 @@ function resetProjectForm() {
     campaignType: "",
     budget: 0,
     currency: "USD",
-    status: "需求创建",
+    status: "未开始",
     owner: "",
     brief: "",
     cycleStartDate: "",
@@ -902,7 +905,7 @@ function openEditProject(row: any) {
     campaignType: row.campaignType || "",
     budget: numberValue(row.budget),
     currency: row.currency || "USD",
-    status: row.status || "需求创建",
+    status: normalizeProjectStatus(row.status),
     owner: row.owner || "",
     brief: row.brief || "",
     cycleStartDate: row.cycleStartDate || "",
@@ -912,11 +915,44 @@ function openEditProject(row: any) {
 }
 
 function projectStatusTag(status: unknown) {
-  const value = String(status || "").toLowerCase();
-  if (/active|进行|执行/.test(value)) return "success";
-  if (/pause|暂停/.test(value)) return "info";
-  if (/draft|需求|创建/.test(value)) return "warning";
-  return "primary";
+  const value = normalizeProjectStatus(status);
+  if (value === "进行中") return "success";
+  if (value === "已结束") return "info";
+  return "warning";
+}
+
+function normalizeProjectStatus(status: unknown) {
+  const value = String(status || "").trim();
+  if (/^(active|进行中|执行中)$/i.test(value)) return "进行中";
+  if (/^(completed|已完成|已结束|结束)$/i.test(value)) return "已结束";
+  return "未开始";
+}
+
+async function handleProjectStatusChange(row: any, status: string) {
+  const projectId = Number(row.id);
+  if (!projectId || updatingProjectStatusIds[projectId]) return;
+
+  const nextStatus = normalizeProjectStatus(status);
+  const previousStatus = row.status;
+  updatingProjectStatusIds[projectId] = true;
+  row.status = nextStatus;
+  try {
+    const res = await updateProjectStatus({
+      id: projectId,
+      status: nextStatus
+    });
+    if (res.code !== 0) {
+      row.status = previousStatus;
+      ElMessage.warning(res.message || "项目状态更新失败");
+      return;
+    }
+    ElMessage.success("项目状态已更新");
+  } catch {
+    row.status = previousStatus;
+    ElMessage.warning("项目状态更新失败，请稍后重试");
+  } finally {
+    updatingProjectStatusIds[projectId] = false;
+  }
 }
 
 function openCreateCooperation() {
@@ -991,7 +1027,7 @@ async function releaseCampaignFromWizard() {
       campaignType: campaignWizardForm.campaignType,
       budget: campaignWizardForm.budget,
       currency: campaignWizardForm.currency,
-      status: "Active",
+      status: "进行中",
       owner: campaignWizardForm.owner,
       brief: buildCampaignBrief(),
       cycleStartDate: campaignWizardForm.cycleStartDate,
@@ -1235,7 +1271,9 @@ function normalizeProjectImportRow(
     currency:
       cellText(pickValue(row, projectImportAliases.currency)).toUpperCase() ||
       "USD",
-    status: cellText(pickValue(row, projectImportAliases.status)) || "需求创建",
+    status: normalizeProjectStatus(
+      cellText(pickValue(row, projectImportAliases.status))
+    ),
     owner: cellText(pickValue(row, projectImportAliases.owner)),
     brief: cellText(pickValue(row, projectImportAliases.brief)),
     cycleStartDate: startDate,
@@ -1514,11 +1552,7 @@ function moneyText(value: unknown, currency = "USD") {
 }
 
 function projectStatusText(status: unknown) {
-  const value = String(status || "").trim();
-  if (/^active$/i.test(value)) return "进行中";
-  if (/^paused$/i.test(value)) return "已暂停";
-  if (/^completed$/i.test(value)) return "已完成";
-  return value || "进行中";
+  return normalizeProjectStatus(status);
 }
 
 function primaryReach(row: any) {
@@ -1785,7 +1819,7 @@ async function ensureImportProject() {
       campaignType: "内容导入",
       budget: 0,
       currency: "USD",
-      status: "需求创建",
+      status: "未开始",
       owner: "",
       brief: "由合作内容导入时创建"
     });
@@ -1990,9 +2024,12 @@ onMounted(() => {
           </el-input>
           <el-select v-model="projectStatusFilter" class="status-filter">
             <el-option label="全部状态" value="all" />
-            <el-option label="进行中" value="active" />
-            <el-option label="已暂停" value="paused" />
-            <el-option label="创建中" value="需求" />
+            <el-option
+              v-for="status in projectStatusOptions"
+              :key="status"
+              :label="status"
+              :value="status"
+            />
           </el-select>
           <span>{{ visibleProjects.length }} 个项目</span>
         </div>
@@ -2016,6 +2053,63 @@ onMounted(() => {
               </div>
             </template>
           </el-table-column>
+          <el-table-column label="状态" width="130" sortable>
+            <template #default="{ row }">
+              <el-select
+                :model-value="normalizeProjectStatus(row.status)"
+                size="small"
+                class="project-status-editor"
+                :loading="updatingProjectStatusIds[row.id]"
+                @click.stop
+                @change="value => handleProjectStatusChange(row, value)"
+              >
+                <el-option
+                  v-for="status in projectStatusOptions"
+                  :key="status"
+                  :label="status"
+                  :value="status"
+                />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column
+            label="合作达人 / 媒体"
+            width="150"
+            align="center"
+            sortable
+          >
+            <template #default="{ row }">{{
+              projectStats(row.id).resourceCount
+            }}</template>
+          </el-table-column>
+          <el-table-column label="合作内容" width="120" align="center" sortable>
+            <template #default="{ row }">{{
+              projectStats(row.id).cooperationCount
+            }}</template>
+          </el-table-column>
+          <el-table-column
+            label="曝光 / 播放"
+            width="150"
+            align="right"
+            sortable
+          >
+            <template #default="{ row }">{{
+              formatCount(projectStats(row.id).totalReach)
+            }}</template>
+          </el-table-column>
+          <el-table-column label="互动率" width="120" align="right">
+            <template #default="{ row }">{{
+              ratioPercent(
+                projectStats(row.id).totalEngagements,
+                projectStats(row.id).totalReach
+              )
+            }}</template>
+          </el-table-column>
+          <el-table-column label="负责人" width="130"
+            ><template #default="{ row }">{{
+              row.owner || "未指定"
+            }}</template></el-table-column
+          >
           <el-table-column label="目标市场" min-width="310">
             <template #default="{ row }">
               <div
@@ -2076,51 +2170,6 @@ onMounted(() => {
               }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="130" sortable>
-            <template #default="{ row }"
-              ><el-tag :type="projectStatusTag(row.status)" effect="plain">{{
-                projectStatusText(row.status)
-              }}</el-tag></template
-            >
-          </el-table-column>
-          <el-table-column
-            label="合作达人 / 媒体"
-            width="150"
-            align="center"
-            sortable
-          >
-            <template #default="{ row }">{{
-              projectStats(row.id).resourceCount
-            }}</template>
-          </el-table-column>
-          <el-table-column label="合作内容" width="120" align="center" sortable>
-            <template #default="{ row }">{{
-              projectStats(row.id).cooperationCount
-            }}</template>
-          </el-table-column>
-          <el-table-column
-            label="曝光 / 播放"
-            width="150"
-            align="right"
-            sortable
-          >
-            <template #default="{ row }">{{
-              formatCount(projectStats(row.id).totalReach)
-            }}</template>
-          </el-table-column>
-          <el-table-column label="互动率" width="120" align="right">
-            <template #default="{ row }">{{
-              ratioPercent(
-                projectStats(row.id).totalEngagements,
-                projectStats(row.id).totalReach
-              )
-            }}</template>
-          </el-table-column>
-          <el-table-column label="负责人" width="130"
-            ><template #default="{ row }">{{
-              row.owner || "未指定"
-            }}</template></el-table-column
-          >
           <el-table-column label="操作" width="280" fixed="right" align="right">
             <template #default="{ row }">
               <el-button
@@ -2165,6 +2214,22 @@ onMounted(() => {
               v-model="projectForm.name"
               placeholder="例如：Infinix NOTE 60 新品推广"
           /></el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="projectForm.status" class="w-full!">
+              <el-option
+                v-for="status in projectStatusOptions"
+                :key="status"
+                :label="status"
+                :value="status"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="负责人"
+            ><el-input v-model="projectForm.owner"
+          /></el-form-item>
+          <el-form-item label="项目说明"
+            ><el-input v-model="projectForm.brief" type="textarea" :rows="4"
+          /></el-form-item>
           <el-form-item label="目标市场"
             ><el-select
               v-model="projectForm.targetMarkets"
@@ -2202,12 +2267,6 @@ onMounted(() => {
               class="w-full!"
             />
           </el-form-item>
-          <el-form-item label="负责人"
-            ><el-input v-model="projectForm.owner"
-          /></el-form-item>
-          <el-form-item label="项目说明"
-            ><el-input v-model="projectForm.brief" type="textarea" :rows="4"
-          /></el-form-item>
         </el-form>
         <template #footer
           ><el-button @click="projectDialog = false">取消</el-button
@@ -5910,6 +5969,9 @@ onMounted(() => {
 }
 .status-filter {
   width: 145px;
+}
+.project-status-editor {
+  width: 108px;
 }
 .projects-table {
   width: 100%;

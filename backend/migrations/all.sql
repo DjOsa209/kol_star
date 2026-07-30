@@ -1,5 +1,5 @@
 -- kol-admin database bootstrap bundle
--- Generated from backend/migrations/001_init.sql through 029_editable_project_content.sql.
+-- Generated from backend/migrations/001_init.sql through 030_project_status_values.sql.
 -- Execute with: mysql -uroot -p < migrations/all.sql
 
 
@@ -234,7 +234,7 @@ create table if not exists biz_projects (
   campaign_type varchar(64) not null default '',
   budget decimal(14, 2) not null default 0,
   currency varchar(16) not null default 'USD',
-  status varchar(32) not null default '需求创建',
+  status varchar(32) not null default '未开始',
   owner varchar(64) not null default '',
   brief text null,
   created_at datetime not null default current_timestamp,
@@ -1621,3 +1621,19 @@ call add_project_content_column(
 );
 
 drop procedure if exists add_project_content_column;
+
+-- ============================================================
+-- Source: migrations/030_project_status_values.sql
+-- ============================================================
+
+use kol_admin;
+
+alter table biz_projects
+  modify column status varchar(32) not null default '未开始';
+
+update biz_projects
+set status = case
+  when lower(trim(status)) in ('active') or trim(status) in ('进行中', '执行中') then '进行中'
+  when lower(trim(status)) in ('completed') or trim(status) in ('已完成', '已结束', '结束') then '已结束'
+  else '未开始'
+end;

@@ -457,20 +457,28 @@ func (a *app) updateBusinessProjectStatus(w http.ResponseWriter, r *http.Request
 	body := readBody(r)
 	projectID := intField(body, "id")
 	action := strings.TrimSpace(str(body, "action"))
+	requestedStatus := strings.TrimSpace(str(body, "status"))
 	if projectID <= 0 {
-		writeError(w, http.StatusOK, 10001, "Campaign id 不能为空")
+		writeError(w, http.StatusOK, 10001, "项目 id 不能为空")
 		return
 	}
 	var status string
 	var query string
-	if action == "pause" {
-		status = "Paused"
+	if requestedStatus != "" {
+		status = projectStatusValue(requestedStatus)
+		if status != requestedStatus {
+			writeError(w, http.StatusOK, 10001, "项目状态只支持未开始、进行中或已结束")
+			return
+		}
+		query = `update biz_projects set status = ?, paused_at = null where id = ?`
+	} else if action == "pause" {
+		status = "未开始"
 		query = `update biz_projects set status = ?, paused_at = now() where id = ?`
 	} else if action == "resume" {
-		status = "Active"
+		status = "进行中"
 		query = `update biz_projects set status = ?, paused_at = null where id = ?`
 	} else {
-		writeError(w, http.StatusOK, 10001, "状态操作只支持 pause 或 resume")
+		writeError(w, http.StatusOK, 10001, "请选择项目状态")
 		return
 	}
 	if _, err := a.DB().ExecContext(r.Context(), query, status, projectID); err != nil {

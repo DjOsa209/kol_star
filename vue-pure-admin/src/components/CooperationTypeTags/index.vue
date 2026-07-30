@@ -25,6 +25,20 @@ function tagType(value: string) {
   if (value.includes("活动")) return "primary";
   return "info";
 }
+
+function tagIcon(value: string) {
+  if (value.includes("付费")) return "ri:money-dollar-circle-line";
+  if (value.includes("置换")) return "ri:gift-line";
+  if (value.includes("联盟")) return "ri:links-line";
+  if (value.includes("活动")) return "ri:calendar-event-line";
+  return "ri:handshake-line";
+}
+
+function tagClass(value: string) {
+  if (value.includes("付费")) return "is-paid";
+  if (value.includes("置换")) return "is-barter";
+  return "is-other";
+}
 </script>
 
 <template>
@@ -33,10 +47,12 @@ function tagType(value: string) {
       v-for="tag in tags"
       :key="tag"
       :type="tagType(tag)"
+      :class="tagClass(tag)"
       effect="light"
       round
       size="small"
     >
+      <IconifyIconOnline :icon="tagIcon(tag)" />
       {{ tag }}
     </el-tag>
   </span>
@@ -50,6 +66,30 @@ function tagType(value: string) {
   gap: 6px;
   align-items: center;
   vertical-align: middle;
+}
+
+.cooperation-type-tags :deep(.el-tag) {
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  font-weight: 600;
+  border-width: 1px;
+}
+
+.cooperation-type-tags :deep(.el-tag svg) {
+  font-size: 13px;
+}
+
+.cooperation-type-tags :deep(.el-tag.is-paid) {
+  color: #c2413b;
+  background: #fff1f0;
+  border-color: #ffc9c5;
+}
+
+.cooperation-type-tags :deep(.el-tag.is-barter) {
+  color: #a16207;
+  background: #fff8df;
+  border-color: #f7d982;
 }
 
 .cooperation-type-tags__empty {
