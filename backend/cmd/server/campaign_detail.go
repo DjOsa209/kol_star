@@ -98,7 +98,8 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	contentPosts, err := a.queryMaps(r.Context(),
 		`select distinct p.id, p.resource_id as resourceId, r.name as resourceName,
-		        r.avatar_url as resourceAvatarUrl, r.platform_handle as platformHandle,
+		        r.avatar_url as resourceAvatarUrl, r.avatar_remote_url as resourceAvatarRemoteUrl,
+		        r.platform_handle as platformHandle,
 		        p.platform, p.platform_post_id as platformPostId, p.title, p.description,
 		        p.post_url as postUrl,
 		        coalesce(nullif(p.cover_remote_url, ''), nullif(p.cover_url, ''), '') as coverUrl,
@@ -237,10 +238,20 @@ func projectContentPlatformUsesPageScreenshot(platform string) bool {
 	}
 }
 
-func updateResourcePlatformForContent(ctx context.Context, tx *sql.Tx, resourceID int, platform string) error {
+func updateResourcePlatformForContent(
+	ctx context.Context,
+	tx *sql.Tx,
+	resourceID int,
+	platform string,
+	contentChanged bool,
+) error {
 	_, err := tx.ExecContext(ctx,
-		`update biz_resources set platform = ? where id = ?`,
-		platform, resourceID,
+		`update biz_resources
+		    set platform = ?,
+		        platform_url = if(?, '', platform_url),
+		        avatar_remote_url = if(?, '', avatar_remote_url)
+		  where id = ?`,
+		platform, contentChanged, contentChanged, resourceID,
 	)
 	return err
 }
@@ -254,8 +265,11 @@ func replaceCooperationContentURL(raw, oldURL, newURL string) string {
 	raw = strings.TrimSpace(raw)
 	oldURL = strings.TrimSpace(oldURL)
 	newURL = strings.TrimSpace(newURL)
-	if raw == "" || oldURL == "" || newURL == "" {
+	if newURL == "" {
 		return raw
+	}
+	if raw == "" || oldURL == "" {
+		return newURL
 	}
 	if raw == oldURL {
 		return newURL
@@ -382,7 +396,13 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		writeDBError(w, err)
 		return
 	}
-	if err = updateResourcePlatformForContent(r.Context(), tx, resourceID, platform); err != nil {
+	if err = updateResourcePlatformForContent(
+		r.Context(),
+		tx,
+		resourceID,
+		platform,
+		contentChanged,
+	); err != nil {
 		writeDBError(w, err)
 		return
 	}
@@ -432,17 +452,62 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		writeDBError(w, err)
 		return
 	}
+
+	syncWarning := previewWarning
+	if cooperationPlatformSupportsSinglePostFetch(platform) {
+		syncResult, syncErr := a.syncCooperationPost(r.Context(), cooperationID, true)
+		if syncErr != nil {
+			syncWarning = "内容已保存，但 API 数据回填失败：" + syncErr.Error()
+		} else if !syncResult.Synced && syncResult.Message != "" {
+			syncWarning = syncResult.Message
+		}
+	}
+
+	var platformURL, resourceAvatarRemoteURL string
+	var savedFinalLink, savedDeliverableLinks string
+	var contentCoverURL, contentCoverRemoteURL string
+	err = a.DB().QueryRowContext(r.Context(),
+		`select coalesce(r.platform_url, ''), coalesce(r.avatar_remote_url, ''),
+		        coalesce(c.final_link, ''), coalesce(c.deliverable_links, ''),
+		        coalesce(c.content_cover_url, ''), coalesce(c.content_cover_remote_url, '')
+		   from biz_cooperations c
+		   join biz_resources r on r.id = c.resource_id
+		  where c.id = ? and c.resource_id = ?
+		  limit 1`,
+		cooperationID, resourceID,
+	).Scan(
+		&platformURL,
+		&resourceAvatarRemoteURL,
+		&savedFinalLink,
+		&savedDeliverableLinks,
+		&contentCoverURL,
+		&contentCoverRemoteURL,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	contentCoverLocalURL := ""
+	if isLocalResourceImageURL(contentCoverURL) {
+		contentCoverLocalURL = contentCoverURL
+	}
 	writeOK(w, map[string]any{
-		"updated":         true,
-		"platform":        platform,
-		"postUrl":         postURL,
-		"title":           contentTitle,
-		"coverUrl":        firstNonEmpty(remoteCoverURL, localCoverURL),
-		"coverRemoteUrl":  remoteCoverURL,
-		"coverLocalUrl":   localCoverURL,
-		"previewWarning":  previewWarning,
-		"cooperationId":   cooperationID,
-		"contentRecordId": postID,
+		"updated":                 true,
+		"platform":                platform,
+		"platformUrl":             platformURL,
+		"postUrl":                 postURL,
+		"finalLink":               savedFinalLink,
+		"deliverableLinks":        savedDeliverableLinks,
+		"resourceAvatarRemoteUrl": resourceAvatarRemoteURL,
+		"title":                   contentTitle,
+		"contentCoverLocalUrl":    contentCoverLocalURL,
+		"contentCoverRemoteUrl":   contentCoverRemoteURL,
+		"coverUrl":                firstNonEmpty(contentCoverRemoteURL, contentCoverLocalURL),
+		"coverRemoteUrl":          contentCoverRemoteURL,
+		"coverLocalUrl":           contentCoverLocalURL,
+		"previewWarning":          syncWarning,
+		"cooperationId":           cooperationID,
+		"contentRecordId":         postID,
 	})
 }
 

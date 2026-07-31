@@ -377,6 +377,7 @@ const projectContentPosts = computed(() => {
         resourceId: item.resourceId,
         resourceName: item.resourceName,
         resourceAvatarUrl: item.resourceAvatarUrl,
+        resourceAvatarRemoteUrl: item.resourceAvatarRemoteUrl,
         platformHandle: item.platformHandle,
         cooperationId: item.id,
         platform: item.contentPlatform || item.platform || "Website",
@@ -1050,7 +1051,11 @@ function contentCPMHint(post: any) {
 
 function contentAvatar(post: any) {
   return (
-    post?.resourceAvatarUrl || contentResource(post)?.resourceAvatarUrl || ""
+    post?.resourceAvatarRemoteUrl ||
+    post?.resourceAvatarUrl ||
+    contentResource(post)?.resourceAvatarRemoteUrl ||
+    contentResource(post)?.resourceAvatarUrl ||
+    ""
   );
 }
 
