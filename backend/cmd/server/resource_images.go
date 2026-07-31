@@ -103,6 +103,23 @@ func isLocalResourceImageURL(value string) bool {
 	return strings.HasPrefix(strings.TrimSpace(value), "/api/uploads/resource-images/")
 }
 
+func existingLocalResourceImageURL(resourceID int, key string) string {
+	if resourceID <= 0 {
+		return ""
+	}
+	cleanKey := sanitizeResourceImageKey(key)
+	base := filepath.Join(resourceImageRoot, fmt.Sprintf("%d", resourceID), cleanKey)
+	for _, ext := range []string{".jpg", ".png", ".webp", ".gif", ".avif"} {
+		if info, err := os.Stat(base + ext); err == nil && !info.IsDir() {
+			relative, err := filepath.Rel(resourceImageRoot, base+ext)
+			if err == nil {
+				return "/api/uploads/resource-images/" + filepath.ToSlash(relative)
+			}
+		}
+	}
+	return ""
+}
+
 func newResourceImageHTTPClient(proxyURL string) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if proxyURL = strings.TrimSpace(proxyURL); proxyURL != "" {

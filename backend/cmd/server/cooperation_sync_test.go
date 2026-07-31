@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -87,6 +89,90 @@ func TestSyncCooperationPostUsesFinalLinkAndStoredCover(t *testing.T) {
 	}
 	if !result.Synced || result.Source != "作品库" {
 		t.Fatalf("syncCooperationPost() = %#v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyPlatformPostToCooperationReusesLocalizedInstagramMedia(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	previousRoot := resourceImageRoot
+	resourceImageRoot = t.TempDir()
+	t.Cleanup(func() { resourceImageRoot = previousRoot })
+	avatarPath := filepath.Join(resourceImageRoot, "7", "avatar.jpg")
+	coverPath := filepath.Join(resourceImageRoot, "7", "posts", "Instagram_post-1.jpg")
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(avatarPath, []byte("avatar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(coverPath, []byte("cover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const remoteAvatar = "https://cdn.example.com/avatar.jpg"
+	const remoteCover = "https://cdn.example.com/cover.jpg"
+	mock.ExpectExec("update biz_cooperations set").
+		WithArgs(int64(100), int64(15), int64(2), nil, 99).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update biz_cooperations set content_platform").
+		WithArgs(
+			"Instagram",
+			"/api/uploads/resource-images/7/posts/Instagram_post-1.jpg",
+			remoteCover,
+			99,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update biz_resources set platform").
+		WithArgs(
+			"Instagram",
+			"https://www.instagram.com/imparkerburton/",
+			"https://www.instagram.com/imparkerburton/",
+			"author-1", "author-1",
+			"imparkerburton", "imparkerburton",
+			"/api/uploads/resource-images/7/avatar.jpg",
+			"/api/uploads/resource-images/7/avatar.jpg",
+			remoteAvatar, remoteAvatar,
+			7,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	app := newApp(db, Config{})
+	err = app.applyPlatformPostToCooperation(
+		context.Background(),
+		99,
+		7,
+		cooperationPostLink{
+			Platform: "Instagram",
+			PostID:   "post-1",
+			URL:      "https://www.instagram.com/reels/post-1/",
+		},
+		platformPost{
+			PlatformPostID: "post-1",
+			CoverURL:       remoteCover,
+			ViewCount:      100,
+			LikeCount:      10,
+			CommentCount:   2,
+			ShareCount:     3,
+			SaveCount:      2,
+			Raw: map[string]any{
+				"author": map[string]any{
+					"id":              "author-1",
+					"username":        "imparkerburton",
+					"profile_pic_url": remoteAvatar,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

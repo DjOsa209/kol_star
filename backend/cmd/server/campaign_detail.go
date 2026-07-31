@@ -16,6 +16,7 @@ import (
 )
 
 func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	projectID, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("id")))
 	if projectID <= 0 {
 		writeError(w, http.StatusOK, 10001, "Campaign id 不能为空")

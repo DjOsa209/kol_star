@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -516,6 +517,12 @@ func (a *app) applyPlatformPostToCooperation(
 	} else if isLocalResourceImageURL(post.CoverURL) {
 		localCoverURL = post.CoverURL
 	}
+	if localCoverURL == "" && link.PostID != "" {
+		localCoverURL = existingLocalResourceImageURL(
+			resourceID,
+			filepath.Join("posts", link.Platform+"_"+link.PostID),
+		)
+	}
 	if _, err := a.DB().ExecContext(ctx,
 		`update biz_cooperations set content_platform = ?,
 		  content_cover_url = ?, content_cover_remote_url = ?
@@ -526,6 +533,11 @@ func (a *app) applyPlatformPostToCooperation(
 	}
 
 	identity := cooperationResourceIdentityFromPost(link, post)
+	remoteAvatarURL := normalizedRemoteImageURL(identity.AvatarURL)
+	avatarURL := firstNonEmpty(
+		existingLocalResourceImageURL(resourceID, "avatar"),
+		remoteAvatarURL,
+	)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set platform = ?,
 		  platform_url = if(? <> '', ?, platform_url),
@@ -539,8 +551,8 @@ func (a *app) applyPlatformPostToCooperation(
 		identity.PlatformURL, identity.PlatformURL,
 		identity.PlatformUserID, identity.PlatformUserID,
 		identity.PlatformHandle, identity.PlatformHandle,
-		identity.AvatarURL, identity.AvatarURL,
-		identity.AvatarURL, identity.AvatarURL,
+		avatarURL, avatarURL,
+		remoteAvatarURL, remoteAvatarURL,
 		resourceID,
 	)
 	return err

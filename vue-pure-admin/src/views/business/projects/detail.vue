@@ -86,6 +86,7 @@ const contentSaving = ref(false);
 const editingContentPost = ref<any>(null);
 const websiteScreenshotLoading = ref(false);
 const syncingContentIds = reactive<Record<string, boolean>>({});
+const failedContentAvatarUrls = reactive(new Set<string>());
 const attemptedWebsiteScreenshotIds = new Set<string>();
 const scheduledContentTitleProjectIds = new Set<number>();
 const contentTitleRefreshTimers = new Set<number>();
@@ -670,7 +671,10 @@ async function loadDetail() {
   if (!selectedProjectId.value) return;
   loading.value = true;
   try {
-    const res = await getProjectDetail({ id: selectedProjectId.value });
+    const res = await getProjectDetail({
+      id: selectedProjectId.value,
+      _t: Date.now()
+    });
     if (res.code !== 0) return;
     project.value = res.data.project;
     stats.value = res.data.stats || {};
@@ -1050,13 +1054,26 @@ function contentCPMHint(post: any) {
 }
 
 function contentAvatar(post: any) {
+  const resource = contentResource(post);
+  const remoteURL = String(
+    post?.resourceAvatarRemoteUrl || resource?.resourceAvatarRemoteUrl || ""
+  ).trim();
+  const localURL = String(
+    post?.resourceAvatarUrl || resource?.resourceAvatarUrl || ""
+  ).trim();
   return (
-    post?.resourceAvatarRemoteUrl ||
-    post?.resourceAvatarUrl ||
-    contentResource(post)?.resourceAvatarRemoteUrl ||
-    contentResource(post)?.resourceAvatarUrl ||
-    ""
+    (remoteURL && !failedContentAvatarUrls.has(remoteURL) ? remoteURL : "") ||
+    localURL ||
+    remoteURL
   );
+}
+
+function useLocalContentAvatar(post: any) {
+  const resource = contentResource(post);
+  const remoteURL = String(
+    post?.resourceAvatarRemoteUrl || resource?.resourceAvatarRemoteUrl || ""
+  ).trim();
+  if (remoteURL) failedContentAvatarUrls.add(remoteURL);
 }
 
 function contentCooperation(post: any) {
@@ -2331,9 +2348,14 @@ onBeforeUnmount(() => {
                 </el-button>
               </div>
               <div class="content-detail-author">
-                <el-avatar :src="contentAvatar(contentDetailView)" :size="48">{{
-                  String(contentDetailView.resourceName || "R").slice(0, 1)
-                }}</el-avatar>
+                <el-avatar
+                  :src="contentAvatar(contentDetailView)"
+                  :size="48"
+                  @error="useLocalContentAvatar(contentDetailView)"
+                  >{{
+                    String(contentDetailView.resourceName || "R").slice(0, 1)
+                  }}</el-avatar
+                >
                 <div>
                   <strong>{{
                     contentDetailView.resourceName || "未知合作方"
@@ -2930,9 +2952,12 @@ onBeforeUnmount(() => {
             @click="openContentDetail(post)"
           >
             <div class="content-author">
-              <el-avatar :src="contentAvatar(post)" :size="34">{{
-                String(post.resourceName || "R").slice(0, 1)
-              }}</el-avatar>
+              <el-avatar
+                :src="contentAvatar(post)"
+                :size="34"
+                @error="useLocalContentAvatar(post)"
+                >{{ String(post.resourceName || "R").slice(0, 1) }}</el-avatar
+              >
               <div class="content-author-copy">
                 <strong>{{ post.resourceName || "未知达人 / 媒体" }}</strong>
                 <span>
