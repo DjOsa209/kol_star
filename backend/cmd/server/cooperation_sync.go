@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -19,12 +18,21 @@ type cooperationPostLink struct {
 }
 
 type cooperationPostSyncResult struct {
-	Synced         bool   `json:"synced"`
-	Source         string `json:"source,omitempty"`
-	Platform       string `json:"platform,omitempty"`
-	PostID         string `json:"postId,omitempty"`
-	Message        string `json:"message,omitempty"`
-	PreviewWarning string `json:"previewWarning,omitempty"`
+	Synced                  bool   `json:"synced"`
+	Source                  string `json:"source,omitempty"`
+	Platform                string `json:"platform,omitempty"`
+	PlatformURL             string `json:"platformUrl,omitempty"`
+	PostID                  string `json:"postId,omitempty"`
+	FinalLink               string `json:"finalLink,omitempty"`
+	DeliverableLinks        string `json:"deliverableLinks,omitempty"`
+	ResourceAvatarURL       string `json:"resourceAvatarUrl,omitempty"`
+	ResourceAvatarRemoteURL string `json:"resourceAvatarRemoteUrl,omitempty"`
+	FetchedCoverURL         string `json:"fetchedCoverUrl"`
+	CoverURL                string `json:"coverUrl"`
+	ContentCoverLocalURL    string `json:"contentCoverLocalUrl,omitempty"`
+	ContentCoverRemoteURL   string `json:"contentCoverRemoteUrl,omitempty"`
+	Message                 string `json:"message,omitempty"`
+	PreviewWarning          string `json:"previewWarning,omitempty"`
 }
 
 func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowAPI bool) (cooperationPostSyncResult, error) {
@@ -46,6 +54,11 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	if err != nil {
 		return cooperationPostSyncResult{Message: err.Error()}, nil
 	}
+	if allowAPI {
+		if err := a.clearCooperationPostSyncFields(ctx, cooperationID, resourceID, link); err != nil {
+			return cooperationPostSyncResult{}, err
+		}
+	}
 
 	post, found, err := a.findStoredPlatformPost(ctx, resourceID, link)
 	if err != nil {
@@ -59,6 +72,16 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 				Platform: link.Platform,
 				PostID:   link.PostID,
 				Message:  "API 获取作品数据失败：" + err.Error(),
+			}, nil
+		}
+		if firstNonEmpty(
+			normalizedRemoteImageURL(post.CoverRemoteURL),
+			normalizedRemoteImageURL(post.CoverURL),
+		) == "" {
+			return cooperationPostSyncResult{
+				Platform: link.Platform,
+				PostID:   link.PostID,
+				Message:  "API 未返回作品封面 URL",
 			}, nil
 		}
 		found = true
@@ -96,14 +119,104 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 			}
 		}
 	}
-	return cooperationPostSyncResult{
-		Synced:         true,
-		Source:         source,
-		Platform:       link.Platform,
-		PostID:         post.PlatformPostID,
+	result := cooperationPostSyncResult{
+		Synced:   true,
+		Source:   source,
+		Platform: link.Platform,
+		PostID:   post.PlatformPostID,
+		FetchedCoverURL: firstNonEmpty(
+			normalizedRemoteImageURL(post.CoverRemoteURL),
+			normalizedRemoteImageURL(post.CoverURL),
+		),
 		Message:        fmt.Sprintf("已通过%s同步合作作品数据", source),
 		PreviewWarning: previewWarning,
-	}, nil
+	}
+	if allowAPI {
+		if err := a.populateCooperationPostSyncResult(ctx, cooperationID, resourceID, &result); err != nil {
+			return cooperationPostSyncResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func (a *app) clearCooperationPostSyncFields(
+	ctx context.Context,
+	cooperationID int,
+	resourceID int,
+	link cooperationPostLink,
+) error {
+	tx, err := a.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx,
+		`update biz_cooperations
+		    set content_platform = ?, content_cover_url = '', content_cover_remote_url = ''
+		  where id = ? and resource_id = ?`,
+		link.Platform, cooperationID, resourceID,
+	); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx,
+		`update biz_resources
+		    set platform = ?, platform_url = '', platform_user_id = '',
+		        platform_handle = '', avatar_url = '', avatar_remote_url = ''
+		  where id = ?`,
+		link.Platform, resourceID,
+	); err != nil {
+		return err
+	}
+	if link.PostID != "" {
+		if _, err = tx.ExecContext(ctx,
+			`update biz_resource_platform_posts
+			    set cover_url = '', cover_remote_url = ''
+			  where resource_id = ? and platform = ? and platform_post_id = ?`,
+			resourceID, link.Platform, link.PostID,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (a *app) populateCooperationPostSyncResult(
+	ctx context.Context,
+	cooperationID int,
+	resourceID int,
+	result *cooperationPostSyncResult,
+) error {
+	var contentCoverURL string
+	if err := a.DB().QueryRowContext(ctx,
+		`select coalesce(r.platform_url, ''),
+		        coalesce(c.final_link, ''), coalesce(c.deliverable_links, ''),
+		        coalesce(r.avatar_url, ''), coalesce(r.avatar_remote_url, ''),
+		        coalesce(c.content_cover_url, ''), coalesce(c.content_cover_remote_url, '')
+		   from biz_cooperations c
+		   join biz_resources r on r.id = c.resource_id
+		  where c.id = ? and c.resource_id = ?
+		  limit 1`,
+		cooperationID, resourceID,
+	).Scan(
+		&result.PlatformURL,
+		&result.FinalLink,
+		&result.DeliverableLinks,
+		&result.ResourceAvatarURL,
+		&result.ResourceAvatarRemoteURL,
+		&contentCoverURL,
+		&result.ContentCoverRemoteURL,
+	); err != nil {
+		return err
+	}
+	if isLocalResourceImageURL(contentCoverURL) {
+		result.ContentCoverLocalURL = contentCoverURL
+	}
+	result.CoverURL = firstNonEmpty(
+		result.ContentCoverRemoteURL,
+		result.ContentCoverLocalURL,
+		contentCoverURL,
+	)
+	return nil
 }
 
 func cooperationPlatformSupportsSinglePostFetch(platform string) bool {
@@ -517,12 +630,6 @@ func (a *app) applyPlatformPostToCooperation(
 	} else if isLocalResourceImageURL(post.CoverURL) {
 		localCoverURL = post.CoverURL
 	}
-	if localCoverURL == "" && link.PostID != "" {
-		localCoverURL = existingLocalResourceImageURL(
-			resourceID,
-			filepath.Join("posts", link.Platform+"_"+link.PostID),
-		)
-	}
 	if _, err := a.DB().ExecContext(ctx,
 		`update biz_cooperations set content_platform = ?,
 		  content_cover_url = ?, content_cover_remote_url = ?
@@ -534,10 +641,6 @@ func (a *app) applyPlatformPostToCooperation(
 
 	identity := cooperationResourceIdentityFromPost(link, post)
 	remoteAvatarURL := normalizedRemoteImageURL(identity.AvatarURL)
-	avatarURL := firstNonEmpty(
-		existingLocalResourceImageURL(resourceID, "avatar"),
-		remoteAvatarURL,
-	)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set platform = ?,
 		  platform_url = if(? <> '', ?, platform_url),
@@ -551,7 +654,7 @@ func (a *app) applyPlatformPostToCooperation(
 		identity.PlatformURL, identity.PlatformURL,
 		identity.PlatformUserID, identity.PlatformUserID,
 		identity.PlatformHandle, identity.PlatformHandle,
-		avatarURL, avatarURL,
+		remoteAvatarURL, remoteAvatarURL,
 		remoteAvatarURL, remoteAvatarURL,
 		resourceID,
 	)

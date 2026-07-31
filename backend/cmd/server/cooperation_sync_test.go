@@ -2,8 +2,7 @@ package main
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"encoding/json"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -95,27 +94,12 @@ func TestSyncCooperationPostUsesFinalLinkAndStoredCover(t *testing.T) {
 	}
 }
 
-func TestApplyPlatformPostToCooperationReusesLocalizedInstagramMedia(t *testing.T) {
+func TestApplyPlatformPostToCooperationUsesFetchedRemoteInstagramMedia(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-
-	previousRoot := resourceImageRoot
-	resourceImageRoot = t.TempDir()
-	t.Cleanup(func() { resourceImageRoot = previousRoot })
-	avatarPath := filepath.Join(resourceImageRoot, "7", "avatar.jpg")
-	coverPath := filepath.Join(resourceImageRoot, "7", "posts", "Instagram_post-1.jpg")
-	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(avatarPath, []byte("avatar"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(coverPath, []byte("cover"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	const remoteAvatar = "https://cdn.example.com/avatar.jpg"
 	const remoteCover = "https://cdn.example.com/cover.jpg"
@@ -125,7 +109,7 @@ func TestApplyPlatformPostToCooperationReusesLocalizedInstagramMedia(t *testing.
 	mock.ExpectExec("update biz_cooperations set content_platform").
 		WithArgs(
 			"Instagram",
-			"/api/uploads/resource-images/7/posts/Instagram_post-1.jpg",
+			remoteCover,
 			remoteCover,
 			99,
 		).
@@ -137,8 +121,7 @@ func TestApplyPlatformPostToCooperationReusesLocalizedInstagramMedia(t *testing.
 			"https://www.instagram.com/imparkerburton/",
 			"author-1", "author-1",
 			"imparkerburton", "imparkerburton",
-			"/api/uploads/resource-images/7/avatar.jpg",
-			"/api/uploads/resource-images/7/avatar.jpg",
+			remoteAvatar, remoteAvatar,
 			remoteAvatar, remoteAvatar,
 			7,
 		).
@@ -176,6 +159,107 @@ func TestApplyPlatformPostToCooperationReusesLocalizedInstagramMedia(t *testing.
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClearCooperationPostSyncFieldsRemovesPreviousIdentityAndCover(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("update biz_cooperations").
+		WithArgs("Instagram", 99, 7).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update biz_resources").
+		WithArgs("Instagram", 7).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update biz_resource_platform_posts").
+		WithArgs(7, "Instagram", "post-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	app := newApp(db, Config{})
+	if err := app.clearCooperationPostSyncFields(
+		context.Background(),
+		99,
+		7,
+		cooperationPostLink{Platform: "Instagram", PostID: "post-1"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPopulateCooperationPostSyncResultReturnsFetchedCoverFields(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("select coalesce\\(r.platform_url").
+		WithArgs(99, 7).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"platform_url", "final_link", "deliverable_links",
+			"avatar_url", "avatar_remote_url", "content_cover_url",
+			"content_cover_remote_url",
+		}).AddRow(
+			"https://www.instagram.com/imparkerburton/",
+			"https://www.instagram.com/reels/post-1/",
+			"https://www.instagram.com/reels/post-1/",
+			"https://cdn.example.com/avatar.jpg",
+			"https://cdn.example.com/avatar.jpg",
+			"https://cdn.example.com/cover.jpg",
+			"https://cdn.example.com/cover.jpg",
+		))
+
+	result := cooperationPostSyncResult{
+		FetchedCoverURL: "https://cdn.example.com/cover.jpg",
+	}
+	app := newApp(db, Config{})
+	if err := app.populateCooperationPostSyncResult(
+		context.Background(),
+		99,
+		7,
+		&result,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if result.CoverURL != "https://cdn.example.com/cover.jpg" ||
+		result.ContentCoverRemoteURL != "https://cdn.example.com/cover.jpg" ||
+		result.FetchedCoverURL != "https://cdn.example.com/cover.jpg" {
+		t.Fatalf("unexpected cover fields: %#v", result)
+	}
+	if result.PlatformURL != "https://www.instagram.com/imparkerburton/" ||
+		result.ResourceAvatarRemoteURL != "https://cdn.example.com/avatar.jpg" {
+		t.Fatalf("unexpected resource fields: %#v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCooperationPostSyncResultJSONIncludesFetchedCoverURL(t *testing.T) {
+	const coverURL = "https://cdn.example.com/fetched-cover.jpg"
+	payload, err := json.Marshal(cooperationPostSyncResult{
+		Synced:          true,
+		FetchedCoverURL: coverURL,
+		CoverURL:        coverURL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["fetchedCoverUrl"] != coverURL || result["coverUrl"] != coverURL {
+		t.Fatalf("sync response does not expose fetched cover URL: %s", payload)
 	}
 }
 
