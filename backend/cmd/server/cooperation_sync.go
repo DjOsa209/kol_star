@@ -20,17 +20,18 @@ type cooperationPostLink struct {
 type cooperationPostSyncResult struct {
 	Synced                  bool   `json:"synced"`
 	Source                  string `json:"source,omitempty"`
-	Platform                string `json:"platform,omitempty"`
-	PlatformURL             string `json:"platformUrl,omitempty"`
-	PostID                  string `json:"postId,omitempty"`
-	FinalLink               string `json:"finalLink,omitempty"`
-	DeliverableLinks        string `json:"deliverableLinks,omitempty"`
-	ResourceAvatarURL       string `json:"resourceAvatarUrl,omitempty"`
-	ResourceAvatarRemoteURL string `json:"resourceAvatarRemoteUrl,omitempty"`
+	Platform                string `json:"platform"`
+	PlatformURL             string `json:"platformUrl"`
+	PostID                  string `json:"postId"`
+	FinalLink               string `json:"finalLink"`
+	DeliverableLinks        string `json:"deliverableLinks"`
+	ResourceAvatarURL       string `json:"resourceAvatarUrl"`
+	ResourceAvatarRemoteURL string `json:"resourceAvatarRemoteUrl"`
 	FetchedCoverURL         string `json:"fetchedCoverUrl"`
 	CoverURL                string `json:"coverUrl"`
-	ContentCoverLocalURL    string `json:"contentCoverLocalUrl,omitempty"`
-	ContentCoverRemoteURL   string `json:"contentCoverRemoteUrl,omitempty"`
+	ContentCoverLocalURL    string `json:"contentCoverLocalUrl"`
+	ContentCoverRemoteURL   string `json:"contentCoverRemoteUrl"`
+	PreviousFieldsCleared   bool   `json:"previousFieldsCleared"`
 	Message                 string `json:"message,omitempty"`
 	PreviewWarning          string `json:"previewWarning,omitempty"`
 }
@@ -52,12 +53,23 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	}
 	link, err := parseCooperationPostLink(postSource)
 	if err != nil {
-		return cooperationPostSyncResult{Message: err.Error()}, nil
+		return cooperationPostSyncResult{
+			FinalLink:        finalLink,
+			DeliverableLinks: deliverableLinks,
+			Message:          err.Error(),
+		}, nil
+	}
+	result := cooperationPostSyncResult{
+		Platform:         link.Platform,
+		PostID:           link.PostID,
+		FinalLink:        finalLink,
+		DeliverableLinks: deliverableLinks,
 	}
 	if allowAPI {
 		if err := a.clearCooperationPostSyncFields(ctx, cooperationID, resourceID, link); err != nil {
 			return cooperationPostSyncResult{}, err
 		}
+		result.PreviousFieldsCleared = true
 	}
 
 	post, found, err := a.findStoredPlatformPost(ctx, resourceID, link)
@@ -68,31 +80,28 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	if allowAPI && cooperationPlatformSupportsSinglePostFetch(link.Platform) {
 		post, err = a.fetchCooperationPlatformPost(ctx, resourceID, link)
 		if err != nil {
-			return cooperationPostSyncResult{
-				Platform: link.Platform,
-				PostID:   link.PostID,
-				Message:  "API 获取作品数据失败：" + err.Error(),
-			}, nil
+			result.Message = "API 获取作品数据失败：" + err.Error()
+			return a.finishCooperationPostSyncResult(
+				ctx, cooperationID, resourceID, allowAPI, result,
+			)
 		}
 		if firstNonEmpty(
 			normalizedRemoteImageURL(post.CoverRemoteURL),
 			normalizedRemoteImageURL(post.CoverURL),
 		) == "" {
-			return cooperationPostSyncResult{
-				Platform: link.Platform,
-				PostID:   link.PostID,
-				Message:  "API 未返回作品封面 URL",
-			}, nil
+			result.Message = "API 未返回作品封面 URL"
+			return a.finishCooperationPostSyncResult(
+				ctx, cooperationID, resourceID, allowAPI, result,
+			)
 		}
 		found = true
 		source = "API"
 	}
 	if !found {
-		return cooperationPostSyncResult{
-			Platform: link.Platform,
-			PostID:   link.PostID,
-			Message:  "作品库中未找到匹配作品",
-		}, nil
+		result.Message = "作品库中未找到匹配作品"
+		return a.finishCooperationPostSyncResult(
+			ctx, cooperationID, resourceID, allowAPI, result,
+		)
 	}
 	if allowAPI {
 		if err := a.applyPlatformPostToCooperation(ctx, cooperationID, resourceID, link, post); err != nil {
@@ -119,20 +128,34 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 			}
 		}
 	}
-	result := cooperationPostSyncResult{
-		Synced:   true,
-		Source:   source,
-		Platform: link.Platform,
-		PostID:   post.PlatformPostID,
-		FetchedCoverURL: firstNonEmpty(
-			normalizedRemoteImageURL(post.CoverRemoteURL),
-			normalizedRemoteImageURL(post.CoverURL),
-		),
-		Message:        fmt.Sprintf("已通过%s同步合作作品数据", source),
-		PreviewWarning: previewWarning,
-	}
+	result.Synced = true
+	result.Source = source
+	result.PostID = post.PlatformPostID
+	result.FetchedCoverURL = firstNonEmpty(
+		normalizedRemoteImageURL(post.CoverRemoteURL),
+		normalizedRemoteImageURL(post.CoverURL),
+	)
+	result.Message = fmt.Sprintf("已通过%s同步合作作品数据", source)
+	result.PreviewWarning = previewWarning
+	return a.finishCooperationPostSyncResult(
+		ctx, cooperationID, resourceID, allowAPI, result,
+	)
+}
+
+func (a *app) finishCooperationPostSyncResult(
+	ctx context.Context,
+	cooperationID int,
+	resourceID int,
+	allowAPI bool,
+	result cooperationPostSyncResult,
+) (cooperationPostSyncResult, error) {
 	if allowAPI {
-		if err := a.populateCooperationPostSyncResult(ctx, cooperationID, resourceID, &result); err != nil {
+		if err := a.populateCooperationPostSyncResult(
+			ctx,
+			cooperationID,
+			resourceID,
+			&result,
+		); err != nil {
 			return cooperationPostSyncResult{}, err
 		}
 	}

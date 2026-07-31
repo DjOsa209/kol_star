@@ -261,6 +261,22 @@ func TestCooperationPostSyncResultJSONIncludesFetchedCoverURL(t *testing.T) {
 	if result["fetchedCoverUrl"] != coverURL || result["coverUrl"] != coverURL {
 		t.Fatalf("sync response does not expose fetched cover URL: %s", payload)
 	}
+	for _, field := range []string{
+		"platform",
+		"platformUrl",
+		"postId",
+		"finalLink",
+		"deliverableLinks",
+		"resourceAvatarUrl",
+		"resourceAvatarRemoteUrl",
+		"contentCoverLocalUrl",
+		"contentCoverRemoteUrl",
+		"previousFieldsCleared",
+	} {
+		if _, exists := result[field]; !exists {
+			t.Fatalf("sync response omits %s: %s", field, payload)
+		}
+	}
 }
 
 func TestCooperationPostSyncFailure(t *testing.T) {

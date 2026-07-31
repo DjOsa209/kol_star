@@ -910,6 +910,34 @@ function contentOperationKey(post: any) {
   return String(contentCooperation(post)?.id || post?.id || "");
 }
 
+function clearContentSyncFields(post: any, cooperation: any) {
+  const resourceId = Number(post?.resourceId || cooperation?.resourceId || 0);
+  const records = [
+    post,
+    cooperation,
+    ...cooperations.value.filter(
+      item => Number(item.resourceId) === resourceId
+    ),
+    ...projectResources.value.filter(
+      item => Number(item.resourceId) === resourceId
+    ),
+    ...contentPosts.value.filter(item => Number(item.resourceId) === resourceId)
+  ];
+  new Set(records.filter(Boolean)).forEach(item => {
+    Object.assign(item, {
+      platformUrl: "",
+      resourceAvatarUrl: "",
+      resourceAvatarRemoteUrl: "",
+      contentCoverUrl: "",
+      contentCoverLocalUrl: "",
+      contentCoverRemoteUrl: "",
+      coverUrl: "",
+      coverLocalUrl: "",
+      coverRemoteUrl: ""
+    });
+  });
+}
+
 async function syncContentFromCard(post: any) {
   if (!project.value) return;
   const cooperation = contentCooperation(post);
@@ -920,6 +948,7 @@ async function syncContentFromCard(post: any) {
   const key = contentOperationKey(post);
   if (!key || syncingContentIds[key]) return;
   syncingContentIds[key] = true;
+  clearContentSyncFields(post, cooperation);
   try {
     const res = isWebsiteContent(post)
       ? await updateProjectContent({
