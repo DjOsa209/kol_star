@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -44,6 +45,13 @@ type tableData struct {
 }
 
 var sensitiveQueryParamPattern = regexp.MustCompile(`(?i)([?&](?:key|api_key|access_token|refresh_token|token|tikhub_api_key)=)[^&\s"]+`)
+
+const defaultIPLocationEndpoint = "https://ipwho.is/"
+
+var (
+	ipLocationHTTPClient = &http.Client{Timeout: 1500 * time.Millisecond}
+	ipLocationCache      sync.Map
+)
 
 func main() {
 	cfg, watcher, err := loadConfig()
@@ -790,9 +798,84 @@ func (a *app) onlineLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) loginLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, username, ip, address, sys_login_logs.system, browser, status, behavior,
-	                     cast(unix_timestamp(login_time) * 1000 as unsigned) as loginTime
-	                from sys_login_logs order by id desc`)
+	body := readBody(r)
+	pageSize := intField(body, "pageSize")
+	currentPage := intField(body, "currentPage")
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	if currentPage <= 0 {
+		currentPage = 1
+	}
+
+	where, args := loginLogFilter(body)
+	var total int
+	if err := a.DB().QueryRowContext(
+		r.Context(),
+		"select count(*) from sys_login_logs"+where,
+		args...,
+	).Scan(&total); err != nil {
+		writeDBError(w, err)
+		return
+	}
+
+	queryArgs := append(append([]any{}, args...), pageSize, (currentPage-1)*pageSize)
+	rows, err := a.queryMaps(r.Context(),
+		`select id, username, ip, address, sys_login_logs.system, browser, status, behavior,
+		        cast(unix_timestamp(login_time) * 1000 as unsigned) as loginTime
+		   from sys_login_logs`+where+` order by id desc limit ? offset ?`,
+		queryArgs...,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, tableData{
+		List:        rows,
+		Total:       total,
+		PageSize:    pageSize,
+		CurrentPage: currentPage,
+	})
+}
+
+func loginLogFilter(body map[string]any) (string, []any) {
+	var clauses []string
+	var args []any
+	if username := stringField(body, "username"); username != "" && username != "<nil>" {
+		clauses = append(clauses, "username like ?")
+		args = append(args, "%"+username+"%")
+	}
+	if status := stringField(body, "status"); status == "0" || status == "1" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, status)
+	}
+	if start, end, ok := timeRangeField(body, "loginTime"); ok {
+		clauses = append(clauses, "login_time between ? and ?")
+		args = append(args, start, end)
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return " where " + strings.Join(clauses, " and "), args
+}
+
+func timeRangeField(body map[string]any, key string) (time.Time, time.Time, bool) {
+	values, ok := body[key].([]any)
+	if !ok || len(values) != 2 {
+		return time.Time{}, time.Time{}, false
+	}
+	start, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(values[0])))
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	end, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(values[1])))
+	if err != nil || end.Before(start) {
+		return time.Time{}, time.Time{}, false
+	}
+	return start.Local(), end.Local(), true
 }
 
 func (a *app) operationLogs(w http.ResponseWriter, r *http.Request) {
@@ -1142,6 +1225,9 @@ func (a *app) usernameByID(ctx context.Context, userID int) (string, error) {
 
 func (a *app) recordLoginLog(r *http.Request, username string, status int, behavior string) {
 	ip, address, systemName, browser := requestSecurityInfo(r)
+	if address == "未知" {
+		address = cachedIPAddress(r.Context(), ip)
+	}
 	if _, err := a.DB().ExecContext(r.Context(),
 		`insert into sys_login_logs
 		  (username, ip, address, `+"`system`"+`, browser, status, behavior)
@@ -1154,9 +1240,14 @@ func (a *app) recordLoginLog(r *http.Request, username string, status int, behav
 
 func requestSecurityInfo(r *http.Request) (ip, address, systemName, browser string) {
 	ip = clientIP(r)
-	address = "未知"
-	if ip == "127.0.0.1" || ip == "::1" || ip == "localhost" {
+	parsedIP := net.ParseIP(ip)
+	switch {
+	case parsedIP != nil && parsedIP.IsLoopback():
 		address = "本机"
+	case parsedIP != nil && (parsedIP.IsPrivate() || parsedIP.IsLinkLocalUnicast()):
+		address = "内网"
+	default:
+		address = "未知"
 	}
 	userAgent := r.UserAgent()
 	systemName = detectSystem(userAgent)
@@ -1165,23 +1256,93 @@ func requestSecurityInfo(r *http.Request) (ip, address, systemName, browser stri
 }
 
 func clientIP(r *http.Request) string {
-	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
-		value := strings.TrimSpace(r.Header.Get(header))
-		if value == "" {
-			continue
-		}
-		if comma := strings.Index(value, ","); comma >= 0 {
-			value = strings.TrimSpace(value[:comma])
-		}
-		if value != "" {
-			return value
+	remoteIP := parseRequestIP(r.RemoteAddr)
+	if remoteIP == nil || remoteIP.IsPrivate() || remoteIP.IsLoopback() {
+		for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
+			for _, value := range strings.Split(r.Header.Get(header), ",") {
+				if forwardedIP := parseRequestIP(value); forwardedIP != nil {
+					return forwardedIP.String()
+				}
+			}
 		}
 	}
-	host := r.RemoteAddr
-	if value, _, err := net.SplitHostPort(host); err == nil {
-		host = value
+	if remoteIP != nil {
+		return remoteIP.String()
 	}
-	return strings.TrimSpace(host)
+	return "未知"
+}
+
+func parseRequestIP(value string) net.IP {
+	value = strings.Trim(strings.TrimSpace(value), `"`)
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	if zone := strings.LastIndex(value, "%"); zone >= 0 {
+		value = value[:zone]
+	}
+	return net.ParseIP(value)
+}
+
+func cachedIPAddress(ctx context.Context, ip string) string {
+	if cached, ok := ipLocationCache.Load(ip); ok {
+		return cached.(string)
+	}
+	address := resolveIPAddress(ctx, ipLocationHTTPClient, defaultIPLocationEndpoint, ip)
+	if address != "未知" {
+		ipLocationCache.Store(ip, address)
+	}
+	return address
+}
+
+func resolveIPAddress(ctx context.Context, client *http.Client, endpoint, ip string) string {
+	parsedIP := net.ParseIP(strings.TrimSpace(ip))
+	switch {
+	case parsedIP == nil:
+		return "未知"
+	case parsedIP.IsLoopback():
+		return "本机"
+	case parsedIP.IsPrivate() || parsedIP.IsLinkLocalUnicast():
+		return "内网"
+	}
+
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		strings.TrimRight(endpoint, "/")+"/"+parsedIP.String()+"?fields=success,country,region,city",
+		nil,
+	)
+	if err != nil {
+		return "未知"
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "未知"
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "未知"
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		Country string `json:"country"`
+		Region  string `json:"region"`
+		City    string `json:"city"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&result); err != nil || !result.Success {
+		return "未知"
+	}
+	parts := make([]string, 0, 3)
+	for _, part := range []string{result.Country, result.Region, result.City} {
+		part = strings.TrimSpace(part)
+		if part != "" && !contains(parts, part) {
+			parts = append(parts, part)
+		}
+	}
+	if len(parts) == 0 {
+		return "未知"
+	}
+	return strings.Join(parts, " · ")
 }
 
 func detectSystem(userAgent string) string {

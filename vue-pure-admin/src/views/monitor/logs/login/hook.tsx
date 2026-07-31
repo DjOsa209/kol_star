@@ -1,12 +1,10 @@
 import dayjs from "dayjs";
-import { message } from "@/utils/message";
-import { getKeyList } from "@pureadmin/utils";
 import { getLoginLogsList } from "@/api/system";
 import { usePublicHooks } from "@/views/system/hooks";
 import type { PaginationProps } from "@pureadmin/table";
-import { type Ref, reactive, ref, onMounted, toRaw } from "vue";
+import { reactive, ref, onMounted, toRaw } from "vue";
 
-export function useRole(tableRef: Ref) {
+export function useRole() {
   const form = reactive({
     username: "",
     status: "",
@@ -14,7 +12,6 @@ export function useRole(tableRef: Ref) {
   });
   const dataList = ref([]);
   const loading = ref(true);
-  const selectedNum = ref(0);
   const { tagStyle } = usePublicHooks();
 
   const pagination = reactive<PaginationProps>({
@@ -24,12 +21,6 @@ export function useRole(tableRef: Ref) {
     background: true
   });
   const columns: TableColumnList = [
-    {
-      label: "勾选列", // 如果需要表格多选，此处label必须设置
-      type: "selection",
-      fixed: "left",
-      reserveSelection: true // 数据刷新后保留选项
-    },
     {
       label: "序号",
       prop: "id",
@@ -85,66 +76,39 @@ export function useRole(tableRef: Ref) {
   ];
 
   function handleSizeChange(val: number) {
-    console.log(`${val} items per page`);
-  }
-
-  function handleCurrentChange(val: number) {
-    console.log(`current page: ${val}`);
-  }
-
-  /** 当CheckBox选择项发生变化时会触发该事件 */
-  function handleSelectionChange(val) {
-    selectedNum.value = val.length;
-    // 重置表格高度
-    tableRef.value.setAdaptive();
-  }
-
-  /** 取消选择 */
-  function onSelectionCancel() {
-    selectedNum.value = 0;
-    // 用于多选表格，清空用户的选择
-    tableRef.value.getTableRef().clearSelection();
-  }
-
-  /** 批量删除 */
-  function onbatchDel() {
-    // 返回当前选中的行
-    const curSelected = tableRef.value.getTableRef().getSelectionRows();
-    // 接下来根据实际业务，通过选中行的某项数据，比如下面的id，调用接口进行批量删除
-    message(`已删除序号为 ${getKeyList(curSelected, "id")} 的数据`, {
-      type: "success"
-    });
-    tableRef.value.getTableRef().clearSelection();
+    pagination.pageSize = val;
+    pagination.currentPage = 1;
     onSearch();
   }
 
-  /** 清空日志 */
-  function clearAll() {
-    // 根据实际业务，调用接口删除所有日志数据
-    message("已删除所有日志数据", {
-      type: "success"
-    });
+  function handleCurrentChange(val: number) {
+    pagination.currentPage = val;
     onSearch();
   }
 
   async function onSearch() {
     loading.value = true;
-    const { code, data } = await getLoginLogsList(toRaw(form));
-    if (code === 0) {
-      dataList.value = data.list;
-      pagination.total = data.total;
-      pagination.pageSize = data.pageSize;
-      pagination.currentPage = data.currentPage;
-    }
-
-    setTimeout(() => {
+    try {
+      const { code, data } = await getLoginLogsList({
+        ...toRaw(form),
+        pageSize: pagination.pageSize,
+        currentPage: pagination.currentPage
+      });
+      if (code === 0) {
+        dataList.value = data.list;
+        pagination.total = data.total;
+        pagination.pageSize = data.pageSize;
+        pagination.currentPage = data.currentPage;
+      }
+    } finally {
       loading.value = false;
-    }, 500);
+    }
   }
 
   const resetForm = formEl => {
     if (!formEl) return;
     formEl.resetFields();
+    pagination.currentPage = 1;
     onSearch();
   };
 
@@ -158,14 +122,9 @@ export function useRole(tableRef: Ref) {
     columns,
     dataList,
     pagination,
-    selectedNum,
     onSearch,
-    clearAll,
     resetForm,
-    onbatchDel,
     handleSizeChange,
-    onSelectionCancel,
-    handleCurrentChange,
-    handleSelectionChange
+    handleCurrentChange
   };
 }
