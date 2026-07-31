@@ -18,11 +18,14 @@ const websiteScreenshotTimeout = 25 * time.Second
 const websiteScreenshotSettleDelay = 2 * time.Second
 
 const websiteScreenshotOverlayCleanupScript = `(() => {
-  const lowConsentPattern = /^(close|dismiss|reject( all)?|decline|only necessary|necessary only|关闭|仅必要|只允许必要|拒绝(全部|所有)?)$/i;
+  const lowConsentPattern = /^(close|dismiss|reject( all)?|decline|disagree|do not consent|don't consent|no thanks|only necessary|necessary only|关闭|不同意|仅必要|只允许必要|拒绝(全部|所有)?)$/i;
   const dismissPattern = /^(got it|close|dismiss|知道了|我知道了|关闭)$/i;
-  const consentActionPattern = /^(accept( all| cookies)?|agree( to all)?|i agree|allow( all)?|接受(全部|所有)?|同意(全部|所有|并继续)?|我同意|我已阅读并同意|允许(全部|所有)?)$/i;
+  const consentActionPattern = /^(consent|accept( all| cookies)?|agree( to all)?|i agree|allow( all)?|接受(全部|所有)?|同意(全部|所有|并继续)?|我同意|我已阅读并同意|允许(全部|所有)?)$/i;
   const consentPattern = /(cookie|consent|privacy|gdpr|cmp|协议|隐私|同意)/i;
-  const overlayPattern = /(cookie|consent|privacy|gdpr|cmp|modal|dialog|overlay|popup|pop-up|backdrop|lightbox|mask|协议|隐私|同意|弹窗|遮罩|提示|公告)/i;
+  const consentCopyPattern = /(we value your privacy|asks? for your consent|personal data|do not consent|don't consent|accept all|privacy preferences|cookie settings|我们重视您的隐私|个人数据|不同意|隐私设置)/i;
+  const overlayPattern = /(cookie|consent|privacy|gdpr|cmp|modal|dialog|overlay|popup|pop-up|backdrop|lightbox|mask|sp_message|sp_veil|didomi|onetrust|qc-cmp|truste|osano|cookiebot|usercentrics|quantcast|协议|隐私|同意|弹窗|遮罩|提示|公告)/i;
+  const controlSelector =
+    'button, [role="button"], input[type="button"], input[type="submit"], a';
   const roots = [];
   const documents = [];
 
@@ -57,6 +60,8 @@ const websiteScreenshotOverlayCleanupScript = `(() => {
     element.getAttribute('aria-label'),
     element.getAttribute('title')
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const elementText = element =>
+    elementLabel(element).slice(0, 4000);
   const metadata = element => [
     element.id,
     typeof element.className === 'string' ? element.className : '',
@@ -65,16 +70,35 @@ const websiteScreenshotOverlayCleanupScript = `(() => {
     element.getAttribute('title'),
     element.getAttribute('name')
   ].filter(Boolean).join(' ');
+  const overlayGeometry = element => {
+    const view = element.ownerDocument.defaultView;
+    const style = view.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    const viewportArea = Math.max(1, view.innerWidth * view.innerHeight);
+    const visibleWidth = Math.max(0, Math.min(rect.right, view.innerWidth) - Math.max(rect.left, 0));
+    const visibleHeight = Math.max(0, Math.min(rect.bottom, view.innerHeight) - Math.max(rect.top, 0));
+    return {
+      coverage: visibleWidth * visibleHeight / viewportArea,
+      positioned: ['fixed', 'sticky', 'absolute'].includes(style.position),
+      zIndex: Number.parseInt(style.zIndex, 10) || 0
+    };
+  };
   const overlayContainer = element => {
     for (let current = element; current; current = current.parentElement) {
       if (current.matches('dialog,[role="dialog"],[aria-modal="true"]') ||
           overlayPattern.test(metadata(current))) return current;
+      const geometry = overlayGeometry(current);
+      if (geometry.positioned && geometry.coverage >= 0.08 &&
+          geometry.zIndex >= 100 && consentCopyPattern.test(elementText(current))) {
+        return current;
+      }
     }
     return null;
   };
   const hasConsentContext = element => {
     for (let current = element; current; current = current.parentElement) {
-      if (consentPattern.test(metadata(current))) return true;
+      if (consentPattern.test(metadata(current)) ||
+          consentCopyPattern.test(elementText(current))) return true;
     }
     return false;
   };
@@ -82,9 +106,7 @@ const websiteScreenshotOverlayCleanupScript = `(() => {
   let clicked = 0;
   const handledOverlays = new Set();
   for (const root of roots) {
-    const controls = Array.from(root.querySelectorAll(
-      'button, [role="button"], input[type="button"], input[type="submit"], a'
-    )).filter(control => {
+    const controls = Array.from(root.querySelectorAll(controlSelector)).filter(control => {
       if (!visible(control) || !overlayContainer(control)) return false;
       const label = elementLabel(control);
       return lowConsentPattern.test(label) || dismissPattern.test(label) ||
@@ -107,23 +129,43 @@ const websiteScreenshotOverlayCleanupScript = `(() => {
 
   let removed = 0;
   for (const root of roots) {
-    for (const element of Array.from(root.querySelectorAll('*')).reverse()) {
+    const elements = Array.from(root.querySelectorAll('*'));
+    const consentOverlayElements = new Set();
+    const remainingConsentControls = Array.from(root.querySelectorAll(controlSelector)).filter(
+      control => {
+        const label = elementLabel(control);
+        return lowConsentPattern.test(label) || dismissPattern.test(label) ||
+          consentActionPattern.test(label);
+      }
+    );
+    for (const control of remainingConsentControls) {
+      for (let current = control.parentElement; current; current = current.parentElement) {
+        if (!consentCopyPattern.test(elementText(current))) continue;
+        const geometry = overlayGeometry(current);
+        if (geometry.positioned && geometry.coverage >= 0.08 && geometry.zIndex >= 100) {
+          consentOverlayElements.add(current);
+        }
+      }
+    }
+    const consentOverlayZIndexes = Array.from(consentOverlayElements).
+      map(element => overlayGeometry(element).zIndex);
+    for (const element of elements.reverse()) {
       if (!element.isConnected || !visible(element)) continue;
-      const view = element.ownerDocument.defaultView;
-      const style = view.getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      const viewportArea = Math.max(1, view.innerWidth * view.innerHeight);
-      const visibleWidth = Math.max(0, Math.min(rect.right, view.innerWidth) - Math.max(rect.left, 0));
-      const visibleHeight = Math.max(0, Math.min(rect.bottom, view.innerHeight) - Math.max(rect.top, 0));
-      const coverage = visibleWidth * visibleHeight / viewportArea;
-      const zIndex = Number.parseInt(style.zIndex, 10) || 0;
+      const geometry = overlayGeometry(element);
       const semanticDialog = element.matches('dialog,[role="dialog"],[aria-modal="true"]');
       const overlaySignal = overlayPattern.test(metadata(element));
-      const positionedOverlay = ['fixed', 'sticky', 'absolute'].includes(style.position);
+      const consentCopySignal = consentOverlayElements.has(element);
+      const pairedBackdrop = geometry.positioned && geometry.coverage >= 0.6 &&
+        geometry.zIndex >= 100 && consentOverlayZIndexes.some(
+          dialogZIndex => dialogZIndex >= geometry.zIndex && dialogZIndex-geometry.zIndex <= 20
+        );
       const blocksViewport =
-        (semanticDialog && coverage >= 0.08) ||
-        (overlaySignal && coverage >= 0.08 && (positionedOverlay || zIndex >= 100)) ||
-        (element.tagName === 'IFRAME' && overlaySignal && coverage >= 0.2);
+        (semanticDialog && geometry.coverage >= 0.08) ||
+        (overlaySignal && geometry.coverage >= 0.08 &&
+          (geometry.positioned || geometry.zIndex >= 100 || element.tagName === 'IFRAME')) ||
+        (consentCopySignal && geometry.coverage >= 0.08 &&
+          geometry.positioned && geometry.zIndex >= 100) ||
+        pairedBackdrop;
       if (!blocksViewport) continue;
       element.remove();
       removed++;
@@ -257,12 +299,19 @@ func captureWebsiteScreenshotToFile(
 			nil,
 			chromedp.EvalIgnoreExceptions,
 		),
-		chromedp.Sleep(250*time.Millisecond),
+		chromedp.Sleep(400*time.Millisecond),
 		chromedp.Evaluate(
 			websiteScreenshotOverlayCleanupScript,
 			nil,
 			chromedp.EvalIgnoreExceptions,
 		),
+		chromedp.Sleep(500*time.Millisecond),
+		chromedp.Evaluate(
+			websiteScreenshotOverlayCleanupScript,
+			nil,
+			chromedp.EvalIgnoreExceptions,
+		),
+		chromedp.Sleep(150*time.Millisecond),
 		chromedp.CaptureScreenshot(&screenshot),
 	); err != nil {
 		return err

@@ -241,7 +241,7 @@ export const syncCooperation = (data?: object) => {
     "post",
     "/business/cooperations/sync",
     { data },
-    { timeout: 30000 }
+    { timeout: 150000 }
   );
 };
 

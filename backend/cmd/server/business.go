@@ -335,7 +335,7 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 		`select p.id, p.resource_id as resourceId, r.name as resourceName, r.avatar_url as resourceAvatarUrl,
 		        r.platform_handle as platformHandle, p.platform, p.platform_post_id as platformPostId,
 		        p.title, p.description, p.post_url as postUrl,
-		        coalesce(nullif(p.cover_remote_url, ''), nullif(p.cover_url, ''), '') as coverUrl,
+		        coalesce(nullif(p.cover_url, ''), nullif(p.cover_remote_url, ''), '') as coverUrl,
 		        p.cover_remote_url as coverRemoteUrl,
 		        case when p.cover_url like '/api/uploads/resource-images/%' then p.cover_url else '' end as coverLocalUrl,
 		        p.media_type as mediaType, cast(unix_timestamp(p.published_at) * 1000 as unsigned) as publishedAt,

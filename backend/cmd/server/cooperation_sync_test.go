@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -94,25 +98,49 @@ func TestSyncCooperationPostUsesFinalLinkAndStoredCover(t *testing.T) {
 	}
 }
 
-func TestApplyPlatformPostToCooperationUsesFetchedRemoteInstagramMedia(t *testing.T) {
+func TestApplyPlatformPostToCooperationPrefersLocalInstagramMedia(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	const remoteAvatar = "https://cdn.example.com/avatar.jpg"
-	const remoteCover = "https://cdn.example.com/cover.jpg"
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0xd9})
+	}))
+	defer imageServer.Close()
+	remoteAvatar := imageServer.URL + "/avatar.jpg"
+	remoteCover := imageServer.URL + "/cover.jpg"
+	const localAvatar = "/api/uploads/resource-images/7/avatar.jpg"
+	const localCover = "/api/uploads/resource-images/7/posts/Instagram_post-1.jpg"
+	previousResourceImageRoot := resourceImageRoot
+	previousHTTPClient := resourceImageHTTPClient.Load()
+	resourceImageRoot = t.TempDir()
+	t.Cleanup(func() {
+		resourceImageRoot = previousResourceImageRoot
+		resourceImageHTTPClient.Store(previousHTTPClient)
+	})
+	resourceImageHTTPClient.Store(imageServer.Client())
+	if err := os.MkdirAll(filepath.Join(resourceImageRoot, "7", "posts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resourceImageRoot, "7", "posts", "Instagram_post-1.jpg"), []byte("cover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	mock.ExpectExec("update biz_cooperations set").
 		WithArgs(int64(100), int64(15), int64(2), nil, 99).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("update biz_cooperations set content_platform").
 		WithArgs(
 			"Instagram",
-			remoteCover,
+			localCover,
 			remoteCover,
 			99,
 		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("update biz_resource_platform_posts").
+		WithArgs(localCover, remoteCover, 7, "Instagram", "post-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("update biz_resources set platform").
 		WithArgs(
@@ -121,7 +149,7 @@ func TestApplyPlatformPostToCooperationUsesFetchedRemoteInstagramMedia(t *testin
 			"https://www.instagram.com/imparkerburton/",
 			"author-1", "author-1",
 			"imparkerburton", "imparkerburton",
-			remoteAvatar, remoteAvatar,
+			localAvatar, localAvatar,
 			remoteAvatar, remoteAvatar,
 			7,
 		).
@@ -214,7 +242,7 @@ func TestPopulateCooperationPostSyncResultReturnsFetchedCoverFields(t *testing.T
 			"https://www.instagram.com/reels/post-1/",
 			"https://cdn.example.com/avatar.jpg",
 			"https://cdn.example.com/avatar.jpg",
-			"https://cdn.example.com/cover.jpg",
+			"/api/uploads/resource-images/7/posts/Instagram_post-1.jpg",
 			"https://cdn.example.com/cover.jpg",
 		))
 
@@ -230,7 +258,8 @@ func TestPopulateCooperationPostSyncResultReturnsFetchedCoverFields(t *testing.T
 	); err != nil {
 		t.Fatal(err)
 	}
-	if result.CoverURL != "https://cdn.example.com/cover.jpg" ||
+	if result.CoverURL != "/api/uploads/resource-images/7/posts/Instagram_post-1.jpg" ||
+		result.ContentCoverLocalURL != "/api/uploads/resource-images/7/posts/Instagram_post-1.jpg" ||
 		result.ContentCoverRemoteURL != "https://cdn.example.com/cover.jpg" ||
 		result.FetchedCoverURL != "https://cdn.example.com/cover.jpg" {
 		t.Fatalf("unexpected cover fields: %#v", result)

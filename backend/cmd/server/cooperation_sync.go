@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -235,8 +236,8 @@ func (a *app) populateCooperationPostSyncResult(
 		result.ContentCoverLocalURL = contentCoverURL
 	}
 	result.CoverURL = firstNonEmpty(
-		result.ContentCoverRemoteURL,
 		result.ContentCoverLocalURL,
+		result.ContentCoverRemoteURL,
 		contentCoverURL,
 	)
 	return nil
@@ -647,12 +648,28 @@ func (a *app) applyPlatformPostToCooperation(
 		normalizedRemoteImageURL(post.CoverRemoteURL),
 		normalizedRemoteImageURL(post.CoverURL),
 	)
+	identity := cooperationResourceIdentityFromPost(link, post)
+	remoteAvatarURL := normalizedRemoteImageURL(identity.AvatarURL)
 	localCoverURL := ""
 	if isLocalResourceImageURL(post.CoverLocalURL) {
 		localCoverURL = post.CoverLocalURL
 	} else if isLocalResourceImageURL(post.CoverURL) {
 		localCoverURL = post.CoverURL
 	}
+	localAvatarURL := ""
+	if isLocalResourceImageURL(identity.AvatarURL) {
+		localAvatarURL = identity.AvatarURL
+	}
+	localCoverURL, localAvatarURL = localizeCooperationPostMedia(
+		ctx,
+		resourceID,
+		link,
+		post,
+		remoteCoverURL,
+		remoteAvatarURL,
+		localCoverURL,
+		localAvatarURL,
+	)
 	if _, err := a.DB().ExecContext(ctx,
 		`update biz_cooperations set content_platform = ?,
 		  content_cover_url = ?, content_cover_remote_url = ?
@@ -661,9 +678,21 @@ func (a *app) applyPlatformPostToCooperation(
 	); err != nil {
 		return err
 	}
+	if strings.TrimSpace(post.PlatformPostID) != "" {
+		if _, err := a.DB().ExecContext(ctx,
+			`update biz_resource_platform_posts
+			    set cover_url = ?, cover_remote_url = ?
+			  where resource_id = ? and platform = ? and platform_post_id = ?`,
+			firstNonEmpty(localCoverURL, remoteCoverURL),
+			remoteCoverURL,
+			resourceID,
+			link.Platform,
+			post.PlatformPostID,
+		); err != nil {
+			return err
+		}
+	}
 
-	identity := cooperationResourceIdentityFromPost(link, post)
-	remoteAvatarURL := normalizedRemoteImageURL(identity.AvatarURL)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set platform = ?,
 		  platform_url = if(? <> '', ?, platform_url),
@@ -677,11 +706,66 @@ func (a *app) applyPlatformPostToCooperation(
 		identity.PlatformURL, identity.PlatformURL,
 		identity.PlatformUserID, identity.PlatformUserID,
 		identity.PlatformHandle, identity.PlatformHandle,
-		remoteAvatarURL, remoteAvatarURL,
+		firstNonEmpty(localAvatarURL, remoteAvatarURL), firstNonEmpty(localAvatarURL, remoteAvatarURL),
 		remoteAvatarURL, remoteAvatarURL,
 		resourceID,
 	)
 	return err
+}
+
+type cooperationLocalizedImage struct {
+	kind string
+	url  string
+}
+
+func localizeCooperationPostMedia(
+	ctx context.Context,
+	resourceID int,
+	link cooperationPostLink,
+	post platformPost,
+	remoteCoverURL string,
+	remoteAvatarURL string,
+	localCoverURL string,
+	localAvatarURL string,
+) (string, string) {
+	postID := firstNonEmpty(strings.TrimSpace(post.PlatformPostID), strings.TrimSpace(link.PostID))
+	coverKey := filepath.Join("posts", link.Platform+"_"+postID)
+	if localCoverURL == "" {
+		localCoverURL = existingLocalResourceImageURL(resourceID, coverKey)
+	}
+
+	results := make(chan cooperationLocalizedImage, 2)
+	pending := 0
+	if localCoverURL == "" && remoteCoverURL != "" {
+		pending++
+		go func() {
+			results <- cooperationLocalizedImage{
+				kind: "cover",
+				url:  localizeResourceImage(ctx, resourceID, coverKey, remoteCoverURL),
+			}
+		}()
+	}
+	if localAvatarURL == "" && remoteAvatarURL != "" {
+		pending++
+		go func() {
+			results <- cooperationLocalizedImage{
+				kind: "avatar",
+				url:  localizeResourceImage(ctx, resourceID, "avatar", remoteAvatarURL),
+			}
+		}()
+	}
+	for range pending {
+		result := <-results
+		if !isLocalResourceImageURL(result.url) {
+			continue
+		}
+		if result.kind == "cover" {
+			localCoverURL = result.url
+		} else {
+			localAvatarURL = result.url
+		}
+	}
+	return localCoverURL, localAvatarURL
 }
 
 func (a *app) applyPlatformPostMetricsToCooperation(ctx context.Context, cooperationID int, post platformPost) error {

@@ -771,14 +771,14 @@ function openPost(post: any) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-function useLocalPostCover(event: Event, post: any) {
+function useRemotePostCover(event: Event, post: any) {
   const image = event.currentTarget as HTMLImageElement | null;
   if (!image) {
     return;
   }
-  const fallbackURL = String(post?.coverLocalUrl || "").trim();
-  if (fallbackURL && image.dataset.localFallbackApplied !== "1") {
-    image.dataset.localFallbackApplied = "1";
+  const fallbackURL = String(post?.coverRemoteUrl || "").trim();
+  if (fallbackURL && image.dataset.remoteFallbackApplied !== "1") {
+    image.dataset.remoteFallbackApplied = "1";
     image.src = fallbackURL;
     return;
   }
@@ -1084,25 +1084,25 @@ function contentCPMHint(post: any) {
 
 function contentAvatar(post: any) {
   const resource = contentResource(post);
-  const remoteURL = String(
-    post?.resourceAvatarRemoteUrl || resource?.resourceAvatarRemoteUrl || ""
-  ).trim();
   const localURL = String(
     post?.resourceAvatarUrl || resource?.resourceAvatarUrl || ""
   ).trim();
-  return (
-    (remoteURL && !failedContentAvatarUrls.has(remoteURL) ? remoteURL : "") ||
-    localURL ||
-    remoteURL
-  );
-}
-
-function useLocalContentAvatar(post: any) {
-  const resource = contentResource(post);
   const remoteURL = String(
     post?.resourceAvatarRemoteUrl || resource?.resourceAvatarRemoteUrl || ""
   ).trim();
-  if (remoteURL) failedContentAvatarUrls.add(remoteURL);
+  return (
+    (localURL && !failedContentAvatarUrls.has(localURL) ? localURL : "") ||
+    remoteURL ||
+    localURL
+  );
+}
+
+function useRemoteContentAvatar(post: any) {
+  const resource = contentResource(post);
+  const localURL = String(
+    post?.resourceAvatarUrl || resource?.resourceAvatarUrl || ""
+  ).trim();
+  if (localURL) failedContentAvatarUrls.add(localURL);
 }
 
 function contentCooperation(post: any) {
@@ -2308,7 +2308,7 @@ onBeforeUnmount(() => {
                 v-if="contentDetailView.coverUrl"
                 :src="contentDetailView.coverUrl"
                 :alt="contentDetailView.title || contentDetailView.resourceName"
-                @error="useLocalPostCover($event, contentDetailView)"
+                @error="useRemotePostCover($event, contentDetailView)"
               />
               <span
                 v-else
@@ -2380,7 +2380,7 @@ onBeforeUnmount(() => {
                 <el-avatar
                   :src="contentAvatar(contentDetailView)"
                   :size="48"
-                  @error="useLocalContentAvatar(contentDetailView)"
+                  @error="useRemoteContentAvatar(contentDetailView)"
                   >{{
                     String(contentDetailView.resourceName || "R").slice(0, 1)
                   }}</el-avatar
@@ -2776,7 +2776,7 @@ onBeforeUnmount(() => {
                   v-if="latestProjectPost(row)?.coverUrl"
                   :src="latestProjectPost(row).coverUrl"
                   :alt="latestProjectPost(row).title || row.resourceName"
-                  @error="useLocalPostCover($event, latestProjectPost(row))"
+                  @error="useRemotePostCover($event, latestProjectPost(row))"
                 />
                 <span v-else>
                   <PlatformIconBadge
@@ -2907,7 +2907,7 @@ onBeforeUnmount(() => {
                   v-if="latestProjectPost(row)?.coverUrl"
                   :src="latestProjectPost(row).coverUrl"
                   :alt="latestProjectPost(row).title || row.resourceName"
-                  @error="useLocalPostCover($event, latestProjectPost(row))"
+                  @error="useRemotePostCover($event, latestProjectPost(row))"
                 />
                 <span v-else
                   ><PlatformIconBadge
@@ -2984,7 +2984,7 @@ onBeforeUnmount(() => {
               <el-avatar
                 :src="contentAvatar(post)"
                 :size="34"
-                @error="useLocalContentAvatar(post)"
+                @error="useRemoteContentAvatar(post)"
                 >{{ String(post.resourceName || "R").slice(0, 1) }}</el-avatar
               >
               <div class="content-author-copy">
@@ -3038,7 +3038,7 @@ onBeforeUnmount(() => {
                 :src="post.coverUrl"
                 :alt="post.title || post.resourceName"
                 class="content-cover"
-                @error="useLocalPostCover($event, post)"
+                @error="useRemotePostCover($event, post)"
               />
               <div v-else class="content-cover empty-cover">
                 <PlatformIconBadge :platform="post.platform" />
