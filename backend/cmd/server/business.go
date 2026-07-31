@@ -4426,6 +4426,18 @@ func (a *app) createBusinessBriefTemplate(w http.ResponseWriter, r *http.Request
 	writeOK(w, map[string]any{"created": true})
 }
 
+func dashboardTrendQuery(postWhere string) string {
+	const dateExpression = "date(p.published_at)"
+	return `select ` + dateExpression + ` as date,
+		        count(*) as postCount,
+		        coalesce(sum(p.view_count), 0) as exposure,
+		        coalesce(sum(p.like_count + p.comment_count + p.share_count + p.save_count), 0) as interactions
+		   from biz_resource_platform_posts p
+		   left join biz_resources r on r.id = p.resource_id` + postWhere + `
+		  group by ` + dateExpression + `
+		  order by ` + dateExpression
+}
+
 func (a *app) businessDashboard(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{}
 	stats := []struct {
@@ -4507,14 +4519,7 @@ func (a *app) businessDashboard(w http.ResponseWriter, r *http.Request) {
 	data["postEngagementRate"] = postEngagementRate
 
 	trend, err := a.queryMaps(r.Context(),
-		`select date_format(date(p.published_at), '%Y-%m-%d') as date,
-		        count(*) as postCount,
-		        coalesce(sum(p.view_count), 0) as exposure,
-		        coalesce(sum(p.like_count + p.comment_count + p.share_count + p.save_count), 0) as interactions
-		   from biz_resource_platform_posts p
-		   left join biz_resources r on r.id = p.resource_id`+postWhere+`
-		  group by date(p.published_at)
-		  order by date(p.published_at)`,
+		dashboardTrendQuery(postWhere),
 		postArgs...,
 	)
 	if err != nil {
