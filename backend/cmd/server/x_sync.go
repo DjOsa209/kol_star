@@ -257,6 +257,7 @@ func normalizeTikHubXPosts(data map[string]any, handle string) []platformPost {
 			anyString(candidate["rest_id"]),
 			anyString(source["id_str"]),
 			anyString(candidate["id_str"]),
+			anyString(candidate["id"]),
 		)
 		text := firstNonEmpty(anyString(source["full_text"]), anyString(source["text"]), anyString(candidate["full_text"]))
 		if id == "" || text == "" || seen[id] {
@@ -285,7 +286,7 @@ func normalizeTikHubXPosts(data map[string]any, handle string) []platformPost {
 			ViewCount:      viewCount,
 			LikeCount: firstNonZeroInt64(
 				source["favorite_count"], source["like_count"], candidate["favorite_count"],
-				source["favorites"], candidate["favorites"],
+				source["favorites"], candidate["favorites"], source["likes"], candidate["likes"],
 			),
 			CommentCount: firstNonZeroInt64(
 				source["reply_count"], candidate["reply_count"], source["replies"], candidate["replies"],
