@@ -1015,7 +1015,7 @@ func normalizeImportedPlatform(value, profileURL string) string {
 }
 
 func normalizeImportedProfileLink(value string) (string, error) {
-	value = cleanImportString(value)
+	value = strings.TrimRight(cleanImportString(value), "，,。.;；、")
 	parsed, err := url.Parse(value)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return "", fmt.Errorf("合作方必须填写完整有效的主页 URL")
@@ -1030,6 +1030,15 @@ func normalizeImportedProfileLink(value string) (string, error) {
 	parsed.RawQuery = query.Encode()
 	parsed.Fragment = ""
 	return parsed.String(), nil
+}
+
+func importedPlatformHandle(platform, profileURL string) string {
+	switch platformDisplayName(platform) {
+	case "X":
+		return xHandleIdentifier(profileURL)
+	default:
+		return importedProfilePlaceholderName(profileURL)
+	}
 }
 
 func importedProfilePlaceholderName(value string) string {

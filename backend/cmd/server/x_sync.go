@@ -78,7 +78,7 @@ func (a *app) syncXResource(ctx context.Context, id int) (map[string]any, error)
 	).Scan(&resource.Name, &resource.ResourceType, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle); err != nil {
 		return nil, err
 	}
-	handle := xHandleIdentifier(resource.PlatformHandle, resource.PlatformURL, resource.Name)
+	handle := xHandleIdentifier(resource.PlatformHandle, resource.PlatformURL)
 	if handle == "" && strings.TrimSpace(resource.PlatformUserID) == "" {
 		return nil, fmt.Errorf("请先填写 X 主页链接、@handle 或 rest_id")
 	}
@@ -127,6 +127,7 @@ func (a *app) syncXResource(ctx context.Context, id int) (map[string]any, error)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
+		  media_outlet = if(trim(media_outlet) = '' and ? <> '', ?, media_outlet),
 		  followers = ?, total_views = if(? > 0, ?, total_views),
 		  avg_views = if(? > 0, ?, avg_views), video_count = ?,
 		  engagement_rate = if(? > 0, ?, engagement_rate),
@@ -137,7 +138,7 @@ func (a *app) syncXResource(ctx context.Context, id int) (map[string]any, error)
 		  audience_size_unit = if(resource_type = '媒体', 'UMV', 'Followers'),
 		  last_sync_status = '成功', last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
-		resourceName, resourceName, user.FollowerCount,
+		resourceName, resourceName, user.Handle, user.Handle, user.FollowerCount,
 		totalViews, totalViews, avgViews, avgViews, user.PostCount,
 		engagementRate, engagementRate, user.ID, user.Handle,
 		user.Handle, "https://x.com/"+user.Handle,

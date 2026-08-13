@@ -3618,6 +3618,20 @@ func (a *app) updateBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusOK, 10001, "项目、达人/媒体名称和类型不能为空")
 		return
 	}
+	platform := platformDisplayName(str(body, "platform"))
+	if platform == "" {
+		platform = strings.TrimSpace(str(body, "platform"))
+	}
+	platformURL := strings.TrimSpace(str(body, "platformUrl"))
+	if platformURL != "" {
+		var normalizeErr error
+		platformURL, normalizeErr = normalizeImportedProfileLink(platformURL)
+		if normalizeErr != nil {
+			writeError(w, http.StatusOK, 10001, normalizeErr.Error())
+			return
+		}
+	}
+	platformHandle := importedPlatformHandle(platform, platformURL)
 	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeDBError(w, err)
@@ -3644,6 +3658,8 @@ func (a *app) updateBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		`update biz_resources
 		    set name = ?, resource_type = ?, category = ?,
 		        country = ?, market = ?, platform = ?, platform_url = ?,
+		        platform_handle = if(? <> '', ?, platform_handle),
+		        media_outlet = if(trim(media_outlet) = '' and ? <> '', ?, media_outlet),
 		        contact = ?,
 		        followers = if(? = '媒体', 0, ?),
 		        audience_size = if(? = '媒体', ?, ?),
@@ -3654,7 +3670,8 @@ func (a *app) updateBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		        end
 		  where id = ?`,
 		name, resourceType, str(body, "category"),
-		str(body, "market"), str(body, "market"), str(body, "platform"), str(body, "platformUrl"),
+		str(body, "market"), str(body, "market"), platform, platformURL,
+		platformHandle, platformHandle, platformHandle, platformHandle,
 		str(body, "primaryContact"),
 		resourceType, intField(body, "followers"),
 		resourceType, intField(body, "audienceSize"), intField(body, "followers"),
@@ -4293,15 +4310,22 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any, p
 	if err != nil {
 		return 0, false, err
 	}
-	name := importedProfilePlaceholderName(profileURL)
 	category := cleanImportString(str(row, "category"))
 	platform := normalizeImportedPlatform(str(row, "platform"), profileURL)
+	platformHandle := importedPlatformHandle(platform, profileURL)
+	name := importedProfilePlaceholderName(profileURL)
+	if platform == "X" && platformHandle != "" {
+		name = platformHandle
+	}
 	country := normalizeImportedMarket(str(row, "country"))
 	resourceType := cleanImportString(str(row, "resourceType"))
 	if resourceType == "" {
 		resourceType = "KOL"
 	}
 	mediaOutlet := cleanImportString(str(row, "mediaOutlet"))
+	if mediaOutlet == "" {
+		mediaOutlet = platformHandle
+	}
 	if resourceType == "媒体" && mediaOutlet == "" {
 		mediaOutlet = name
 	}
@@ -4314,8 +4338,6 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any, p
 	if platform == "Website" || resourceType == "媒体" {
 		website = profileURL
 	}
-	platformHandle := importedProfilePlaceholderName(profileURL)
-
 	var id int64
 	err = tx.QueryRowContext(ctx,
 		`select id from biz_resources
@@ -4340,6 +4362,17 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any, p
 	}
 	if err == nil {
 		if preserveExisting {
+			_, updateErr := tx.ExecContext(ctx,
+				`update biz_resources set
+				   platform_url = if(trim(platform_url) = '', ?, platform_url),
+				   platform_handle = if(trim(platform_handle) = '' and ? <> '', ?, platform_handle),
+				   media_outlet = if(trim(media_outlet) = '' and ? <> '', ?, media_outlet)
+				 where id = ?`,
+				profileURL, platformHandle, platformHandle, mediaOutlet, mediaOutlet, id,
+			)
+			if updateErr != nil {
+				return 0, false, updateErr
+			}
 			return id, false, nil
 		}
 		_, err = tx.ExecContext(ctx,
