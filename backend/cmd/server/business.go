@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -844,7 +845,10 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	}
 	paramName, identifier, err := youtubeChannelIdentifier(name, platformURL)
 	if err != nil {
-		identifier, err = findExactYouTubeChannelByName(ctx, client, apiKey, name)
+		identifier, err = resolveYouTubeChannelIDFromPage(ctx, client, platformURL)
+		if err != nil {
+			identifier, err = findExactYouTubeChannelByName(ctx, client, apiKey, name)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -935,10 +939,12 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 
 	syncPosts, postLimit := a.platformPostSyncOptions(ctx, "YouTube", 25)
 	posts := []platformPost{}
+	postWarning := ""
 	if syncPosts {
 		posts, err = a.fetchYouTubePosts(ctx, client, apiKey, id, item.ContentDetails.RelatedPlaylists.Uploads, postLimit)
 		if err != nil {
-			return nil, err
+			postWarning = "YouTube 账号资料已更新，但作品列表同步失败：" + err.Error()
+			posts = nil
 		}
 	}
 	if avgViews == 0 && len(posts) > 0 {
@@ -950,6 +956,10 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	if !subscriberCountAvailable {
 		status = "部分成功"
 		statusMessage = "YouTube 频道已隐藏订阅数，已保留原粉丝数"
+	}
+	if postWarning != "" {
+		status = "部分成功"
+		statusMessage = firstNonEmpty(statusMessage, postWarning)
 	}
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
@@ -977,6 +987,39 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		"posts":          posts,
 		"syncedAt":       time.Now().Format(time.RFC3339),
 	}, nil
+}
+
+func resolveYouTubeChannelIDFromPage(ctx context.Context, client *http.Client, platformURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(platformURL))
+	if err != nil || parsed.Hostname() == "" || !strings.HasSuffix(strings.ToLower(parsed.Hostname()), "youtube.com") {
+		return "", fmt.Errorf("YouTube 主页地址无效")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; KOLAdmin/1.0)")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("YouTube 主页请求失败：%s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return "", err
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`"externalId"\s*:\s*"(UC[0-9A-Za-z_-]+)"`),
+		regexp.MustCompile(`"channelId"\s*:\s*"(UC[0-9A-Za-z_-]+)"`),
+	} {
+		if match := pattern.FindSubmatch(body); len(match) == 2 {
+			return string(match[1]), nil
+		}
+	}
+	return "", fmt.Errorf("YouTube 主页未包含频道 ID")
 }
 
 func findExactYouTubeChannelByName(ctx context.Context, client *http.Client, apiKey, name string) (string, error) {
@@ -1654,24 +1697,40 @@ type tikHubInstagramUser struct {
 }
 
 func tikhubGET(ctx context.Context, client *http.Client, apiKey, endpoint string, params url.Values) (map[string]any, error) {
-	reqURL := tikHubAPIBaseURL() + "/api/v1" + endpoint
+	baseURLs := tikHubRequestBaseURLs()
+	var lastErr error
+	for index, baseURL := range baseURLs {
+		result, retry, err := tikhubGETFromBase(ctx, client, apiKey, baseURL, endpoint, params)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if !retry || index == len(baseURLs)-1 || ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+func tikhubGETFromBase(ctx context.Context, client *http.Client, apiKey, baseURL, endpoint string, params url.Values) (map[string]any, bool, error) {
+	reqURL := baseURL + "/api/v1" + endpoint
 	if len(params) > 0 {
 		reqURL += "?" + params.Encode()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	if resp.StatusCode >= 400 {
 		message := tikhubErrorMessage(body)
@@ -1681,7 +1740,7 @@ func tikhubGET(ctx context.Context, client *http.Client, apiKey, endpoint string
 		if message == "" {
 			message = resp.Status
 		}
-		return nil, fmt.Errorf("TikHub API 请求失败：%s", message)
+		return nil, resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500, fmt.Errorf("TikHub API 请求失败：%s", message)
 	}
 	var envelope struct {
 		Code      int             `json:"code"`
@@ -1690,27 +1749,36 @@ func tikhubGET(ctx context.Context, client *http.Client, apiKey, endpoint string
 		Data      json.RawMessage `json:"data"`
 	}
 	if err := decodeJSON(body, &envelope); err != nil {
-		return nil, fmt.Errorf("TikHub API 响应解析失败：%w", err)
+		return nil, false, fmt.Errorf("TikHub API 响应解析失败：%w", err)
 	}
 	if envelope.Code != 0 && envelope.Code != 200 {
-		return nil, fmt.Errorf("TikHub API 返回异常：%s", firstNonEmpty(envelope.MessageZH, envelope.Message, fmt.Sprintf("code=%d", envelope.Code)))
+		return nil, false, fmt.Errorf("TikHub API 返回异常：%s", firstNonEmpty(envelope.MessageZH, envelope.Message, fmt.Sprintf("code=%d", envelope.Code)))
 	}
 	raw := envelope.Data
 	if len(raw) == 0 {
 		raw = body
 	}
 	if string(raw) == "null" {
-		return map[string]any{}, nil
+		return map[string]any{}, false, nil
 	}
 	var data any
 	if err := decodeJSON(raw, &data); err != nil {
-		return nil, fmt.Errorf("TikHub API data 解析失败：%w", err)
+		return nil, false, fmt.Errorf("TikHub API data 解析失败：%w", err)
 	}
 	result, ok := data.(map[string]any)
 	if !ok {
-		return map[string]any{"value": data}, nil
+		return map[string]any{"value": data}, false, nil
 	}
-	return result, nil
+	return result, false, nil
+}
+
+func tikHubRequestBaseURLs() []string {
+	primary := tikHubAPIBaseURL()
+	secondary := "https://api.tikhub.dev"
+	if primary == secondary {
+		secondary = "https://api.tikhub.io"
+	}
+	return []string{primary, secondary}
 }
 
 func tikHubAPIBaseURL() string {

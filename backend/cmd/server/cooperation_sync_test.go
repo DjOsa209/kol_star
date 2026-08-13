@@ -39,9 +39,13 @@ func TestParseCooperationPostLink(t *testing.T) {
 	}
 }
 
-func TestParseCooperationPostLinkRejectsUnsupportedLink(t *testing.T) {
-	if _, err := parseCooperationPostLink("https://example.com/post/123"); err == nil {
-		t.Fatal("expected unsupported link error")
+func TestParseCooperationPostLinkUsesWebsiteFallback(t *testing.T) {
+	link, err := parseCooperationPostLink("https://example.com/post/123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.Platform != "Website" || link.URL == "" {
+		t.Fatalf("unexpected Website link: %#v", link)
 	}
 }
 
@@ -190,7 +194,7 @@ func TestApplyPlatformPostToCooperationPrefersLocalInstagramMedia(t *testing.T) 
 	}
 }
 
-func TestClearCooperationPostSyncFieldsRemovesPreviousIdentityAndCover(t *testing.T) {
+func TestClearCooperationPostSyncFieldsPreservesResourceIdentity(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -200,9 +204,6 @@ func TestClearCooperationPostSyncFieldsRemovesPreviousIdentityAndCover(t *testin
 	mock.ExpectBegin()
 	mock.ExpectExec("update biz_cooperations").
 		WithArgs("Instagram", 99, 7).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("update biz_resources").
-		WithArgs("Instagram", 7).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("update biz_resource_platform_posts").
 		WithArgs(7, "Instagram", "post-1").

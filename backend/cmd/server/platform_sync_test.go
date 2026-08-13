@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +59,30 @@ func TestTikHubAPIBaseURL(t *testing.T) {
 	t.Setenv("TIKHUB_API_BASE_URL", "https://api.tikhub.io/")
 	if got := tikHubAPIBaseURL(); got != "https://api.tikhub.io" {
 		t.Fatalf("tikHubAPIBaseURL() = %q", got)
+	}
+}
+
+func TestTikHubGETFallsBackFromIOToDevOnTimeout(t *testing.T) {
+	t.Setenv("TIKHUB_API_BASE_URL", "https://api.tikhub.io")
+	var hosts []string
+	client := &http.Client{Transport: imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+		hosts = append(hosts, req.URL.Host)
+		if req.URL.Host == "api.tikhub.io" {
+			return nil, context.DeadlineExceeded
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"code":200,"data":{"id":"ok"}}`)),
+		}, nil
+	})}
+
+	data, err := tikhubGET(context.Background(), client, "test-key", "/instagram/v1/fetch_post_by_url", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data["id"] != "ok" || len(hosts) != 2 || hosts[1] != "api.tikhub.dev" {
+		t.Fatalf("TikHub fallback was not used: data=%#v hosts=%v", data, hosts)
 	}
 }

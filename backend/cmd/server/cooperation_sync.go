@@ -66,13 +66,6 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		FinalLink:        finalLink,
 		DeliverableLinks: deliverableLinks,
 	}
-	if allowAPI {
-		if err := a.clearCooperationPostSyncFields(ctx, cooperationID, resourceID, link); err != nil {
-			return cooperationPostSyncResult{}, err
-		}
-		result.PreviousFieldsCleared = true
-	}
-
 	post, found, err := a.findStoredPlatformPost(ctx, resourceID, link)
 	if err != nil {
 		return cooperationPostSyncResult{}, err
@@ -105,6 +98,10 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		)
 	}
 	if allowAPI {
+		if err := a.clearCooperationPostSyncFields(ctx, cooperationID, resourceID, link); err != nil {
+			return cooperationPostSyncResult{}, err
+		}
+		result.PreviousFieldsCleared = true
 		if err := a.applyPlatformPostToCooperation(ctx, cooperationID, resourceID, link, post); err != nil {
 			return cooperationPostSyncResult{}, err
 		}
@@ -179,15 +176,6 @@ func (a *app) clearCooperationPostSyncFields(
 		    set content_platform = ?, content_cover_url = '', content_cover_remote_url = ''
 		  where id = ? and resource_id = ?`,
 		link.Platform, cooperationID, resourceID,
-	); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx,
-		`update biz_resources
-		    set platform = ?, platform_url = '', platform_user_id = '',
-		        platform_handle = '', avatar_url = '', avatar_remote_url = ''
-		  where id = ?`,
-		link.Platform, resourceID,
 	); err != nil {
 		return err
 	}
@@ -563,6 +551,8 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 			}
 		case strings.HasSuffix(host, "facebook.com"):
 			return cooperationPostLink{Platform: "Facebook", URL: candidate}, nil
+		case parsed.Scheme == "http" || parsed.Scheme == "https":
+			return cooperationPostLink{Platform: "Website", URL: candidate}, nil
 		}
 	}
 	return cooperationPostLink{}, fmt.Errorf("发布链接不是可识别的受支持平台内容链接")
@@ -930,7 +920,7 @@ func (a *app) fetchTikTokPostByID(ctx context.Context, resourceID int, postID st
 	if apiKey == "" {
 		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
 	}
-	data, err := tikhubGET(ctx, &http.Client{Timeout: 20 * time.Second}, apiKey,
+	data, err := tikhubGET(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
 		"/tiktok/app/v3/fetch_one_video_v2", url.Values{"aweme_id": []string{postID}})
 	if err != nil {
 		return platformPost{}, err
@@ -952,7 +942,7 @@ func (a *app) fetchInstagramPostByURL(ctx context.Context, resourceID int, postU
 	if apiKey == "" {
 		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
 	}
-	data, err := tikhubGET(ctx, &http.Client{Timeout: 20 * time.Second}, apiKey,
+	data, err := tikhubGET(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
 		"/instagram/v1/fetch_post_by_url", url.Values{"post_url": []string{postURL}})
 	if err != nil {
 		return platformPost{}, err

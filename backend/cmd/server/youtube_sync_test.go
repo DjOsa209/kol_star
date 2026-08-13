@@ -39,6 +39,9 @@ func TestYouTubeSyncSavesFollowersBeforeFetchingPosts(t *testing.T) {
 	mock.ExpectQuery("select sync_posts, post_limit from biz_platform_sync_settings").
 		WithArgs("YouTube").
 		WillReturnRows(sqlmock.NewRows([]string{"sync_posts", "post_limit"}).AddRow(1, 25))
+	mock.ExpectExec("update biz_resources set").
+		WithArgs(int64(100000), float64(0), float64(0), "部分成功", "YouTube 账号资料已更新，但作品列表同步失败：YouTube API 请求失败：{\"error\":{\"message\":\"post sync failed\"}}", 42).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	fakeAPI := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -65,14 +68,17 @@ func TestYouTubeSyncSavesFollowersBeforeFetchingPosts(t *testing.T) {
 
 	cfg := Config{PlatformAPIs: PlatformAPIConfig{YouTubeAPIKey: "diagnostic-key"}}
 	app := newApp(db, cfg)
-	_, syncErr := app.syncYouTubeResource(
+	result, syncErr := app.syncYouTubeResource(
 		context.Background(),
 		42,
 		"Diagnostic Channel",
 		"https://youtube.com/@diag",
 	)
-	if syncErr == nil {
-		t.Fatal("expected post synchronization to fail")
+	if syncErr != nil {
+		t.Fatalf("profile synchronization must survive a playlist failure: %v", syncErr)
+	}
+	if result["warning"] == "" {
+		t.Fatal("playlist failure must be returned as a profile synchronization warning")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -86,6 +92,62 @@ func TestYouTubeChannelIdentifierSupportsLegacyUserURL(t *testing.T) {
 	}
 	if param != "forUsername" || value != "legacy_creator" {
 		t.Fatalf("youtubeChannelIdentifier() = %q, %q; want forUsername, legacy_creator", param, value)
+	}
+}
+
+func TestYouTubeSyncResolvesLegacyCustomChannelURLFromPage(t *testing.T) {
+	t.Setenv("KOL_SKIP_RESOURCE_IMAGE_DOWNLOAD", "1")
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("select content from biz_governance_rules").WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec("update biz_resources set").
+		WithArgs(
+			"Legacy Creator", "Legacy Creator", "", "", true, int64(88000), int64(1000), int64(10), int64(100),
+			"UClegacy", "@legacy_creator", "", "", "", 44,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select count\\(\\*\\) from biz_resources where id = \\?").WithArgs(44).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("update biz_resources r").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select sync_posts, post_limit from biz_platform_sync_settings").WithArgs("YouTube").
+		WillReturnRows(sqlmock.NewRows([]string{"sync_posts", "post_limit"}).AddRow(0, 25))
+	mock.ExpectExec("update biz_resources set").
+		WithArgs(int64(100), float64(0), float64(0), "成功", "", 44).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	fakeAPI := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/c/legacy_creator":
+			fmt.Fprint(w, `<script>var meta={"externalId":"UClegacy"};</script>`)
+		case "/youtube/v3/channels":
+			fmt.Fprint(w, `{"items":[{"id":"UClegacy","snippet":{"title":"Legacy Creator","customUrl":"@legacy_creator"},"statistics":{"subscriberCount":"88000","viewCount":"1000","videoCount":"10"}}]}`)
+		case "/youtube/v3/search":
+			fmt.Fprint(w, `{"items":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fakeAPI.Close()
+	fakeAddr := fakeAPI.Listener.Addr().String()
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // test-only fake API
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fakeAddr)
+		},
+	}
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+
+	app := newApp(db, Config{PlatformAPIs: PlatformAPIConfig{YouTubeAPIKey: "diagnostic-key"}})
+	if _, err := app.syncYouTubeResource(context.Background(), 44, "legacy_creator", "https://www.youtube.com/c/legacy_creator"); err != nil {
+		t.Fatalf("legacy custom channel URL did not resolve: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
