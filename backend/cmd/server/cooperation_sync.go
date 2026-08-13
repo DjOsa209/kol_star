@@ -534,8 +534,13 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 				}
 			}
 		case strings.HasSuffix(host, "instagram.com"):
-			if len(segments) >= 2 && (segments[0] == "p" || segments[0] == "reel" || segments[0] == "reels" || segments[0] == "tv") {
-				return cooperationPostLink{Platform: "Instagram", PostID: segments[1], URL: candidate}, nil
+			for index, segment := range segments {
+				switch strings.ToLower(segment) {
+				case "p", "reel", "reels", "tv":
+					if index+1 < len(segments) && strings.TrimSpace(segments[index+1]) != "" {
+						return cooperationPostLink{Platform: "Instagram", PostID: segments[index+1], URL: candidate}, nil
+					}
+				}
 			}
 		case (host == "x.com" || host == "twitter.com" || host == "mobile.twitter.com") && len(segments) >= 3:
 			if strings.EqualFold(segments[1], "status") {
