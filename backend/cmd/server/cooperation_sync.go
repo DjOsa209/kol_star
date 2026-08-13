@@ -82,7 +82,7 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		if firstNonEmpty(
 			normalizedRemoteImageURL(post.CoverRemoteURL),
 			normalizedRemoteImageURL(post.CoverURL),
-		) == "" {
+		) == "" && !projectContentPlatformUsesPageScreenshot(link.Platform) {
 			result.Message = "API 未返回作品封面 URL"
 			return a.finishCooperationPostSyncResult(
 				ctx, cooperationID, resourceID, allowAPI, result,
@@ -233,7 +233,7 @@ func (a *app) populateCooperationPostSyncResult(
 
 func cooperationPlatformSupportsSinglePostFetch(platform string) bool {
 	switch platform {
-	case "YouTube", "TikTok", "Instagram":
+	case "YouTube", "TikTok", "Instagram", "X":
 		return true
 	default:
 		return false
@@ -915,6 +915,8 @@ func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, 
 		return a.fetchTikTokPostByID(ctx, resourceID, link.PostID)
 	case "Instagram":
 		return a.fetchInstagramPostByURL(ctx, resourceID, link.URL)
+	case "X":
+		return a.fetchXPostByURL(ctx, resourceID, link.PostID, link.URL)
 	default:
 		return platformPost{}, fmt.Errorf("平台 %s 暂不支持按单条链接实时抓取", link.Platform)
 	}

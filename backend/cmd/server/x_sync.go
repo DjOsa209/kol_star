@@ -164,6 +164,40 @@ func (a *app) syncXResource(ctx context.Context, id int) (map[string]any, error)
 	}, nil
 }
 
+func (a *app) fetchXPostByURL(ctx context.Context, resourceID int, postID, postURL string) (platformPost, error) {
+	apiKey := strings.TrimSpace(tikHubAPIKey(a.effectivePlatformAPIConfig(ctx)))
+	if apiKey == "" {
+		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
+	}
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return platformPost{}, fmt.Errorf("X 作品链接中缺少推文 ID")
+	}
+	data, err := tikhubGET(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
+		"/twitter/web/fetch_tweet_detail", url.Values{"tweet_id": []string{postID}})
+	if err != nil {
+		return platformPost{}, err
+	}
+	posts := normalizeTikHubXPosts(data, xHandleIdentifier(postURL))
+	if len(posts) == 0 {
+		return platformPost{}, fmt.Errorf("TikHub 未返回 X 作品数据")
+	}
+	post := posts[0]
+	if post.PlatformPostID != postID {
+		for _, candidate := range posts {
+			if candidate.PlatformPostID == postID {
+				post = candidate
+				break
+			}
+		}
+	}
+	post.PostURL = firstNonEmpty(strings.TrimSpace(postURL), post.PostURL)
+	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "X", post); err != nil {
+		return platformPost{}, err
+	}
+	return post, nil
+}
+
 func normalizeTikHubXUser(data map[string]any, fallbackHandle, fallbackID string) tikHubXUser {
 	candidates := collectNestedMaps(data)
 	for _, candidate := range candidates {
