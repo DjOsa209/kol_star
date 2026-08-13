@@ -88,7 +88,7 @@ func (a *app) syncXResource(ctx context.Context, id int) (map[string]any, error)
 	} else {
 		params.Set("rest_id", strings.TrimSpace(resource.PlatformUserID))
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: 45 * time.Second}
 	profileData, err := tikhubGET(ctx, client, apiKey, "/twitter/web/fetch_user_profile", params)
 	if err != nil {
 		return nil, err
@@ -176,6 +176,8 @@ func normalizeTikHubXUser(data map[string]any, fallbackHandle, fallbackID string
 			anyString(source["screen_name"]),
 			anyString(source["username"]),
 			anyString(candidate["screen_name"]),
+			anyString(source["profile"]),
+			anyString(candidate["profile"]),
 		))
 		id := firstNonEmpty(anyString(candidate["rest_id"]), anyString(candidate["id_str"]), anyString(candidate["id"]))
 		if handle == "" && id == "" {
@@ -193,16 +195,18 @@ func normalizeTikHubXUser(data map[string]any, fallbackHandle, fallbackID string
 			),
 			FollowerCount: firstNonZeroInt64(
 				source["followers_count"], candidate["followers_count"], candidate["followers"],
+				source["sub_count"], candidate["sub_count"],
 			),
 			FollowingCount: firstNonZeroInt64(
 				source["friends_count"], source["following_count"], candidate["following_count"],
+				source["friends"], candidate["friends"],
 			),
 			PostCount: firstNonZeroInt64(
 				source["statuses_count"], candidate["statuses_count"], candidate["tweet_count"],
 			),
 		}
 	}
-	return tikHubXUser{ID: fallbackID, Handle: fallbackHandle, DisplayName: fallbackHandle}
+	return tikHubXUser{}
 }
 
 func normalizeTikHubXPosts(data map[string]any, handle string) []platformPost {
@@ -214,7 +218,12 @@ func normalizeTikHubXPosts(data map[string]any, handle string) []platformPost {
 		if len(legacy) > 0 {
 			source = legacy
 		}
-		id := firstNonEmpty(anyString(candidate["rest_id"]), anyString(source["id_str"]), anyString(candidate["id_str"]))
+		id := firstNonEmpty(
+			anyString(candidate["tweet_id"]),
+			anyString(candidate["rest_id"]),
+			anyString(source["id_str"]),
+			anyString(candidate["id_str"]),
+		)
 		text := firstNonEmpty(anyString(source["full_text"]), anyString(source["text"]), anyString(candidate["full_text"]))
 		if id == "" || text == "" || seen[id] {
 			continue
@@ -223,6 +232,8 @@ func normalizeTikHubXPosts(data map[string]any, handle string) []platformPost {
 		viewCount := firstNonZeroInt64(
 			source["view_count"],
 			candidate["view_count"],
+			source["views"],
+			candidate["views"],
 			mapAt(candidate, "views")["count"],
 		)
 		coverURL, mediaType := xPostMedia(source)
@@ -238,12 +249,20 @@ func normalizeTikHubXPosts(data map[string]any, handle string) []platformPost {
 			MediaType:      firstNonEmpty(mediaType, "POST"),
 			PublishedAt:    parseXTime(firstNonEmpty(anyString(source["created_at"]), anyString(candidate["created_at"]))),
 			ViewCount:      viewCount,
-			LikeCount:      firstNonZeroInt64(source["favorite_count"], source["like_count"], candidate["favorite_count"]),
-			CommentCount:   firstNonZeroInt64(source["reply_count"], candidate["reply_count"]),
+			LikeCount: firstNonZeroInt64(
+				source["favorite_count"], source["like_count"], candidate["favorite_count"],
+				source["favorites"], candidate["favorites"],
+			),
+			CommentCount: firstNonZeroInt64(
+				source["reply_count"], candidate["reply_count"], source["replies"], candidate["replies"],
+			),
 			ShareCount: firstNonZeroInt64(
-				source["retweet_count"], candidate["retweet_count"],
-			) + firstNonZeroInt64(source["quote_count"], candidate["quote_count"]),
-			Raw: candidate,
+				source["retweet_count"], candidate["retweet_count"], source["retweets"], candidate["retweets"],
+			) + firstNonZeroInt64(
+				source["quote_count"], candidate["quote_count"], source["quotes"], candidate["quotes"],
+			),
+			SaveCount: firstNonZeroInt64(source["bookmarks"], candidate["bookmarks"]),
+			Raw:       candidate,
 		})
 	}
 	return posts
@@ -270,6 +289,23 @@ func collectNestedMaps(value any) []map[string]any {
 }
 
 func xPostMedia(row map[string]any) (string, string) {
+	media := mapAt(row, "media")
+	for _, mediaType := range []string{"video", "photo", "animated_gif"} {
+		for _, item := range firstListAt(media, mediaType) {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			cover := firstNonEmpty(
+				imageURL(entry["media_url_https"]),
+				imageURL(entry["media_url"]),
+				imageURL(entry["url"]),
+			)
+			if cover != "" {
+				return cover, strings.ToUpper(mediaType)
+			}
+		}
+	}
 	for _, containerKey := range []string{"extended_entities", "entities"} {
 		container := mapAt(row, containerKey)
 		for _, item := range firstListAt(container, "media") {

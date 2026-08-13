@@ -1046,7 +1046,8 @@ function usesPageScreenshot(post: any) {
 }
 
 function contentAudienceLabel(post: any) {
-  return isMediaResource(contentResource(post)) ? "月独立访客（UMV）" : "粉丝";
+  if (!isMediaResource(contentResource(post))) return "粉丝";
+  return isWebsiteContent(post) ? "月访问量" : "月独立访客（UMV）";
 }
 
 function contentExposureLabel(post: any) {
@@ -2810,7 +2811,8 @@ onBeforeUnmount(() => {
           <div>
             <h2>媒体</h2>
             <p>
-              媒体量级统一采用月独立访客（UMV）；Website 数据来自 Similarweb。
+              Website 媒体量级采用 Traffic.cv
+              月访问量；其他媒体采用月独立访客（UMV）。
             </p>
           </div>
           <span>{{ mediaRows.length }} 家媒体</span>
@@ -3011,7 +3013,7 @@ onBeforeUnmount(() => {
                     :loading="syncingContentIds[contentOperationKey(post)]"
                     @click.stop
                   >
-                    <IconifyIconOnline icon="ri:more-2-fill" />
+                    <IconifyIconOnline icon="ri:menu-line" />
                   </el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
@@ -3288,7 +3290,9 @@ onBeforeUnmount(() => {
           <el-form-item
             :label="
               creatorForm.resourceType === '媒体'
-                ? '月独立访客（UMV）'
+                ? normalizePlatformName(creatorForm.platform) === 'Website'
+                  ? '月访问量（Monthly Visits）'
+                  : '月独立访客（UMV）'
                 : '本平台粉丝数'
             "
           >

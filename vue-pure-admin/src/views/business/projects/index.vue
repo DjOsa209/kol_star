@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, shallowRef, onMounted } from "vue";
+import {
+  computed,
+  nextTick,
+  reactive,
+  ref,
+  shallowRef,
+  onMounted,
+  onBeforeUnmount
+} from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
@@ -23,6 +31,7 @@ import {
   updateCooperation,
   syncCooperation,
   importCooperations,
+  getProjectImportSyncStatus,
   getMarketOptions,
   createMarketOption,
   deleteMarketOption
@@ -44,6 +53,12 @@ const importDialog = ref(false);
 const importLoading = ref(false);
 const importParsing = ref(false);
 const importParseError = ref("");
+const importSyncDialogVisible = ref(false);
+const importSyncJob = ref<any | null>(null);
+const importSyncPollError = ref("");
+const importSyncStorageKey = "business-project-import-sync-job-id";
+let importSyncPollTimer: ReturnType<typeof setInterval> | null = null;
+let importSyncPollInFlight = false;
 const contentUploadKey = ref(0);
 const editingProjectId = ref<number | null>(null);
 const editingCooperationId = ref<number | null>(null);
@@ -66,6 +81,78 @@ const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
 const projectStatusOptions = ["未开始", "进行中", "已结束"] as const;
+
+const importSyncRunning = computed(
+  () => importSyncJob.value?.status === "运行中"
+);
+const importSyncProgress = computed(() => {
+  const job = importSyncJob.value;
+  if (!job) return 0;
+  if (job.status !== "运行中") return 100;
+  const total = Number(job.totalCount || 0);
+  if (!total) return 0;
+  const completed =
+    Number(job.successCount || 0) +
+    Number(job.failedCount || 0) +
+    Number(job.skippedCount || 0);
+  return Math.min(99, Math.round((completed / total) * 100));
+});
+const importSyncProgressStatus = computed(() => {
+  const status = importSyncJob.value?.status;
+  if (status === "失败" || status === "部分失败" || status === "已中止") {
+    return "exception";
+  }
+  if (status === "成功") return "success";
+  return undefined;
+});
+
+function stopImportSyncPolling() {
+  if (importSyncPollTimer) {
+    clearInterval(importSyncPollTimer);
+    importSyncPollTimer = null;
+  }
+}
+
+async function pollImportSyncJob(jobId: number) {
+  if (importSyncPollInFlight) return;
+  importSyncPollInFlight = true;
+  try {
+    const res = await getProjectImportSyncStatus(jobId);
+    if (res.code !== 0) {
+      importSyncPollError.value = res.message || "读取同步进度失败";
+      return;
+    }
+    importSyncPollError.value = "";
+    importSyncJob.value = res.data;
+    if (res.data?.status === "运行中") return;
+    stopImportSyncPolling();
+    sessionStorage.removeItem(importSyncStorageKey);
+    await loadData();
+    if (res.data?.status === "成功") {
+      ElMessage.success("项目导入后的平台数据同步已完成");
+    } else {
+      ElMessage.warning(res.data?.message || "项目导入同步已结束，请检查失败项");
+    }
+  } catch {
+    importSyncPollError.value = "读取同步进度失败，系统仍会继续后台同步";
+  } finally {
+    importSyncPollInFlight = false;
+  }
+}
+
+function trackImportSyncJob(job: any) {
+  const jobId = Number(job?.id || 0);
+  if (!jobId) return;
+  stopImportSyncPolling();
+  importSyncJob.value = job;
+  importSyncPollError.value = "";
+  importSyncDialogVisible.value = true;
+  sessionStorage.setItem(importSyncStorageKey, String(jobId));
+  void pollImportSyncJob(jobId);
+  importSyncPollTimer = setInterval(() => {
+    void pollImportSyncJob(jobId);
+  }, 1500);
+}
 
 const defaultMarketOptions = [
   "美国",
@@ -2012,7 +2099,12 @@ async function submitImport() {
     }
     importDialog.value = false;
     importRows.value = [];
-    loadData();
+    await loadData();
+    if (res.data.platformSyncStarted && res.data.importSyncJob) {
+      trackImportSyncJob(res.data.importSyncJob);
+    } else if (res.data.imported) {
+      ElMessage.warning("项目已导入，但后台同步任务未能启动，请稍后手动同步资源");
+    }
   }
 }
 
@@ -2025,6 +2117,20 @@ function importRowClassName({ row }: any) {
 onMounted(() => {
   loadMarkets();
   loadData();
+  const unfinishedJobId = Number(sessionStorage.getItem(importSyncStorageKey));
+  if (unfinishedJobId > 0) {
+    trackImportSyncJob({
+      id: unfinishedJobId,
+      status: "运行中",
+      totalCount: 3,
+      currentResourceName: "恢复同步进度",
+      message: "正在读取后台同步状态…"
+    });
+  }
+});
+
+onBeforeUnmount(() => {
+  stopImportSyncPolling();
 });
 </script>
 
@@ -2292,6 +2398,59 @@ onMounted(() => {
             >保存项目</el-button
           ></template
         >
+      </el-dialog>
+
+      <el-dialog
+        v-model="importSyncDialogVisible"
+        title="项目导入同步进度"
+        width="min(560px, 92vw)"
+        :close-on-click-modal="false"
+      >
+        <div v-if="importSyncJob" class="import-sync-progress">
+          <div class="import-sync-heading">
+            <div>
+              <strong>{{ importSyncJob.currentResourceName || "后台同步" }}</strong>
+              <span>{{ importSyncJob.message || "正在同步平台数据…" }}</span>
+            </div>
+            <el-tag
+              :type="
+                importSyncRunning
+                  ? 'warning'
+                  : importSyncJob.status === '成功'
+                    ? 'success'
+                    : 'danger'
+              "
+              effect="plain"
+            >
+              {{ importSyncJob.status }}
+            </el-tag>
+          </div>
+          <el-progress
+            :percentage="importSyncProgress"
+            :status="importSyncProgressStatus"
+            :stroke-width="14"
+          />
+          <div class="import-sync-stages">
+            <span :class="{ done: importSyncProgress >= 33 }">账号资料</span>
+            <span :class="{ done: importSyncProgress >= 67 }">合作内容</span>
+            <span :class="{ done: importSyncProgress === 100 }">图片处理</span>
+          </div>
+          <el-alert
+            v-if="importSyncPollError"
+            class="mt-3"
+            type="warning"
+            :closable="false"
+            :title="importSyncPollError"
+          />
+          <p v-if="importSyncRunning" class="import-sync-tip">
+            可以关闭此窗口继续操作；同步会在后台继续，完成后页面会提示结果。
+          </p>
+        </div>
+        <template #footer>
+          <el-button @click="importSyncDialogVisible = false">
+            {{ importSyncRunning ? "后台继续" : "关闭" }}
+          </el-button>
+        </template>
       </el-dialog>
 
       <el-dialog v-model="projectImportDialog" title="上传项目" width="780px">
@@ -5932,6 +6091,42 @@ onMounted(() => {
   color: #7a7d86;
   font-size: 12px;
   line-height: 1.5;
+}
+.import-sync-progress {
+  display: grid;
+  gap: 16px;
+}
+.import-sync-heading {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.import-sync-heading strong,
+.import-sync-heading span {
+  display: block;
+}
+.import-sync-heading span {
+  margin-top: 5px;
+  color: #73767e;
+  font-size: 13px;
+}
+.import-sync-stages {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  color: #9a9da5;
+  font-size: 12px;
+  text-align: center;
+}
+.import-sync-stages .done {
+  color: #2f63e7;
+  font-weight: 650;
+}
+.import-sync-tip {
+  margin: 0;
+  color: #7a7d86;
+  font-size: 12px;
+  line-height: 1.6;
 }
 .center-header {
   display: flex;

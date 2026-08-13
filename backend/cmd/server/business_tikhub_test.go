@@ -55,6 +55,27 @@ func TestNormalizeTikHubInstagramProfileAndPosts(t *testing.T) {
 	}
 }
 
+func TestNormalizeTikHubInstagramNestedProfileFollowers(t *testing.T) {
+	profile := map[string]any{
+		"data": map[string]any{
+			"user": map[string]any{
+				"pk":       "nested-123",
+				"username": "nested_creator",
+				"edge_followed_by": map[string]any{
+					"count": "9876",
+				},
+			},
+		},
+	}
+	user := normalizeTikHubInstagramUser(profile, "")
+	if user.ID != "nested-123" || user.Username != "nested_creator" {
+		t.Fatalf("nested Instagram profile was not parsed: %#v", user)
+	}
+	if user.FollowerCount != 9876 {
+		t.Fatalf("nested Instagram followers = %d, want 9876", user.FollowerCount)
+	}
+}
+
 func TestMergePlatformPostsPrefersMetrics(t *testing.T) {
 	merged := mergePlatformPosts(
 		[]platformPost{{PlatformPostID: "1", Description: "caption", LikeCount: 10}},

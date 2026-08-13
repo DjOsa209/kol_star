@@ -878,9 +878,9 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 				} `json:"thumbnails"`
 			} `json:"snippet"`
 			Statistics struct {
-				ViewCount       string `json:"viewCount"`
-				SubscriberCount string `json:"subscriberCount"`
-				VideoCount      string `json:"videoCount"`
+				ViewCount       string  `json:"viewCount"`
+				SubscriberCount *string `json:"subscriberCount"`
+				VideoCount      string  `json:"videoCount"`
 			} `json:"statistics"`
 			ContentDetails struct {
 				RelatedPlaylists struct {
@@ -896,7 +896,11 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		return nil, fmt.Errorf("YouTube 未找到对应频道，请检查频道 ID 或 @handle")
 	}
 	item := payload.Items[0]
-	followers := parseCount(item.Statistics.SubscriberCount)
+	subscriberCountAvailable := item.Statistics.SubscriberCount != nil
+	followers := int64(0)
+	if subscriberCountAvailable {
+		followers = parseCount(*item.Statistics.SubscriberCount)
+	}
 	totalViews := parseCount(item.Statistics.ViewCount)
 	videoCount := parseCount(item.Statistics.VideoCount)
 	avgViews := int64(0)
@@ -904,19 +908,22 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		avgViews = totalViews / videoCount
 	}
 	avatarRemoteURL := bestThumbnailURL(item.Snippet.Thumbnails)
-	avatarURL := normalizedRemoteImageURL(avatarRemoteURL)
+	avatarURL := localizeResourceImage(ctx, id, "avatar", avatarRemoteURL)
+	if !isLocalResourceImageURL(avatarURL) {
+		avatarURL = normalizedRemoteImageURL(avatarRemoteURL)
+	}
 	resourceName := syncedResourceName(platformURL, item.Snippet.Title)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
 		  country = if(country = '' and ? <> '', ?, country),
-		  followers = ?, total_views = ?, video_count = ?, avg_views = ?,
+		  followers = if(?, ?, followers), total_views = ?, video_count = ?, avg_views = ?,
 		  platform_user_id = ?, platform_handle = ?, avatar_url = ?,
 		  avatar_remote_url = if(? <> '', ?, avatar_remote_url),
 		  last_sync_at = now()
 		 where id = ?`,
 		resourceName, resourceName, item.Snippet.Country, item.Snippet.Country,
-		followers, totalViews, videoCount, avgViews,
+		subscriberCountAvailable, followers, totalViews, videoCount, avgViews,
 		item.ID, item.Snippet.CustomURL, avatarURL, avatarRemoteURL, avatarRemoteURL, id,
 	)
 	if err != nil {
@@ -938,12 +945,18 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		avgViews = averagePostViews(posts)
 	}
 	engagementRate := platformPostEngagementRate(posts, followers)
+	status := "成功"
+	statusMessage := ""
+	if !subscriberCountAvailable {
+		status = "部分成功"
+		statusMessage = "YouTube 频道已隐藏订阅数，已保留原粉丝数"
+	}
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  avg_views = ?, engagement_rate = if(? > 0, ?, engagement_rate),
-		  last_sync_status = '成功', last_sync_error = '', last_sync_at = now()
+		  last_sync_status = ?, last_sync_error = ?, last_sync_at = now()
 		 where id = ?`,
-		avgViews, engagementRate, engagementRate, id,
+		avgViews, engagementRate, engagementRate, status, statusMessage, id,
 	)
 	if err != nil {
 		return nil, err
@@ -959,6 +972,7 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		"avgViews":       avgViews,
 		"engagementRate": engagementRate,
 		"avatarUrl":      avatarURL,
+		"warning":        statusMessage,
 		"syncedPosts":    len(posts),
 		"posts":          posts,
 		"syncedAt":       time.Now().Format(time.RFC3339),
@@ -1442,7 +1456,10 @@ func (a *app) persistInstagramUser(ctx context.Context, resourceID int, user ins
 		engagementRate = float64(totalEngagement) / float64(user.FollowersCount) / float64(len(posts))
 	}
 	displayName := firstNonEmpty(user.Name, user.Username)
-	avatarURL := normalizedRemoteImageURL(user.ProfilePictureURL)
+	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.ProfilePictureURL)
+	if !isLocalResourceImageURL(avatarURL) {
+		avatarURL = normalizedRemoteImageURL(user.ProfilePictureURL)
+	}
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
@@ -1538,7 +1555,10 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 			return nil, err
 		}
 	}
-	avatarURL := normalizedRemoteImageURL(user.AvatarURL)
+	avatarURL := localizeResourceImage(ctx, id, "avatar", user.AvatarURL)
+	if !isLocalResourceImageURL(avatarURL) {
+		avatarURL = normalizedRemoteImageURL(user.AvatarURL)
+	}
 	resourceName := syncedResourceName(resource.PlatformURL, user.DisplayName)
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
@@ -1634,7 +1654,7 @@ type tikHubInstagramUser struct {
 }
 
 func tikhubGET(ctx context.Context, client *http.Client, apiKey, endpoint string, params url.Values) (map[string]any, error) {
-	reqURL := "https://api.tikhub.io/api/v1" + endpoint
+	reqURL := tikHubAPIBaseURL() + "/api/v1" + endpoint
 	if len(params) > 0 {
 		reqURL += "?" + params.Encode()
 	}
@@ -1691,6 +1711,15 @@ func tikhubGET(ctx context.Context, client *http.Client, apiKey, endpoint string
 		return map[string]any{"value": data}, nil
 	}
 	return result, nil
+}
+
+func tikHubAPIBaseURL() string {
+	if configured := strings.TrimRight(strings.TrimSpace(os.Getenv("TIKHUB_API_BASE_URL")), "/"); configured != "" {
+		return configured
+	}
+	// TikHub recommends api.tikhub.dev for services deployed in mainland China.
+	// The base URL remains overridable for deployments in other regions.
+	return "https://api.tikhub.dev"
 }
 
 func tikhubErrorMessage(body []byte) string {
@@ -1792,7 +1821,19 @@ func normalizeTikHubTikTokPosts(data map[string]any, username string) []platform
 }
 
 func normalizeTikHubInstagramUser(data map[string]any, fallbackUsername string) tikHubInstagramUser {
-	user := firstMapAt(data, "user", "user_info")
+	profileRoot := data
+	for depth := 0; depth < 4; depth++ {
+		if user := firstMapAt(profileRoot, "user", "user_info"); len(user) > 0 {
+			profileRoot = user
+			break
+		}
+		nested := firstMapAt(profileRoot, "data", "result", "response", "graphql")
+		if len(nested) == 0 {
+			break
+		}
+		profileRoot = nested
+	}
+	user := profileRoot
 	if len(user) == 0 {
 		user = data
 	}
@@ -1986,7 +2027,10 @@ func (a *app) persistTikHubInstagramUser(ctx context.Context, resourceID int, pr
 			return nil, err
 		}
 	}
-	avatarURL := normalizedRemoteImageURL(user.AvatarURL)
+	avatarURL := localizeResourceImage(ctx, resourceID, "avatar", user.AvatarURL)
+	if !isLocalResourceImageURL(avatarURL) {
+		avatarURL = normalizedRemoteImageURL(user.AvatarURL)
+	}
 	resourceName := syncedResourceName(profileURL, user.DisplayName)
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
@@ -3161,6 +3205,9 @@ func youtubeChannelIdentifier(name, platformURL string) (string, string, error) 
 			if segment == "channel" && i+1 < len(segments) {
 				return "id", segments[i+1], nil
 			}
+			if segment == "user" && i+1 < len(segments) {
+				return "forUsername", segments[i+1], nil
+			}
 			if strings.HasPrefix(segment, "@") {
 				return "forHandle", segment, nil
 			}
@@ -3930,13 +3977,10 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		}
 		if created {
 			createdResources++
-			resourceIDs[resourceID] = true
 		} else {
 			matchedResourceIDs[resourceID] = true
-			if !incremental {
-				resourceIDs[resourceID] = true
-			}
 		}
+		queueImportedResourceForSync(resourceIDs, resourceID)
 		if err := ensureImportProjectResource(r.Context(), tx, projectID, resourceID, incremental); err != nil {
 			errors = append(errors, map[string]any{"row": index + 2, "message": err.Error()})
 			continue
@@ -3993,19 +4037,22 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 	for resourceID := range resourceIDs {
 		importedResourceIDs = append(importedResourceIDs, int(resourceID))
 	}
-	if imported > 0 {
-		go func() {
-			profileSynced, profileWarnings := a.syncImportedResources(context.Background(), importedResourceIDs)
-			synced, warnings := a.syncImportedCooperations(context.Background(), batchID)
-			screenshots, screenshotWarnings := a.captureImportedPageScreenshots(context.Background(), batchID)
-			warnings = append(profileWarnings, warnings...)
-			warnings = append(warnings, screenshotWarnings...)
-			if len(warnings) > 0 {
-				log.Printf("import batch %s platform sync completed: profiles=%d content=%d screenshots=%d warnings=%s", batchID, profileSynced, synced, screenshots, redactSensitiveText(strings.Join(warnings, "; ")))
-				return
-			}
-			log.Printf("import batch %s platform sync completed: profiles=%d content=%d screenshots=%d", batchID, profileSynced, synced, screenshots)
-		}()
+	var importSyncJob map[string]any
+	if shouldStartImportedProjectSync(len(importedResourceIDs)) {
+		result, jobErr := a.DB().ExecContext(context.Background(),
+			`insert into biz_platform_sync_jobs
+			  (job_type, status, total_count, started_at, current_resource_name, message)
+			 values ('project_import_sync', '运行中', 3, now(), '账号资料', ?)`,
+			fmt.Sprintf("准备同步导入数据：账号 %d 个", len(importedResourceIDs)),
+		)
+		if jobErr != nil {
+			log.Printf("create import batch %s sync job failed: %v", batchID, jobErr)
+		} else if jobID, idErr := result.LastInsertId(); idErr != nil {
+			log.Printf("read import batch %s sync job id failed: %v", batchID, idErr)
+		} else {
+			importSyncJob, _ = a.platformSyncJob(context.Background(), int(jobID))
+			go a.runImportedProjectSync(int(jobID), batchID, importedResourceIDs)
+		}
 	}
 	writeOK(w, map[string]any{
 		"batchId":             batchID,
@@ -4022,9 +4069,97 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		"createdResources":    createdResources,
 		"removedContent":      removedContent,
 		"removedResources":    removedResources,
-		"platformSyncStarted": imported > 0,
+		"platformSyncStarted": importSyncJob != nil,
+		"importSyncJob":       importSyncJob,
 		"errors":              errors,
 	})
+}
+
+func queueImportedResourceForSync(resourceIDs map[int64]bool, resourceID int64) {
+	if resourceID > 0 {
+		resourceIDs[resourceID] = true
+	}
+}
+
+func shouldStartImportedProjectSync(resourceCount int) bool {
+	return resourceCount > 0
+}
+
+func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []int) {
+	ctx := context.Background()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("导入同步任务异常：%v", recovered))
+		}
+	}()
+
+	successfulStages := 0
+	failedStages := 0
+	profileSynced, profileWarnings := a.syncImportedResources(ctx, resourceIDs)
+	if len(profileWarnings) > 0 {
+		failedStages++
+	} else {
+		successfulStages++
+	}
+	a.updateImportSyncStage(ctx, jobID, successfulStages, failedStages, "合作内容", fmt.Sprintf("账号资料完成：成功 %d，提示 %d", profileSynced, len(profileWarnings)))
+
+	contentSynced, contentWarnings := a.syncImportedCooperations(ctx, batchID)
+	if len(contentWarnings) > 0 {
+		failedStages++
+	} else {
+		successfulStages++
+	}
+	a.updateImportSyncStage(ctx, jobID, successfulStages, failedStages, "图片处理", fmt.Sprintf("合作内容完成：成功 %d，提示 %d", contentSynced, len(contentWarnings)))
+
+	screenshots, screenshotWarnings := a.captureImportedPageScreenshots(ctx, batchID)
+	if len(screenshotWarnings) > 0 {
+		failedStages++
+	} else {
+		successfulStages++
+	}
+	a.updateImportSyncStage(ctx, jobID, successfulStages, failedStages, "完成", fmt.Sprintf("图片处理完成：成功 %d，提示 %d", screenshots, len(screenshotWarnings)))
+
+	warnings := append(profileWarnings, contentWarnings...)
+	warnings = append(warnings, screenshotWarnings...)
+	status := "成功"
+	if failedStages > 0 && successfulStages == 0 {
+		status = "失败"
+	} else if failedStages > 0 {
+		status = "部分失败"
+	}
+	message := fmt.Sprintf("导入同步完成：账号 %d，内容 %d，截图 %d", profileSynced, contentSynced, screenshots)
+	if len(warnings) > 0 {
+		message += fmt.Sprintf("；%d 条提示，请到资源列表查看各账号同步状态", len(warnings))
+		log.Printf("import batch %s sync warnings: %s", batchID, redactSensitiveText(strings.Join(warnings, "; ")))
+	}
+	a.finishPlatformSyncJob(ctx, jobID, status, message)
+}
+
+func (a *app) updateImportSyncStage(ctx context.Context, jobID, successCount, failedCount int, stage, message string) {
+	_, _ = a.DB().ExecContext(ctx,
+		`update biz_platform_sync_jobs
+		    set success_count = ?, failed_count = ?, current_resource_name = ?, message = ?
+		  where id = ? and job_type = 'project_import_sync' and status = '运行中'`,
+		successCount, failedCount, stage, message, jobID,
+	)
+}
+
+func (a *app) businessCooperationImportSyncStatus(w http.ResponseWriter, r *http.Request) {
+	jobID, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("jobId")))
+	if err != nil || jobID <= 0 {
+		writeError(w, http.StatusOK, 10001, "同步任务 id 不能为空")
+		return
+	}
+	job, err := a.platformSyncJob(r.Context(), jobID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && fmt.Sprint(job["jobType"]) != "project_import_sync") {
+		writeError(w, http.StatusOK, 10002, "导入同步任务不存在")
+		return
+	}
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, job)
 }
 
 func cleanupReplacedProjectImport(

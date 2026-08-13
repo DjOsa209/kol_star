@@ -407,7 +407,10 @@ func refreshAllResourceAudienceClassifications(ctx context.Context, executor aud
 		            else lower(trim(name))
 		          end as collaborator_key,
 		          case
-		            when resource_type = '媒体' then max(greatest(audience_size, 0))
+		            when resource_type = '媒体' then max(greatest(
+		              case when lower(trim(platform)) in ('website', 'web') then monthly_visits else audience_size end,
+		              0
+		            ))
 		            else sum(greatest(followers, 0))
 		          end as total_audience
 		     from biz_resources
@@ -423,7 +426,11 @@ func refreshAllResourceAudienceClassifications(ctx context.Context, executor aud
 		        else lower(trim(r.name))
 		      end
 		 set r.audience_size = totals.total_audience,
-		     r.audience_size_unit = case when r.resource_type = '媒体' then 'UMV' else 'Followers' end,
+		     r.audience_size_unit = case
+		       when r.resource_type = '媒体' and lower(trim(r.platform)) in ('website', 'web') then 'Monthly Visits'
+		       when r.resource_type = '媒体' then 'UMV'
+		       else 'Followers'
+		     end,
 		     r.tier = case
 		       when totals.total_audience <= 0 then ''
 		       when totals.total_audience > 1000000 then '头部'
@@ -529,6 +536,7 @@ func (a *app) latestPlatformSyncJob(ctx context.Context) (map[string]any, error)
 		        cast(unix_timestamp(finished_at) * 1000 as unsigned) as finishedAt,
 		        cast(unix_timestamp(updated_at) * 1000 as unsigned) as updatedAt
 		   from biz_platform_sync_jobs
+		  where job_type in ('resource_sync_all', 'resource_sync_one')
 		  order by id desc
 		  limit 1`,
 	)
@@ -551,6 +559,7 @@ func (a *app) latestRunningPlatformSyncJob(ctx context.Context) (map[string]any,
 		        cast(unix_timestamp(updated_at) * 1000 as unsigned) as updatedAt
 		   from biz_platform_sync_jobs
 		  where status = '运行中'
+		    and job_type in ('resource_sync_all', 'resource_sync_one')
 		  order by id desc
 		  limit 1`,
 	)
@@ -633,8 +642,8 @@ func (a *app) platformTokenStatus(ctx context.Context) map[string]any {
 			"message":    tokenStatusMessage(strings.TrimSpace(tikHubAPIKey(cfg)) != "", "TikHub API Key 未配置"),
 		},
 		"Website": map[string]any{
-			"configured": strings.TrimSpace(cfg.SimilarwebAPIKey) != "",
-			"message":    tokenStatusMessage(strings.TrimSpace(cfg.SimilarwebAPIKey) != "", "Similarweb API Key 未配置"),
+			"configured": true,
+			"message":    "Traffic.cv HTML 抓取无需 API Key",
 		},
 	}
 }

@@ -11,6 +11,7 @@ import {
   updateResource,
   deleteResource,
   syncResource,
+  importTrafficCVHTML,
   syncAllResources,
   getResourceSyncStatus,
   importResources,
@@ -32,6 +33,10 @@ const loading = ref(false);
 const syncingAll = ref(false);
 const showSyncCard = ref(false);
 const syncDialogVisible = ref(false);
+const trafficCVImportVisible = ref(false);
+const trafficCVImportLoading = ref(false);
+const trafficCVImportRow = ref<any | null>(null);
+const trafficCVHTML = ref("");
 const syncScope = ref<"all" | "selected">("all");
 const selectedSyncPlatforms = ref<string[]>([
   "YouTube",
@@ -1031,11 +1036,76 @@ async function confirmSyncAll() {
 }
 
 function isSyncablePlatform(platform: string) {
-  return ["youtube", "instagram", "ins", "tiktok"].includes(
+  return [
+    "youtube",
+    "instagram",
+    "ins",
+    "tiktok",
+    "x",
+    "twitter",
+    "facebook",
+    "linkedin",
+    "reddit",
+    "website",
+    "web",
+    "网站"
+  ].includes(
     String(platform || "")
       .trim()
       .toLowerCase()
   );
+}
+
+function isWebsitePlatform(platform: string) {
+  return ["website", "web", "网站"].includes(
+    String(platform || "")
+      .trim()
+      .toLowerCase()
+  );
+}
+
+function openTrafficCVImport(row: any) {
+  trafficCVImportRow.value = row;
+  trafficCVHTML.value = "";
+  trafficCVImportVisible.value = true;
+}
+
+async function loadTrafficCVHTMLFile(uploadFile: any) {
+  const file = uploadFile?.raw as File | undefined;
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.warning("HTML 文件不能超过 5 MB");
+    return;
+  }
+  trafficCVHTML.value = await file.text();
+}
+
+async function submitTrafficCVHTML() {
+  const id = Number(trafficCVImportRow.value?.id || 0);
+  if (!id || !trafficCVHTML.value.trim()) {
+    ElMessage.warning("请粘贴或选择 Traffic.cv HTML 文件");
+    return;
+  }
+  trafficCVImportLoading.value = true;
+  try {
+    const res = await importTrafficCVHTML({
+      id,
+      html: trafficCVHTML.value
+    });
+    if (res.code !== 0) {
+      ElMessage.warning(res.message || "Traffic.cv HTML 导入失败");
+      return;
+    }
+    ElMessage.success(
+      `已回填月访问量 ${compactCount(res.data?.monthlyVisits || 0)}`
+    );
+    trafficCVImportVisible.value = false;
+    await loadData();
+  } catch {
+    ElMessage.warning("Traffic.cv HTML 导入失败，请稍后重试");
+  } finally {
+    trafficCVImportLoading.value = false;
+  }
 }
 
 async function syncOne(row: any) {
@@ -1676,6 +1746,11 @@ onUnmounted(() => {
                     @click="syncOne(row)"
                     >同步平台数据</el-dropdown-item
                   >
+                  <el-dropdown-item
+                    v-if="isWebsitePlatform(row.platform)"
+                    @click="openTrafficCVImport(row)"
+                    >导入 Traffic.cv HTML</el-dropdown-item
+                  >
                   <el-dropdown-item divided @click="remove(row)"
                     >删除资源</el-dropdown-item
                   >
@@ -1974,9 +2049,7 @@ onUnmounted(() => {
         <el-table-column label="多平台粉丝 / 访问量" width="170">
           <template #default="{ row }">
             <div class="metric-cell">
-              <strong>{{
-                formatCount(resourceAudience(row))
-              }}</strong>
+              <strong>{{ formatCount(resourceAudience(row)) }}</strong>
               <span>本平台 {{ formatCount(row.followers) }}</span>
             </div>
           </template>
@@ -2070,6 +2143,59 @@ onUnmounted(() => {
         <el-button type="primary" :loading="syncingAll" @click="confirmSyncAll">
           开始同步
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="trafficCVImportVisible"
+      title="导入 Traffic.cv HTML"
+      width="min(760px, 92vw)"
+      destroy-on-close
+    >
+      <el-alert type="info" :closable="false" show-icon>
+        <template #title>
+          先在浏览器打开并通过验证： https://traffic.cv/{{
+            String(
+              trafficCVImportRow?.website ||
+                trafficCVImportRow?.platformUrl ||
+                trafficCVImportRow?.name ||
+                ""
+            )
+              .replace(/^https?:\/\//i, "")
+              .replace(/^www\./i, "")
+              .split("/")[0]
+          }}
+        </template>
+      </el-alert>
+      <p class="mt-3 mb-2 text-sm text-gray-500">
+        保存完整网页为 HTML 后选择文件，或直接粘贴页面 HTML。系统只解析 Total
+        Visits、Pages per Visit、Bounce Rate 和 Avg. Duration。
+      </p>
+      <el-upload
+        :auto-upload="false"
+        :show-file-list="false"
+        accept=".html,.htm,text/html"
+        :on-change="loadTrafficCVHTMLFile"
+      >
+        <el-button>选择 HTML 文件</el-button>
+      </el-upload>
+      <el-input
+        v-model="trafficCVHTML"
+        class="mt-3"
+        type="textarea"
+        :rows="12"
+        maxlength="5242880"
+        show-word-limit
+        placeholder="粘贴 Traffic.cv 完整页面 HTML"
+      />
+      <template #footer>
+        <el-button @click="trafficCVImportVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="trafficCVImportLoading"
+          @click="submitTrafficCVHTML"
+          >解析并回填</el-button
+        >
       </template>
     </el-dialog>
 
@@ -2448,8 +2574,8 @@ onUnmounted(() => {
             <div>
               <strong>规模表现</strong>
               <span
-                >达人填写本平台粉丝数；媒体只填写月独立访客（UMV），Website
-                数据可由 Similarweb 同步。系统自动计算对应层级</span
+                >达人填写本平台粉丝数；媒体 Website 的月访问量可由 Traffic.cv
+                自动同步，其他媒体可填写月独立访客（UMV）。系统自动计算对应层级</span
               >
             </div>
           </div>
@@ -2457,7 +2583,9 @@ onUnmounted(() => {
             <el-form-item
               :label="
                 form.resourceType === '媒体'
-                  ? '月独立访客（UMV）'
+                  ? /website|web|网站/i.test(String(form.platform || ''))
+                    ? '月访问量（Monthly Visits）'
+                    : '月独立访客（UMV）'
                   : '本平台粉丝数'
               "
             >
@@ -3015,9 +3143,7 @@ onUnmounted(() => {
           <div>
             <span>多平台粉丝 / 访问</span>
             <strong>{{
-              formatCount(
-                resourceAudience(selectedResource)
-              )
+              formatCount(resourceAudience(selectedResource))
             }}</strong>
           </div>
           <div>

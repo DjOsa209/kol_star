@@ -334,6 +334,20 @@ func TestNormalizeImportedProfileLogic(t *testing.T) {
 	}
 }
 
+func TestIncrementalImportQueuesMatchedResourceForPlatformSync(t *testing.T) {
+	resourceIDs := map[int64]bool{}
+	queueImportedResourceForSync(resourceIDs, 42)
+	if !resourceIDs[42] {
+		t.Fatal("matched resource from incremental import was not queued for platform sync")
+	}
+}
+
+func TestDuplicateImportStillStartsMatchedResourceSync(t *testing.T) {
+	if !shouldStartImportedProjectSync(1) {
+		t.Fatal("duplicate import with a matched resource did not start platform sync")
+	}
+}
+
 func TestProjectNameFromUploadFileName(t *testing.T) {
 	for _, test := range []struct {
 		fileName string

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image/jpeg"
 	"io"
 	"log"
 	"mime"
@@ -17,6 +19,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/gen2brain/heic"
 )
 
 const maxSyncedImageSize = 20 << 20
@@ -46,6 +50,14 @@ func localizeResourceImage(ctx context.Context, resourceID int, key, sourceURL s
 	if err != nil {
 		log.Printf("download resource image failed resource=%d key=%s after %d attempts: %v", resourceID, key, resourceImageDownloadAttempts, err)
 		return sourceURL
+	}
+	if isHEICResourceImage(contentType, sourceURL, data) {
+		data, err = convertHEICResourceImage(data)
+		if err != nil {
+			log.Printf("convert HEIC resource image failed resource=%d key=%s: %v", resourceID, key, err)
+			return sourceURL
+		}
+		contentType = "image/jpeg"
 	}
 	ext := syncedImageExt(contentType)
 	if ext == "" {
@@ -85,6 +97,43 @@ func localizeResourceImage(ctx context.Context, resourceID int, key, sourceURL s
 		return sourceURL
 	}
 	return "/api/uploads/resource-images/" + filepath.ToSlash(relative)
+}
+
+func isHEICResourceImage(contentType, sourceURL string, data []byte) bool {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence":
+		return true
+	}
+	if parsed, err := url.Parse(sourceURL); err == nil {
+		ext := strings.ToLower(filepath.Ext(parsed.Path))
+		if ext == ".heic" || ext == ".heif" {
+			return true
+		}
+	}
+	if len(data) < 12 || string(data[4:8]) != "ftyp" {
+		return false
+	}
+	brand := string(data[8:12])
+	return brand == "heic" || brand == "heix" || brand == "hevc" || brand == "hevx" || brand == "mif1"
+}
+
+func convertHEICResourceImage(data []byte) ([]byte, error) {
+	config, err := heic.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("read HEIC dimensions: %w", err)
+	}
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 50_000_000 {
+		return nil, fmt.Errorf("unsupported HEIC dimensions %dx%d", config.Width, config.Height)
+	}
+	image, err := heic.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode HEIC: %w", err)
+	}
+	var output bytes.Buffer
+	if err := jpeg.Encode(&output, image, &jpeg.Options{Quality: 88}); err != nil {
+		return nil, fmt.Errorf("encode JPEG: %w", err)
+	}
+	return output.Bytes(), nil
 }
 
 func normalizedRemoteImageURL(value string) string {

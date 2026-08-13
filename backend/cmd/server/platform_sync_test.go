@@ -1,6 +1,8 @@
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestSelectedSyncPlatforms(t *testing.T) {
 	tests := []struct {
@@ -46,5 +48,12 @@ func TestOptionalConfigValue(t *testing.T) {
 		if got := optionalConfigValue(test.value); got != test.want {
 			t.Fatalf("optionalConfigValue(%v) = %q, want %q", test.value, got, test.want)
 		}
+	}
+}
+
+func TestTikHubAPIBaseURL(t *testing.T) {
+	t.Setenv("TIKHUB_API_BASE_URL", "https://api.tikhub.io/")
+	if got := tikHubAPIBaseURL(); got != "https://api.tikhub.io" {
+		t.Fatalf("tikHubAPIBaseURL() = %q", got)
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"os"
@@ -10,6 +11,32 @@ import (
 	"sync/atomic"
 	"testing"
 )
+
+func TestLocalizeResourceImageConvertsHEICForBrowserDisplay(t *testing.T) {
+	previousRoot := resourceImageRoot
+	previousClient := resourceImageHTTPClient.Load()
+	resourceImageRoot = t.TempDir()
+	t.Cleanup(func() {
+		resourceImageRoot = previousRoot
+		resourceImageHTTPClient.Store(previousClient)
+	})
+
+	// A real 2x2 HEIC image keeps this regression test at the same seam used by
+	// expiring, signed TikTok CDN image URLs.
+	heicData, err := base64.StdEncoding.DecodeString("AAAAJGZ0eXBoZWljAAAAAG1pZjFNaVBybWlhZk1pSEJoZWljAAABh21ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAHBpY3QAAAAAAAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAADnBpdG0AAAAAAAEAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAAABAABodmMxAAAAAOdpcHJwAAAAxmlwY28AAAATY29scm5jbHgAAgACAAaAAAAADGNsbGkAywBAAAAAFGlzcGUAAAAAAAAAAgAAAAIAAAAJaXJvdAAAAAAQcGl4aQAAAAADCAgIAAAAcmh2Y0MBA3AAAACwAAAAAAAe8AD8/fj4AAALA6AAAQAXQAEMAf//A3AAAAMAsAAAAwAAAwAecCShAAEAJEIBAQNwAAADALAAAAMAAAMAHqAUIEHAoQQYh7kWVTcCAgYAgKIAAQAJRAHAYXLIQFMkAAAAGWlwbWEAAAAAAAAAAQABBoECAwWGhAAAAB5pbG9jAAAAAEQAAAEAAQAAAAEAAAG7AAAATQAAAAFtZGF0AAAAAAAAAF0AAABJKAGvo10aYFuv7rkc7vkqFGPSa9/r7Jf7p1/ceQINyexCkNjFyfPPk1Eu8Mi3/TUfVB4CqCfwD4fta5T7P6v4UyXz1SJnjWH68A==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceImageHTTPClient.Store(imageTestClient("image/heic", heicData))
+
+	got := localizeResourceImage(context.Background(), 10, "avatar", "https://signed.example/avatar.heic?x-signature=abc")
+	if got != "/api/uploads/resource-images/10/avatar.jpg" {
+		t.Fatalf("HEIC image was not converted to a stable browser image: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(resourceImageRoot, "10", "avatar.jpg")); err != nil {
+		t.Fatalf("converted JPEG was not stored: %v", err)
+	}
+}
 
 func TestLocalizeResourceImageReplacesExistingVariant(t *testing.T) {
 	previousRoot := resourceImageRoot

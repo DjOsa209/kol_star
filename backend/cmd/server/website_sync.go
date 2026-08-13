@@ -1,34 +1,51 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chromedp/chromedp"
+	"golang.org/x/net/html"
 )
 
-type similarwebMonthlyMetrics struct {
+type trafficCVMonthlyMetrics struct {
 	Month           string
-	UniqueVisitors  int64
 	Visits          int64
 	PageViews       int64
+	PagesPerVisit   float64
 	BounceRate      float64
-	ProviderUpdated string
+	AverageDuration string
+}
+
+type websiteResourceInfo struct {
+	Name         string
+	ResourceType string
+	PlatformURL  string
+	Website      string
 }
 
 var websiteTagPattern = regexp.MustCompile(`(?is)<(?:link|meta)\b[^>]*>`)
 var websiteAttrPattern = regexp.MustCompile(`(?is)([a-zA-Z_:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+var trafficCVTotalVisitsPattern = regexp.MustCompile(`(?i)\bTotal\s+Visits\b\s*([0-9][0-9,.]*\s*[KMBT]?)`)
+var trafficCVPagesPerVisitPattern = regexp.MustCompile(`(?i)\bPages\s+per\s+Visit\b\s*([0-9][0-9,.]*)`)
+var trafficCVBounceRatePattern = regexp.MustCompile(`(?i)\bBounce\s+Rate\b\s*([0-9][0-9,.]*)\s*%`)
+var trafficCVDurationPattern = regexp.MustCompile(`(?i)\bAvg\.?\s+Duration\b\s*([0-9]{1,2}:[0-9]{2}:[0-9]{2})`)
 
 func normalizeWebsiteDomain(values ...string) (string, string) {
 	for _, value := range values {
-		value = strings.TrimSpace(value)
+		value = strings.Trim(strings.TrimSpace(value), "，,;；。")
 		if value == "" || value == "<nil>" {
 			continue
 		}
@@ -51,21 +68,9 @@ func normalizeWebsiteDomain(values ...string) (string, string) {
 }
 
 func (a *app) syncWebsiteResource(ctx context.Context, id int) (map[string]any, error) {
-	var resource struct {
-		Name         string
-		ResourceType string
-		PlatformURL  string
-		Website      string
-	}
-	if err := a.DB().QueryRowContext(ctx,
-		`select name, resource_type, platform_url, website
-		   from biz_resources where id = ? limit 1`,
-		id,
-	).Scan(&resource.Name, &resource.ResourceType, &resource.PlatformURL, &resource.Website); err != nil {
+	resource, err := a.websiteResourceByID(ctx, id)
+	if err != nil {
 		return nil, err
-	}
-	if resource.ResourceType != "媒体" {
-		return nil, fmt.Errorf("Website 平台仅用于媒体资源")
 	}
 	domain, homepage := normalizeWebsiteDomain(resource.PlatformURL, resource.Website, resource.Name)
 	if domain == "" {
@@ -85,53 +90,55 @@ func (a *app) syncWebsiteResource(ctx context.Context, id int) (map[string]any, 
 		)
 	}
 
-	apiKey := strings.TrimSpace(a.effectivePlatformAPIConfig(ctx).SimilarwebAPIKey)
-	if apiKey == "" {
-		message := "媒体头像已抓取；未配置 Similarweb API Key，UMV 暂未更新"
-		if avatarWarning != "" {
-			message = avatarWarning + "；未配置 Similarweb API Key，UMV 暂未更新"
-		}
-		_, _ = a.DB().ExecContext(ctx,
-			`update biz_resources
-			    set platform = 'Website', platform_url = ?, website = ?,
-			        audience_size_unit = 'UMV', reference_source = 'Similarweb',
-			        last_sync_status = '待配置', last_sync_error = ?, last_sync_at = now()
-			  where id = ?`,
-			homepage, homepage, message, id,
-		)
-		return map[string]any{
-			"platform":         "Website",
-			"domain":           domain,
-			"audienceSize":     0,
-			"audienceSizeUnit": "UMV",
-			"avatarUrl":        avatarURL,
-			"avatarRemoteUrl":  avatarRemoteURL,
-			"warnings":         []string{message},
-			"syncedAt":         time.Now().Format(time.RFC3339),
-		}, nil
-	}
-
-	metrics, err := fetchSimilarwebMonthlyMetrics(ctx, apiKey, domain, time.Now())
+	metrics, err := fetchTrafficCVMonthlyMetrics(ctx, domain, time.Now())
 	if err != nil {
 		return nil, err
 	}
-	if metrics.UniqueVisitors <= 0 {
-		return nil, fmt.Errorf("Similarweb 暂无该域名的月独立访客估算")
+	return a.applyWebsiteTrafficMetrics(ctx, id, domain, homepage, metrics, avatarURL, avatarRemoteURL, avatarWarning)
+}
+
+func (a *app) websiteResourceByID(ctx context.Context, id int) (websiteResourceInfo, error) {
+	var resource websiteResourceInfo
+	if err := a.DB().QueryRowContext(ctx,
+		`select name, resource_type, platform_url, website
+		   from biz_resources where id = ? limit 1`,
+		id,
+	).Scan(&resource.Name, &resource.ResourceType, &resource.PlatformURL, &resource.Website); err != nil {
+		return websiteResourceInfo{}, err
 	}
-	_, err = a.DB().ExecContext(ctx,
+	if resource.ResourceType != "媒体" {
+		return websiteResourceInfo{}, fmt.Errorf("Website 平台仅用于媒体资源")
+	}
+	return resource, nil
+}
+
+func (a *app) applyWebsiteTrafficMetrics(
+	ctx context.Context,
+	id int,
+	domain string,
+	homepage string,
+	metrics trafficCVMonthlyMetrics,
+	avatarURL string,
+	avatarRemoteURL string,
+	avatarWarning string,
+) (map[string]any, error) {
+	if metrics.Visits <= 0 {
+		return nil, fmt.Errorf("Traffic.cv 暂无该域名的月访问量估算")
+	}
+	_, err := a.DB().ExecContext(ctx,
 		`update biz_resources set
 		  platform = 'Website', platform_url = ?, website = ?,
 		  avatar_url = if(? <> '', ?, avatar_url),
 		  avatar_remote_url = if(? <> '', ?, avatar_remote_url),
-		  audience_size = ?, audience_size_unit = 'UMV',
-		  umv_month = ?, umv_country = 'WW', umv_web_source = 'total',
+		  followers = 0, audience_size = ?, audience_size_unit = 'Monthly Visits',
+		  umv_month = '', umv_country = '', umv_web_source = '',
 		  umv_cross_device_deduplicated = 0,
 		  monthly_visits = ?, monthly_page_views = ?, website_bounce_rate = ?,
-		  reference_source = 'Similarweb V5', provider_updated_at = now(),
+		  reference_source = 'Traffic.cv', provider_updated_at = now(),
 		  last_sync_status = '成功', last_sync_error = '', last_sync_at = now()
 		 where id = ?`,
 		homepage, homepage, avatarURL, avatarURL, avatarRemoteURL, avatarRemoteURL,
-		metrics.UniqueVisitors, metrics.Month, metrics.Visits, metrics.PageViews,
+		metrics.Visits, metrics.Visits, metrics.PageViews,
 		metrics.BounceRate, id,
 	)
 	if err != nil {
@@ -144,12 +151,14 @@ func (a *app) syncWebsiteResource(ctx context.Context, id int) (map[string]any, 
 	return map[string]any{
 		"platform":         "Website",
 		"domain":           domain,
-		"audienceSize":     metrics.UniqueVisitors,
-		"audienceSizeUnit": "UMV",
-		"umvMonth":         metrics.Month,
+		"audienceSize":     metrics.Visits,
+		"audienceSizeUnit": "Monthly Visits",
+		"trafficMonth":     metrics.Month,
 		"monthlyVisits":    metrics.Visits,
 		"monthlyPageViews": metrics.PageViews,
+		"pagesPerVisit":    metrics.PagesPerVisit,
 		"bounceRate":       metrics.BounceRate,
+		"averageDuration":  metrics.AverageDuration,
 		"avatarUrl":        avatarURL,
 		"avatarRemoteUrl":  avatarRemoteURL,
 		"warnings":         warnings,
@@ -157,67 +166,229 @@ func (a *app) syncWebsiteResource(ctx context.Context, id int) (map[string]any, 
 	}, nil
 }
 
-func fetchSimilarwebMonthlyMetrics(ctx context.Context, apiKey, domain string, now time.Time) (similarwebMonthlyMetrics, error) {
-	month := now.AddDate(0, -1, 0)
-	startDate := fmt.Sprintf("%04d-%02d", month.Year(), month.Month())
-	params := url.Values{}
-	params.Set("domain", domain)
-	params.Set("metrics", "unique_visitors,visits,page_views,bounce_rate")
-	params.Set("granularity", "monthly")
-	params.Set("start_date", startDate)
-	params.Set("end_date", startDate)
-	params.Set("web_source", "total")
-	params.Set("country", "ww")
-	params.Set("main_domain_only", "false")
-	params.Set("format", "json")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://api.similarweb.com/v5/website-analysis/websites/traffic-and-engagement?"+params.Encode(), nil)
-	if err != nil {
-		return similarwebMonthlyMetrics{}, err
+func (a *app) importTrafficCVHTML(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+	body := readBody(r)
+	id := intField(body, "id")
+	if id == 0 {
+		writeError(w, http.StatusOK, 10001, "资源 id 不能为空")
+		return
 	}
-	req.Header.Set("api-key", apiKey)
-	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: 20 * time.Second}
+	rawHTML := stringField(body, "html")
+	if rawHTML == "" || rawHTML == "<nil>" {
+		writeError(w, http.StatusOK, 10002, "请粘贴已通过验证的 Traffic.cv 页面 HTML")
+		return
+	}
+	resource, err := a.websiteResourceByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusOK, 10003, err.Error())
+		return
+	}
+	domain, homepage := normalizeWebsiteDomain(resource.PlatformURL, resource.Website, resource.Name)
+	if domain == "" {
+		writeError(w, http.StatusOK, 10004, "请先填写有效的网站域名或主页链接")
+		return
+	}
+	metrics, err := parseTrafficCVHTML([]byte(rawHTML), time.Now())
+	if err != nil {
+		writeError(w, http.StatusOK, 10005, err.Error())
+		return
+	}
+	result, err := a.applyWebsiteTrafficMetrics(r.Context(), id, domain, homepage, metrics, "", "", "")
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	result["source"] = "Traffic.cv HTML 导入"
+	writeOK(w, result)
+}
+
+func fetchTrafficCVMonthlyMetrics(ctx context.Context, domain string, now time.Time) (trafficCVMonthlyMetrics, error) {
+	reportURL := "https://traffic.cv/" + url.PathEscape(domain)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reportURL, nil)
+	if err != nil {
+		return trafficCVMonthlyMetrics{}, err
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; KOLAdminWebsiteTraffic/1.0; +https://traffic.cv/)")
+	client, err := trafficCVHTTPClient()
+	if err != nil {
+		return trafficCVMonthlyMetrics{}, err
+	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return similarwebMonthlyMetrics{}, err
+		return trafficCVMonthlyMetrics{}, fmt.Errorf("Traffic.cv 请求失败：%w", err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return similarwebMonthlyMetrics{}, err
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	_ = resp.Body.Close()
+	if readErr != nil {
+		return trafficCVMonthlyMetrics{}, readErr
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := strings.TrimSpace(string(body))
-		if len(message) > 500 {
-			message = message[:500]
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || isTrafficCVChallengeHTML(body) {
+		browserBody, browserErr := fetchTrafficCVHTMLWithBrowser(ctx, reportURL)
+		if browserErr != nil {
+			return trafficCVMonthlyMetrics{}, fmt.Errorf("Traffic.cv 页面访问失败：%s；浏览器回退失败：%v", resp.Status, browserErr)
 		}
-		return similarwebMonthlyMetrics{}, fmt.Errorf("Similarweb API 请求失败：%s", firstNonEmpty(message, resp.Status))
+		body = browserBody
 	}
-	var payload struct {
-		Meta map[string]any   `json:"meta"`
-		Data []map[string]any `json:"data"`
+	metrics, err := parseTrafficCVHTML(body, now)
+	if err != nil {
+		return trafficCVMonthlyMetrics{}, err
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return similarwebMonthlyMetrics{}, fmt.Errorf("Similarweb API 响应解析失败：%w", err)
+	return metrics, nil
+}
+
+func trafficCVHTTPClient() (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if configured := strings.TrimSpace(os.Getenv("TRAFFIC_CV_PROXY_URL")); configured != "" {
+		proxyURL, err := url.Parse(configured)
+		if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+			return nil, fmt.Errorf("TRAFFIC_CV_PROXY_URL 配置无效")
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	if len(payload.Data) == 0 {
-		return similarwebMonthlyMetrics{Month: startDate}, nil
+	return &http.Client{Timeout: 20 * time.Second, Transport: transport}, nil
+}
+
+func fetchTrafficCVHTMLWithBrowser(ctx context.Context, reportURL string) ([]byte, error) {
+	browserPath := websiteScreenshotBrowserPath()
+	if browserPath == "" {
+		return nil, fmt.Errorf("服务器未安装 Chrome 或 Chromium")
 	}
-	sort.SliceStable(payload.Data, func(i, j int) bool {
-		return anyString(payload.Data[i]["date"]) < anyString(payload.Data[j]["date"])
-	})
-	row := payload.Data[len(payload.Data)-1]
-	return similarwebMonthlyMetrics{
-		Month:           firstNonEmpty(anyString(row["date"])[:minInt(len(anyString(row["date"])), 7)], startDate),
-		UniqueVisitors:  anyInt64(row["unique_visitors"]),
-		Visits:          anyInt64(row["visits"]),
-		PageViews:       anyInt64(row["page_views"]),
-		BounceRate:      anyFloat64(row["bounce_rate"]),
-		ProviderUpdated: anyString(mapAt(payload.Meta, "request")["last_updated"]),
+	options := append(
+		chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(browserPath),
+		chromedp.DisableGPU,
+		chromedp.Flag("disable-dev-shm-usage", true),
+	)
+	if os.Geteuid() == 0 {
+		options = append(options, chromedp.NoSandbox)
+	}
+	if proxyURL := strings.TrimSpace(os.Getenv("TRAFFIC_CV_PROXY_URL")); proxyURL != "" {
+		options = append(options, chromedp.ProxyServer(proxyURL))
+	}
+	browserCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(browserCtx, options...)
+	defer cancelAllocator()
+	tabCtx, cancelTab := chromedp.NewContext(allocatorCtx)
+	defer cancelTab()
+	var renderedHTML string
+	if err := chromedp.Run(
+		tabCtx,
+		chromedp.Navigate(reportURL),
+		chromedp.WaitReady("body", chromedp.ByQuery),
+		chromedp.Sleep(8*time.Second),
+		chromedp.OuterHTML("html", &renderedHTML, chromedp.ByQuery),
+	); err != nil {
+		return nil, err
+	}
+	if isTrafficCVChallengeHTML([]byte(renderedHTML)) {
+		return nil, fmt.Errorf("Cloudflare 验证页未完成")
+	}
+	return []byte(renderedHTML), nil
+}
+
+func parseTrafficCVHTML(body []byte, now time.Time) (trafficCVMonthlyMetrics, error) {
+	if isTrafficCVChallengeHTML(body) {
+		return trafficCVMonthlyMetrics{}, fmt.Errorf("Traffic.cv 返回了 Cloudflare 验证页")
+	}
+	document, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return trafficCVMonthlyMetrics{}, fmt.Errorf("Traffic.cv HTML 解析失败：%w", err)
+	}
+	pageText := trafficCVVisibleText(document)
+	visits, err := parseTrafficCVCount(trafficCVPatternValue(trafficCVTotalVisitsPattern, pageText))
+	if err != nil || visits <= 0 {
+		return trafficCVMonthlyMetrics{}, fmt.Errorf("Traffic.cv HTML 中未找到 Total Visits")
+	}
+	pagesPerVisit, _ := strconv.ParseFloat(strings.ReplaceAll(trafficCVPatternValue(trafficCVPagesPerVisitPattern, pageText), ",", ""), 64)
+	bouncePercent, _ := strconv.ParseFloat(strings.ReplaceAll(trafficCVPatternValue(trafficCVBounceRatePattern, pageText), ",", ""), 64)
+	pageViews := int64(0)
+	if pagesPerVisit > 0 {
+		pageViews = int64(math.Round(float64(visits) * pagesPerVisit))
+	}
+	return trafficCVMonthlyMetrics{
+		Month:           trafficCVSurveyMonth(now),
+		Visits:          visits,
+		PageViews:       pageViews,
+		PagesPerVisit:   pagesPerVisit,
+		BounceRate:      bouncePercent / 100,
+		AverageDuration: trafficCVPatternValue(trafficCVDurationPattern, pageText),
 	}, nil
+}
+
+func trafficCVVisibleText(document *html.Node) string {
+	parts := make([]string, 0, 256)
+	var visit func(*html.Node, bool)
+	visit = func(node *html.Node, hidden bool) {
+		if node.Type == html.ElementNode {
+			switch strings.ToLower(node.Data) {
+			case "script", "style", "noscript", "svg":
+				hidden = true
+			}
+		}
+		if node.Type == html.TextNode && !hidden {
+			if value := strings.Join(strings.Fields(node.Data), " "); value != "" {
+				parts = append(parts, value)
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child, hidden)
+		}
+	}
+	visit(document, false)
+	return strings.Join(parts, " ")
+}
+
+func trafficCVPatternValue(pattern *regexp.Regexp, pageText string) string {
+	match := pattern.FindStringSubmatch(pageText)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
+}
+
+func parseTrafficCVCount(value string) (int64, error) {
+	value = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(value), ",", ""))
+	multiplier := float64(1)
+	if len(value) > 0 {
+		switch value[len(value)-1] {
+		case 'K':
+			multiplier = 1_000
+			value = value[:len(value)-1]
+		case 'M':
+			multiplier = 1_000_000
+			value = value[:len(value)-1]
+		case 'B':
+			multiplier = 1_000_000_000
+			value = value[:len(value)-1]
+		case 'T':
+			multiplier = 1_000_000_000_000
+			value = value[:len(value)-1]
+		}
+	}
+	number, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || number < 0 {
+		return 0, fmt.Errorf("访问量格式无效")
+	}
+	return int64(math.Round(number * multiplier)), nil
+}
+
+func trafficCVSurveyMonth(now time.Time) string {
+	monthOffset := -1
+	if now.Day() < 10 {
+		monthOffset = -2
+	}
+	return now.AddDate(0, monthOffset, 0).Format("2006-01")
+}
+
+func isTrafficCVChallengeHTML(body []byte) bool {
+	content := strings.ToLower(string(body))
+	return strings.Contains(content, "cf-mitigated") ||
+		strings.Contains(content, "challenge-platform") ||
+		strings.Contains(content, "just a moment...")
 }
 
 func fetchWebsiteAvatar(ctx context.Context, homepage string) (string, string) {

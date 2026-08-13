@@ -33,6 +33,15 @@ export const syncResource = (data?: object) => {
   return http.request<Result>("post", "/business/resources/sync", { data });
 };
 
+export const importTrafficCVHTML = (data: { id: number; html: string }) => {
+  return http.request<Result>(
+    "post",
+    "/business/resources/traffic-cv-html",
+    { data },
+    { timeout: 30000 }
+  );
+};
+
 export const syncAllResources = (data?: { platforms?: string[] }) => {
   return http.request<Result>("post", "/business/resources/sync-all", { data });
 };
@@ -127,6 +136,14 @@ export const createProject = (data?: object) => {
 
 export const importProjects = (data?: object) => {
   return http.request<Result>("post", "/business/projects/import", { data });
+};
+
+export const getProjectImportSyncStatus = (jobId: number) => {
+  return http.request<Result>(
+    "get",
+    "/business/cooperations/import-sync-status",
+    { params: { jobId } }
+  );
 };
 
 export const previewProjectExcelImport = (file: File) => {

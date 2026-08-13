@@ -335,24 +335,6 @@ onUnmounted(stopPolling);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="Similarweb API Key">
-              <el-input
-                v-model="apiConfig.similarwebApiKey"
-                type="password"
-                show-password
-                placeholder="用于 Website 媒体 UMV，留空不修改"
-                @input="apiConfigDirty = true"
-              />
-              <div class="field-tip">
-                {{
-                  apiConfig.similarwebApiKeyConfigured
-                    ? `已配置，尾号 ${apiConfig.similarwebApiKeyLast4}`
-                    : "未配置"
-                }}
-              </div>
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :md="12">
             <el-form-item label="YouTube 代理地址（可选）">
               <el-input
                 v-model="apiConfig.youtubeProxyUrl"
