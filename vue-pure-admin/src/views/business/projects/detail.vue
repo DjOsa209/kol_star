@@ -13,6 +13,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import echarts from "@/plugins/echarts";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
+import { fieldLabel } from "@/utils/fieldI18n";
 import {
   addProjectResource,
   deleteProjectContent,
@@ -2642,7 +2643,7 @@ onBeforeUnmount(() => {
             /></template>
           </el-input>
           <el-select v-model="creatorCategory" class="creator-filter">
-            <el-option label="全部领域" value="all" />
+            <el-option :label="fieldLabel('全部领域')" value="all" />
             <el-option
               v-for="category in creatorCategoryOptions"
               :key="category"
@@ -2651,7 +2652,7 @@ onBeforeUnmount(() => {
             />
           </el-select>
           <el-select v-model="creatorPlatform" class="creator-filter">
-            <el-option label="全部平台" value="all" />
+            <el-option :label="fieldLabel('全部平台')" value="all" />
             <el-option
               v-for="platform in creatorPlatformOptions"
               :key="platform"
@@ -2660,7 +2661,7 @@ onBeforeUnmount(() => {
             />
           </el-select>
           <el-select v-model="creatorTier" class="creator-filter">
-            <el-option label="全部层级" value="all" />
+            <el-option :label="fieldLabel('全部层级')" value="all" />
             <el-option
               v-for="tier in creatorTierOptions"
               :key="tier"
@@ -2684,7 +2685,7 @@ onBeforeUnmount(() => {
           <span>{{ influencerRows.length }} 位达人</span>
         </div>
         <el-table :data="influencerRows" class="creator-table">
-          <el-table-column label="达人" min-width="210" sortable>
+          <el-table-column :label="fieldLabel('达人')" min-width="210" sortable>
             <template #default="{ row }">
               <button
                 type="button"
@@ -2701,8 +2702,8 @@ onBeforeUnmount(() => {
               </button>
             </template>
           </el-table-column>
-          <el-table-column prop="category" label="领域" min-width="120" />
-          <el-table-column prop="platform" label="平台" min-width="120">
+          <el-table-column prop="category" :label="fieldLabel('领域')" min-width="120" />
+          <el-table-column prop="platform" :label="fieldLabel('平台')" min-width="120">
             <template #default="{ row }">
               <span class="creator-platform">
                 <PlatformIconBadge :platform="row.platform" />
@@ -2711,7 +2712,7 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column
-            label="内容数量"
+            :label="fieldLabel('内容数量')"
             width="110"
             align="right"
             sortable
@@ -2722,7 +2723,7 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column
-            label="粉丝量"
+            :label="fieldLabel('粉丝量')"
             width="125"
             align="right"
             sortable
@@ -2736,7 +2737,7 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column
-            label="曝光量"
+            :label="fieldLabel('曝光量')"
             width="125"
             align="right"
             sortable
@@ -2747,7 +2748,7 @@ onBeforeUnmount(() => {
             }}</template>
           </el-table-column>
           <el-table-column
-            label="互动量"
+            :label="fieldLabel('互动量')"
             width="125"
             align="right"
             sortable
@@ -2757,14 +2758,14 @@ onBeforeUnmount(() => {
               formatCount(projectEngagement(row))
             }}</template>
           </el-table-column>
-          <el-table-column prop="collaboratorTier" label="层级" width="100">
+          <el-table-column prop="collaboratorTier" :label="fieldLabel('层级')" width="100">
             <template #default="{ row }">
               <el-tag effect="plain">{{
                 row.collaboratorTier || "待同步"
               }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="最新合作内容" width="140" align="center">
+          <el-table-column :label="fieldLabel('最新合作内容')" width="140" align="center">
             <template #default="{ row }">
               <button
                 v-if="latestProjectPost(row)"
@@ -2789,7 +2790,7 @@ onBeforeUnmount(() => {
               <span v-else class="latest-content-empty">暂无内容</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column :label="fieldLabel('操作')" width="120" fixed="right">
             <template #default="{ row }">
               <el-button
                 link
@@ -2818,7 +2819,7 @@ onBeforeUnmount(() => {
           <span>{{ mediaRows.length }} 家媒体</span>
         </div>
         <el-table :data="mediaRows" class="creator-table media-table">
-          <el-table-column label="媒体" min-width="210" sortable>
+          <el-table-column :label="fieldLabel('媒体')" min-width="210" sortable>
             <template #default="{ row }">
               <button
                 type="button"
@@ -2835,8 +2836,8 @@ onBeforeUnmount(() => {
               </button>
             </template>
           </el-table-column>
-          <el-table-column prop="category" label="领域" min-width="120" />
-          <el-table-column prop="platform" label="平台" min-width="120">
+          <el-table-column prop="category" :label="fieldLabel('领域')" min-width="120" />
+          <el-table-column prop="platform" :label="fieldLabel('平台')" min-width="120">
             <template #default="{ row }"
               ><span class="creator-platform"
                 ><PlatformIconBadge :platform="row.platform" />{{
@@ -2846,7 +2847,7 @@ onBeforeUnmount(() => {
             >
           </el-table-column>
           <el-table-column
-            label="内容数量"
+            :label="fieldLabel('内容数量')"
             width="110"
             align="right"
             sortable
@@ -2857,7 +2858,7 @@ onBeforeUnmount(() => {
             }}</template>
           </el-table-column>
           <el-table-column
-            label="月独立访客（UMV）"
+            :label="fieldLabel('月独立访客（UMV）')"
             width="170"
             align="right"
             sortable
@@ -2868,7 +2869,7 @@ onBeforeUnmount(() => {
             }}</template>
           </el-table-column>
           <el-table-column
-            label="播放量"
+            :label="fieldLabel('播放量')"
             width="125"
             align="right"
             sortable
@@ -2879,7 +2880,7 @@ onBeforeUnmount(() => {
             }}</template>
           </el-table-column>
           <el-table-column
-            label="互动量"
+            :label="fieldLabel('互动量')"
             width="125"
             align="right"
             sortable
@@ -2889,14 +2890,14 @@ onBeforeUnmount(() => {
               formatCount(projectEngagement(row))
             }}</template>
           </el-table-column>
-          <el-table-column prop="collaboratorTier" label="层级" width="100">
+          <el-table-column prop="collaboratorTier" :label="fieldLabel('层级')" width="100">
             <template #default="{ row }"
               ><el-tag effect="plain">{{
                 row.collaboratorTier || "待同步"
               }}</el-tag></template
             >
           </el-table-column>
-          <el-table-column label="最新合作内容" width="140" align="center">
+          <el-table-column :label="fieldLabel('最新合作内容')" width="140" align="center">
             <template #default="{ row }">
               <button
                 v-if="latestProjectPost(row)"
@@ -2920,7 +2921,7 @@ onBeforeUnmount(() => {
               <span v-else class="latest-content-empty">暂无内容</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column :label="fieldLabel('操作')" width="120" fixed="right">
             <template #default="{ row }">
               <el-button
                 link
@@ -2952,7 +2953,7 @@ onBeforeUnmount(() => {
             /></template>
           </el-input>
           <el-select v-model="contentPlatform" class="platform-filter">
-            <el-option label="全部平台" value="all" />
+            <el-option :label="fieldLabel('全部平台')" value="all" />
             <el-option
               v-for="platform in contentPlatforms"
               :key="platform"
@@ -2961,11 +2962,11 @@ onBeforeUnmount(() => {
             />
           </el-select>
           <el-select v-model="contentSort" class="content-sort-filter">
-            <el-option label="最新发布" value="latest" />
-            <el-option label="播放量从高到低" value="views" />
-            <el-option label="互动量从高到低" value="engagement" />
-            <el-option label="播放率从高到低" value="playbackRate" />
-            <el-option label="CPM 从高到低" value="cpm" />
+            <el-option :label="fieldLabel('最新发布')" value="latest" />
+            <el-option :label="fieldLabel('播放量从高到低')" value="views" />
+            <el-option :label="fieldLabel('互动量从高到低')" value="engagement" />
+            <el-option :label="fieldLabel('播放率从高到低')" value="playbackRate" />
+            <el-option :label="fieldLabel('CPM 从高到低')" value="cpm" />
           </el-select>
           <span class="content-count"
             >共 {{ filteredContentPosts.length }} 条内容</span
@@ -3090,7 +3091,7 @@ onBeforeUnmount(() => {
       label-position="top"
       @submit.prevent="saveContentEdit"
     >
-      <el-form-item label="所属平台" required>
+      <el-form-item :label="fieldLabel('所属平台')" required>
         <el-select
           v-model="contentEditForm.platform"
           filterable
@@ -3109,7 +3110,7 @@ onBeforeUnmount(() => {
           </el-option>
         </el-select>
       </el-form-item>
-      <el-form-item label="内容链接" required>
+      <el-form-item :label="fieldLabel('内容链接')" required>
         <el-input
           v-model="contentEditForm.postUrl"
           clearable
@@ -3138,7 +3139,7 @@ onBeforeUnmount(() => {
   >
     <el-form :model="creatorForm" label-position="top">
       <template v-if="creatorDialogMode === 'create'">
-        <el-form-item label="从全球资源库选择" required>
+        <el-form-item :label="fieldLabel('从全球资源库选择')" required>
           <el-select
             v-model="creatorForm.resourceId"
             filterable
@@ -3177,14 +3178,14 @@ onBeforeUnmount(() => {
             <IconifyIconOnline icon="ri:global-line" />
           </header>
           <div class="online-search-grid">
-            <el-form-item label="平台" required>
+            <el-form-item :label="fieldLabel('平台')" required>
               <el-select v-model="onlineSearchForm.platform" class="w-full!">
                 <el-option label="Instagram" value="Instagram" />
                 <el-option label="TikTok" value="TikTok" />
                 <el-option label="YouTube" value="YouTube" />
                 <el-option label="X" value="X" />
                 <el-option
-                  label="Facebook（TikHub 暂未开放接口）"
+                  :label="fieldLabel('Facebook（TikHub 暂未开放接口）')"
                   value="Facebook"
                   disabled
                 />
@@ -3197,18 +3198,18 @@ onBeforeUnmount(() => {
                 />
               </el-select>
             </el-form-item>
-            <el-form-item label="类型">
+            <el-form-item :label="fieldLabel('类型')">
               <el-select
                 v-model="onlineSearchForm.resourceType"
                 class="w-full!"
               >
-                <el-option label="达人（KOL）" value="KOL" />
-                <el-option label="媒体" value="媒体" />
-                <el-option label="艺术家" value="艺术家" />
+                <el-option :label="fieldLabel('达人（KOL）')" value="KOL" />
+                <el-option :label="fieldLabel('媒体')" value="媒体" />
+                <el-option :label="fieldLabel('艺术家')" value="艺术家" />
               </el-select>
             </el-form-item>
           </div>
-          <el-form-item label="主页链接 / @handle / 平台账号" required>
+          <el-form-item :label="fieldLabel('主页链接 / @handle / 平台账号')" required>
             <el-input
               v-model="onlineSearchForm.query"
               clearable
@@ -3265,10 +3266,10 @@ onBeforeUnmount(() => {
           class="creator-edit-alert"
         />
         <div class="creator-form-grid">
-          <el-form-item label="名称" required>
+          <el-form-item :label="fieldLabel('名称')" required>
             <el-input v-model="creatorForm.resourceName" />
           </el-form-item>
-          <el-form-item label="类型" required>
+          <el-form-item :label="fieldLabel('类型')" required>
             <el-select v-model="creatorForm.resourceType" class="w-full!">
               <el-option
                 v-for="item in ['KOL', '媒体', '艺术家']"
@@ -3278,13 +3279,13 @@ onBeforeUnmount(() => {
               />
             </el-select>
           </el-form-item>
-          <el-form-item label="领域">
+          <el-form-item :label="fieldLabel('领域')">
             <el-input v-model="creatorForm.category" />
           </el-form-item>
-          <el-form-item label="市场">
+          <el-form-item :label="fieldLabel('市场')">
             <el-input v-model="creatorForm.market" />
           </el-form-item>
-          <el-form-item label="平台">
+          <el-form-item :label="fieldLabel('平台')">
             <el-input v-model="creatorForm.platform" />
           </el-form-item>
           <el-form-item
@@ -3309,14 +3310,14 @@ onBeforeUnmount(() => {
               class="w-full!"
             />
           </el-form-item>
-          <el-form-item label="主页链接" class="creator-form-grid__wide">
+          <el-form-item :label="fieldLabel('主页链接')" class="creator-form-grid__wide">
             <el-input v-model="creatorForm.platformUrl" />
           </el-form-item>
-          <el-form-item label="联系方式" class="creator-form-grid__wide">
+          <el-form-item :label="fieldLabel('联系方式')" class="creator-form-grid__wide">
             <el-input v-model="creatorForm.primaryContact" />
           </el-form-item>
           <el-form-item
-            label="层级（系统自动）"
+            :label="fieldLabel('层级（系统自动）')"
             class="creator-form-grid__wide"
           >
             <el-input
@@ -3398,7 +3399,7 @@ onBeforeUnmount(() => {
           @click="setSection(item.key)"
         >
           <IconifyIconOnline :icon="item.icon" />
-          <span>{{ item.label }}</span>
+          <span>{{ fieldLabel(item.label) }}</span>
         </button>
         <div class="nav-fold">收起 &laquo;</div>
       </aside>
@@ -3424,7 +3425,7 @@ onBeforeUnmount(() => {
                 />
               </span>
               <div>
-                <strong>{{ stage.label }}</strong>
+                <strong>{{ fieldLabel(stage.label) }}</strong>
                 <p>{{ stage.count }} 位资源 · {{ stage.description }}</p>
               </div>
             </button>
@@ -3526,7 +3527,7 @@ onBeforeUnmount(() => {
                     :class="{ active: activePipelineStage === stage.key }"
                     @click="activePipelineStage = stage.key"
                   >
-                    {{ stage.label }} {{ stage.count }}
+                    {{ fieldLabel(stage.label) }} {{ stage.count }}
                   </button>
                 </div>
                 <el-table
@@ -3538,17 +3539,17 @@ onBeforeUnmount(() => {
                 >
                   <el-table-column
                     prop="resourceName"
-                    label="资源"
+                    :label="fieldLabel('资源')"
                     min-width="170"
                   />
-                  <el-table-column label="状态" width="160">
+                  <el-table-column :label="fieldLabel('状态')" width="160">
                     <template #default="{ row }">
                       <el-tag :type="cooperationStageTag(row)" effect="light">{{
                         cooperationStageLabel(row)
                       }}</el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="报价" width="130">
+                  <el-table-column :label="fieldLabel('报价')" width="130">
                     <template #default="{ row }">{{
                       moneyText(row.quoteAmount, row.currency)
                     }}</template>
@@ -3834,7 +3835,7 @@ onBeforeUnmount(() => {
           <template v-if="reportScope === 'campaign'">
             <div class="report-filters">
               <el-select v-model="reportAudience">
-                <el-option label="全部受众" value="all" />
+                <el-option :label="fieldLabel('全部受众')" value="all" />
                 <el-option
                   v-for="item in audienceOptions"
                   :key="item"
@@ -3843,7 +3844,7 @@ onBeforeUnmount(() => {
                 />
               </el-select>
               <el-select v-model="reportPlatform">
-                <el-option label="全部平台" value="all" />
+                <el-option :label="fieldLabel('全部平台')" value="all" />
                 <el-option
                   v-for="item in platformOptions"
                   :key="item"
@@ -3852,7 +3853,7 @@ onBeforeUnmount(() => {
                 />
               </el-select>
               <el-select v-model="reportCreative">
-                <el-option label="全部创意" value="all" />
+                <el-option :label="fieldLabel('全部创意')" value="all" />
                 <el-option
                   v-for="item in creativeOptions"
                   :key="item"
@@ -3914,9 +3915,9 @@ onBeforeUnmount(() => {
               <div class="view-by">
                 <span>查看维度</span>
                 <el-select v-model="reportViewBy">
-                  <el-option label="受众" value="audience" />
-                  <el-option label="平台" value="platform" />
-                  <el-option label="创意" value="creative" />
+                  <el-option :label="fieldLabel('受众')" value="audience" />
+                  <el-option :label="fieldLabel('平台')" value="platform" />
+                  <el-option :label="fieldLabel('创意')" value="creative" />
                 </el-select>
               </div>
             </div>
@@ -3924,7 +3925,7 @@ onBeforeUnmount(() => {
           </template>
 
           <el-table v-else :data="cooperations" border class="report-table">
-            <el-table-column label="资源" min-width="220" sortable>
+            <el-table-column :label="fieldLabel('资源')" min-width="220" sortable>
               <template #default="{ row }">
                 <div class="influencer-cell">
                   <el-avatar :src="row.resourceAvatarUrl">{{
@@ -3941,7 +3942,7 @@ onBeforeUnmount(() => {
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="最终链接" min-width="220">
+            <el-table-column :label="fieldLabel('最终链接')" min-width="220">
               <template #default="{ row }">
                 <el-link
                   v-if="row.finalLink || row.deliverableLinks"
@@ -3954,26 +3955,26 @@ onBeforeUnmount(() => {
                 <span v-else>-</span>
               </template>
             </el-table-column>
-            <el-table-column label="订单价格" width="140" sortable>
+            <el-table-column :label="fieldLabel('订单价格')" width="140" sortable>
               <template #default="{ row }">{{
                 moneyText(row.quoteAmount, row.currency)
               }}</template>
             </el-table-column>
             <el-table-column
               prop="language"
-              label="语言"
+              :label="fieldLabel('语言')"
               width="130"
               sortable
             />
             <el-table-column
               prop="topGeographies"
-              label="主要地区"
+              :label="fieldLabel('主要地区')"
               min-width="220"
               sortable
             />
             <el-table-column
               prop="publishTime"
-              label="发布时间"
+              :label="fieldLabel('发布时间')"
               width="180"
               sortable
             />
@@ -4030,43 +4031,43 @@ onBeforeUnmount(() => {
           </div>
           <dl class="info-list">
             <div>
-              <dt>名称</dt>
+              <dt>{{ fieldLabel('名称') }}</dt>
               <dd>{{ project?.name || "-" }}</dd>
             </div>
             <div>
-              <dt>目标</dt>
+              <dt>{{ fieldLabel('目标') }}</dt>
               <dd>{{ project?.campaignType || "-" }}</dd>
             </div>
             <div>
-              <dt>周期</dt>
+              <dt>{{ fieldLabel('周期') }}</dt>
               <dd>{{ cycleLabel }}</dd>
             </div>
             <div>
-              <dt>市场</dt>
+              <dt>{{ fieldLabel('市场') }}</dt>
               <dd>{{ project?.targetMarket || "-" }}</dd>
             </div>
             <div>
-              <dt>语言</dt>
+              <dt>{{ fieldLabel('语言') }}</dt>
               <dd>{{ project?.language || "-" }}</dd>
             </div>
             <div>
-              <dt>平台</dt>
+              <dt>{{ fieldLabel('平台') }}</dt>
               <dd>{{ project?.platform || "-" }}</dd>
             </div>
             <div>
-              <dt>负责人</dt>
+              <dt>{{ fieldLabel('负责人') }}</dt>
               <dd>{{ project?.owner || "-" }}</dd>
             </div>
             <div>
-              <dt>状态</dt>
+              <dt>{{ fieldLabel('状态') }}</dt>
               <dd>{{ activeStatusLabel }}</dd>
             </div>
             <div>
-              <dt>预算</dt>
+              <dt>{{ fieldLabel('预算') }}</dt>
               <dd>{{ moneyText(projectBudget) }}</dd>
             </div>
             <div class="wide">
-              <dt>需求摘要</dt>
+              <dt>{{ fieldLabel('需求摘要') }}</dt>
               <dd>{{ cleanDisplayText(project?.brief) || "暂无需求摘要" }}</dd>
             </div>
           </dl>
@@ -4076,10 +4077,10 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="projectDialog" title="编辑项目" width="680px">
       <el-form :model="projectForm" label-width="120px">
-        <el-form-item label="项目名称"
+        <el-form-item :label="fieldLabel('项目名称')"
           ><el-input v-model="projectForm.name"
         /></el-form-item>
-        <el-form-item label="目标市场"
+        <el-form-item :label="fieldLabel('目标市场')"
           ><el-select
             v-model="projectForm.targetMarkets"
             multiple
@@ -4104,13 +4105,13 @@ onBeforeUnmount(() => {
             </el-option>
           </el-select></el-form-item
         >
-        <el-form-item label="语言"
+        <el-form-item :label="fieldLabel('语言')"
           ><el-input v-model="projectForm.language"
         /></el-form-item>
-        <el-form-item label="目标"
+        <el-form-item :label="fieldLabel('目标')"
           ><el-input v-model="projectForm.campaignType"
         /></el-form-item>
-        <el-form-item label="项目周期">
+        <el-form-item :label="fieldLabel('项目周期')">
           <el-date-picker
             v-model="projectCycleRange"
             type="daterange"
@@ -4123,13 +4124,13 @@ onBeforeUnmount(() => {
             class="w-full!"
           />
         </el-form-item>
-        <el-form-item label="预算"
+        <el-form-item :label="fieldLabel('预算')"
           ><el-input-number
             v-model="projectForm.budget"
             :min="0"
             class="w-full!"
         /></el-form-item>
-        <el-form-item label="负责人"
+        <el-form-item :label="fieldLabel('负责人')"
           ><el-input v-model="projectForm.owner"
         /></el-form-item>
         <el-form-item label="Brief"
@@ -4154,13 +4155,13 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="renewDialog" title="续期项目" width="480px">
       <el-form :model="renewForm" label-width="96px">
-        <el-form-item label="开始日期"
+        <el-form-item :label="fieldLabel('开始日期')"
           ><el-date-picker
             v-model="renewForm.cycleStartDate"
             value-format="YYYY-MM-DD"
             type="date"
         /></el-form-item>
-        <el-form-item label="结束日期"
+        <el-form-item :label="fieldLabel('结束日期')"
           ><el-date-picker
             v-model="renewForm.cycleEndDate"
             value-format="YYYY-MM-DD"
@@ -4175,10 +4176,10 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="reportDialog" title="提交异常反馈" width="520px">
       <el-form :model="influencerReportForm" label-width="96px">
-        <el-form-item label="原因"
+        <el-form-item :label="fieldLabel('原因')"
           ><el-input v-model="influencerReportForm.reason"
         /></el-form-item>
-        <el-form-item label="说明"
+        <el-form-item :label="fieldLabel('说明')"
           ><el-input
             v-model="influencerReportForm.detail"
             type="textarea"

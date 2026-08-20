@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ElMessage } from "element-plus";
+import { fieldLabel } from "@/utils/fieldI18n";
 import { getPlatformSyncControl, savePlatformSyncControl } from "@/api/system";
 import { syncAllResources } from "@/api/business";
 
@@ -30,6 +31,7 @@ const syncPlatformOptions = [
   "Website"
 ];
 const apiConfigDirty = ref(false);
+const feishuConfigDirty = ref(false);
 const settings = ref<any[]>([]);
 const tokenStatus = ref<Record<string, any>>({});
 const apiConfig = ref<any>({
@@ -51,6 +53,19 @@ const apiConfig = ref<any>({
   similarwebApiKey: "",
   similarwebApiKeyConfigured: false,
   similarwebApiKeyLast4: ""
+});
+const feishuConfig = ref<any>({
+  applicationEnabled: false,
+  appId: "",
+  appIdConfigured: false,
+  appIdLast4: "",
+  appSecret: "",
+  appSecretConfigured: false,
+  frontendUrl: "",
+  webhookEnabled: false,
+  webhookUrl: "",
+  webhookConfigured: false,
+  webhookLast4: ""
 });
 const latestJob = ref<any>(null);
 const resourceCounts = ref<any[]>([]);
@@ -114,6 +129,12 @@ async function loadData() {
     apiConfig.value.tikhubApiKey = "";
     apiConfig.value.similarwebApiKey = "";
   }
+  if (!feishuConfigDirty.value) {
+    Object.assign(feishuConfig.value, data.feishuConfig || {});
+    feishuConfig.value.appId = "";
+    feishuConfig.value.appSecret = "";
+    feishuConfig.value.webhookUrl = "";
+  }
   latestJob.value = data.latestJob || null;
   resourceCounts.value = data.resourceCounts || [];
   lastResourceSyncAt.value = data.lastResourceSyncAt || null;
@@ -131,12 +152,14 @@ async function save() {
   saving.value = true;
   const res = await savePlatformSyncControl({
     settings: settings.value,
-    apiConfig: apiConfig.value
+    apiConfig: apiConfig.value,
+    feishuConfig: feishuConfig.value
   });
   saving.value = false;
   if (res.code === 0) {
     ElMessage.success("抓取控制已保存");
     apiConfigDirty.value = false;
+    feishuConfigDirty.value = false;
     await loadData();
     apiConfig.value.youtubeApiKey = typedSecrets.youtubeApiKey;
     apiConfig.value.instagramAccessToken = typedSecrets.instagramAccessToken;
@@ -335,7 +358,7 @@ onUnmounted(stopPolling);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="YouTube 代理地址（可选）">
+            <el-form-item :label="fieldLabel('YouTube 代理地址（可选）')">
               <el-input
                 v-model="apiConfig.youtubeProxyUrl"
                 clearable
@@ -348,11 +371,107 @@ onUnmounted(stopPolling);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="TikHub 接入说明">
+            <el-form-item :label="fieldLabel('TikHub 接入说明')">
               <el-input
                 model-value="TikTok、Instagram、X、LinkedIn 与 Reddit 抓取共用该 Key"
                 disabled
               />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+    </section>
+
+    <section class="api-panel">
+      <div class="panel-header">
+        <div>
+          <strong>飞书通知配置</strong>
+          <span>项目导入后台同步结束后发送结果；敏感字段留空表示不修改。</span>
+        </div>
+      </div>
+      <el-form label-position="top" class="api-form">
+        <el-row :gutter="14">
+          <el-col :xs="24" :md="12">
+            <el-form-item :label="fieldLabel('应用机器人')">
+              <el-switch
+                v-model="feishuConfig.applicationEnabled"
+                active-text="启用"
+                inactive-text="停用"
+                @change="feishuConfigDirty = true"
+              />
+              <div class="field-tip">
+                启用后按当前导入用户的系统邮箱发送飞书消息。
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item :label="fieldLabel('群机器人 Webhook')">
+              <el-switch
+                v-model="feishuConfig.webhookEnabled"
+                active-text="启用"
+                inactive-text="停用"
+                @change="feishuConfigDirty = true"
+              />
+              <div class="field-tip">启用后同时向配置的飞书群发送消息。</div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item :label="fieldLabel('飞书 App ID')">
+              <el-input
+                v-model="feishuConfig.appId"
+                placeholder="留空不修改"
+                @input="feishuConfigDirty = true"
+              />
+              <div class="field-tip">
+                {{
+                  feishuConfig.appIdConfigured
+                    ? `已配置，尾号 ${feishuConfig.appIdLast4}`
+                    : "未配置"
+                }}
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item :label="fieldLabel('飞书 App Secret')">
+              <el-input
+                v-model="feishuConfig.appSecret"
+                type="password"
+                show-password
+                placeholder="留空不修改"
+                @input="feishuConfigDirty = true"
+              />
+              <div class="field-tip">
+                {{ feishuConfig.appSecretConfigured ? "已配置" : "未配置" }}
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item :label="fieldLabel('群机器人 Webhook 地址')">
+              <el-input
+                v-model="feishuConfig.webhookUrl"
+                type="password"
+                show-password
+                placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+                @input="feishuConfigDirty = true"
+              />
+              <div class="field-tip">
+                {{
+                  feishuConfig.webhookConfigured
+                    ? `已配置，尾号 ${feishuConfig.webhookLast4}`
+                    : "未配置"
+                }}
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item :label="fieldLabel('前端访问地址（可选）')">
+              <el-input
+                v-model="feishuConfig.frontendUrl"
+                clearable
+                placeholder="例如 https://xmp.example.com"
+                @input="feishuConfigDirty = true"
+              />
+              <div class="field-tip">配置后，通知中会附带项目详情链接。</div>
             </el-form-item>
           </el-col>
         </el-row>
@@ -367,18 +486,18 @@ onUnmounted(stopPolling);
         </div>
       </div>
       <el-table :data="settings" stripe class="settings-table">
-        <el-table-column prop="platform" label="平台" width="140" />
-        <el-table-column label="启用抓取" width="120">
+        <el-table-column prop="platform" :label="fieldLabel('平台')" width="140" />
+        <el-table-column :label="fieldLabel('启用抓取')" width="120">
           <template #default="{ row }">
             <el-switch v-model="row.enabled" />
           </template>
         </el-table-column>
-        <el-table-column label="抓取作品" width="120">
+        <el-table-column :label="fieldLabel('抓取作品')" width="120">
           <template #default="{ row }">
             <el-switch v-model="row.syncPosts" />
           </template>
         </el-table-column>
-        <el-table-column label="默认作品数" width="150">
+        <el-table-column :label="fieldLabel('默认作品数')" width="150">
           <template #default="{ row }">
             <el-input-number
               v-model="row.postLimit"
@@ -389,7 +508,7 @@ onUnmounted(stopPolling);
             />
           </template>
         </el-table-column>
-        <el-table-column label="Token 状态" min-width="220">
+        <el-table-column :label="fieldLabel('Token 状态')" min-width="220">
           <template #default="{ row }">
             <el-tag
               :type="
@@ -401,12 +520,12 @@ onUnmounted(stopPolling);
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="资源数" width="100">
+        <el-table-column :label="fieldLabel('资源数')" width="100">
           <template #default="{ row }">
             {{ platformCount(row.platform) }}
           </template>
         </el-table-column>
-        <el-table-column label="更新时间" width="180">
+        <el-table-column :label="fieldLabel('更新时间')" width="180">
           <template #default="{ row }">
             {{ formatDateTime(row.updatedAt) }}
           </template>

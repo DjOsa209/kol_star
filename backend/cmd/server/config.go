@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -21,6 +22,8 @@ type Config struct {
 	PlatformAPIs PlatformAPIConfig `mapstructure:"platform_apis"`
 	Collector    CollectorConfig   `mapstructure:"collector"`
 	AIModel      AIModelConfig     `mapstructure:"ai_model"`
+	Feishu       FeishuConfig      `mapstructure:"feishu"`
+	SSO          SSOConfig         `mapstructure:"sso"`
 }
 
 type ServerConfig struct {
@@ -56,6 +59,28 @@ type CollectorConfig struct {
 
 type AIModelConfig struct {
 	APIKey string `mapstructure:"api_key"`
+}
+
+type FeishuConfig struct {
+	ApplicationEnabled bool   `mapstructure:"application_enabled"`
+	AppID              string `mapstructure:"app_id"`
+	AppSecret          string `mapstructure:"app_secret"`
+	APIBaseURL         string `mapstructure:"api_base_url"`
+	WebhookEnabled     bool   `mapstructure:"webhook_enabled"`
+	WebhookURL         string `mapstructure:"webhook_url"`
+	FrontendURL        string `mapstructure:"frontend_url"`
+}
+
+type SSOConfig struct {
+	Enabled         bool   `mapstructure:"enabled"`
+	Provider        string `mapstructure:"provider"`
+	FrontendURL     string `mapstructure:"frontend_url"`
+	RedirectURI     string `mapstructure:"redirect_uri"`
+	DefaultRoleCode string `mapstructure:"default_role_code"`
+	UACGateway      string `mapstructure:"uac_gateway"`
+	UACAppID        string `mapstructure:"uac_app_id"`
+	UACLang         string `mapstructure:"uac_lang"`
+	UACSource       string `mapstructure:"uac_source"`
 }
 
 func loadConfig() (Config, *viper.Viper, error) {
@@ -94,6 +119,10 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("platform_apis.meta_graph_api_version", "v21.0")
 	v.SetDefault("collector.agent_token", "")
 	v.SetDefault("ai_model.api_key", "")
+	v.SetDefault("feishu.api_base_url", "https://open.feishu.cn")
+	v.SetDefault("sso.provider", "uac")
+	v.SetDefault("sso.default_role_code", "operation")
+	v.SetDefault("sso.uac_lang", "zh_CN")
 }
 
 func decodeConfig(v *viper.Viper) (Config, error) {
@@ -101,7 +130,11 @@ func decodeConfig(v *viper.Viper) (Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, err
 	}
-	return cfg.withDefaults(), nil
+	cfg = cfg.withDefaults()
+	if cfg.SSO.Enabled && !cfg.SSO.ready() {
+		return Config{}, errors.New("SSO 已启用，但 provider、frontend_url、redirect_uri、uac_gateway 或 uac_app_id 配置不完整")
+	}
+	return cfg, nil
 }
 
 func (cfg Config) withDefaults() Config {
@@ -125,6 +158,18 @@ func (cfg Config) withDefaults() Config {
 	}
 	if cfg.PlatformAPIs.MetaGraphAPIVersion == "" {
 		cfg.PlatformAPIs.MetaGraphAPIVersion = "v21.0"
+	}
+	if strings.TrimSpace(cfg.Feishu.APIBaseURL) == "" {
+		cfg.Feishu.APIBaseURL = "https://open.feishu.cn"
+	}
+	if strings.TrimSpace(cfg.SSO.Provider) == "" {
+		cfg.SSO.Provider = "uac"
+	}
+	if strings.TrimSpace(cfg.SSO.DefaultRoleCode) == "" {
+		cfg.SSO.DefaultRoleCode = "operation"
+	}
+	if strings.TrimSpace(cfg.SSO.UACLang) == "" {
+		cfg.SSO.UACLang = "zh_CN"
 	}
 	return cfg
 }

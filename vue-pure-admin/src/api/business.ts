@@ -138,14 +138,6 @@ export const importProjects = (data?: object) => {
   return http.request<Result>("post", "/business/projects/import", { data });
 };
 
-export const getProjectImportSyncStatus = (jobId: number) => {
-  return http.request<Result>(
-    "get",
-    "/business/cooperations/import-sync-status",
-    { params: { jobId } }
-  );
-};
-
 export const previewProjectExcelImport = (file: File) => {
   const data = new FormData();
   data.append("file", file);
@@ -173,6 +165,16 @@ export const downloadProjectExcelImportTemplate = () => {
       beforeResponseCallback: response => response.data
     } as any
   );
+};
+
+export const getProjectImportNotificationStatus = () => {
+  return http.request<
+    Result<{
+      enabled: boolean;
+      applicationEnabled: boolean;
+      webhookEnabled: boolean;
+    }>
+  >("get", "/business/projects/import-notification-status");
 };
 
 export const updateProject = (data?: object) => {

@@ -2,6 +2,14 @@ ai_model:
     api_key: ""
 collector:
     agent_token: ""
+feishu:
+    application_enabled: false
+    app_id: ""
+    app_secret: ""
+    api_base_url: https://open.feishu.cn
+    webhook_enabled: false
+    webhook_url: ""
+    frontend_url: ""
 cors:
     allowed_headers:
         - Authorization
@@ -32,3 +40,12 @@ platform_apis:
     youtube_proxy_url: http://127.0.0.1:7890
 server:
     addr: :8080
+sso:
+    enabled: false
+    provider: uac
+    frontend_url: http://localhost:8848/
+    redirect_uri: http://localhost:8848/sso/callback
+    uac_gateway: ""
+    uac_app_id: ""
+    uac_lang: zh_CN
+    uac_source: ""

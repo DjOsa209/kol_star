@@ -26,8 +26,8 @@ func TestParseExcelContentSheetAcceptsLockedTwoRowStandardHeader(t *testing.T) {
 	sheet := book.GetSheetName(0)
 	writeStandardImportHeaders(t, book, sheet)
 	values := []any{
-		"", "https://youtube.com/@creatorone", "KOL", "科技", "USA", "13.7K", "头部", "YouTube",
-		"付费合作", "https://youtube.com/watch?v=abc", "2000", "100000", "1200",
+		"", "Creator One", "https://youtube.com/@creatorone", "KOL", "科技", "USA", "13.7K", "头部", "YouTube",
+		"付费合作", "https://youtube.com/watch?v=abc", "兴趣圈层类", "2000", "100000", "1200",
 		"creator@example.com", "Mia", "Vendor A", "标准模板导入", "999",
 	}
 	for column, value := range values {
@@ -45,10 +45,10 @@ func TestParseExcelContentSheetAcceptsLockedTwoRowStandardHeader(t *testing.T) {
 		t.Fatalf("parsed rows = %d, want 1: %#v", len(rows), rows)
 	}
 	row := rows[0]
-	if row["rowNo"] != 5 || row["influencer"] != "https://youtube.com/@creatorone" || row["resourceType"] != "KOL" || row["country"] != "美国" {
+	if row["rowNo"] != 5 || row["resourceName"] != "Creator One" || row["influencer"] != "https://youtube.com/@creatorone" || row["resourceType"] != "KOL" || row["country"] != "美国" {
 		t.Fatalf("unexpected resource mapping: %#v", row)
 	}
-	if row["cooperationType"] != "付费合作" || row["primaryContact"] != "creator@example.com" || row["owner"] != "Mia" || row["vendor"] != "Vendor A" {
+	if row["cooperationType"] != "付费合作" || row["contentType"] != "兴趣圈层类" || row["primaryContact"] != "creator@example.com" || row["owner"] != "Mia" || row["vendor"] != "Vendor A" {
 		t.Fatalf("unexpected cooperation mapping: %#v", row)
 	}
 	if row["followerNumber"] != float64(0) || row["views"] != float64(0) || row["engagementCount"] != float64(0) || row["cpm"] != float64(0) {
@@ -86,15 +86,15 @@ func TestParseExcelContentSheetAcceptsChangedInstructionCopy(t *testing.T) {
 	sheet := book.GetSheetName(0)
 	writeStandardImportHeaders(t, book, sheet)
 	for cell, value := range map[string]string{
-		"F3": "KOL：粉丝数、订阅数；\n\n媒体：月独立访客（UMV,unique visitors per month ）、月访问量；",
-		"G3": "头部\n腰部\n尾部",
-		"L3": "播放量\n曝光量\n阅读量",
-		"M3": "总互动量（点赞、评论、分享、收藏）",
-		"F4": "填写纯数字，不带K/M。根据资源类型自动识别对应指标（Followers、UMV、Members等）。",
-		"G4": "/",
-		"L4": "优先填写实际播放量（Views）",
-		"M4": "填写总互动数（Likes + Comments + Shares + Saves）",
-		"R4": "",
+		"G3": "KOL：粉丝数、订阅数；\n\n媒体：月独立访客（UMV,unique visitors per month ）、月访问量；",
+		"H3": "头部\n腰部\n尾部",
+		"N3": "播放量\n曝光量\n阅读量",
+		"O3": "总互动量（点赞、评论、分享、收藏）",
+		"G4": "填写纯数字，不带K/M。根据资源类型自动识别对应指标（Followers、UMV、Members等）。",
+		"H4": "/",
+		"N4": "优先填写实际播放量（Views）",
+		"O4": "填写总互动数（Likes + Comments + Shares + Saves）",
+		"T4": "",
 	} {
 		_ = book.SetCellValue(sheet, cell, value)
 	}
@@ -119,9 +119,9 @@ func TestParseExcelContentSheetKeepsEveryStandardContentURL(t *testing.T) {
 	book := excelize.NewFile()
 	sheet := book.GetSheetName(0)
 	writeStandardImportHeaders(t, book, sheet)
-	_ = book.SetCellValue(sheet, "B5", "https://youtube.com/@creatorone")
-	_ = book.SetCellValue(sheet, "H5", "YouTube")
-	_ = book.SetCellValue(sheet, "J5", "https://youtube.com/watch?v=one https://youtube.com/watch?v=two")
+	_ = book.SetCellValue(sheet, "C5", "https://youtube.com/@creatorone")
+	_ = book.SetCellValue(sheet, "I5", "YouTube")
+	_ = book.SetCellValue(sheet, "K5", "https://youtube.com/watch?v=one https://youtube.com/watch?v=two")
 
 	rows, err := parseExcelContentSheet(book, sheet)
 	if err != nil {
@@ -147,7 +147,7 @@ func TestBuildStandardProjectImportTemplateHasProtectedTwoRowHeader(t *testing.T
 	}
 	for column, expected := range standardProjectImportLabels {
 		if column == 0 || column == len(standardProjectImportLabels)-1 {
-			continue // merged into A1 and R1
+			continue // merged into A1 and T1
 		}
 		cell, _ := excelize.CoordinatesToCellName(column+1, 2)
 		if actual, _ := book.GetCellValue(sheet, cell); actual != expected {
@@ -168,9 +168,9 @@ func TestBuildStandardProjectImportTemplateHasProtectedTwoRowHeader(t *testing.T
 	instructionStyle, _ := book.GetStyle(instructionStyleID)
 	dataStyleID, _ := book.GetCellStyle(sheet, "B5")
 	dataStyle, _ := book.GetStyle(dataStyleID)
-	calculatedStyleID, _ := book.GetCellStyle(sheet, "F5")
+	calculatedStyleID, _ := book.GetCellStyle(sheet, "G5")
 	calculatedStyle, _ := book.GetStyle(calculatedStyleID)
-	costStyleID, _ := book.GetCellStyle(sheet, "K5")
+	costStyleID, _ := book.GetCellStyle(sheet, "M5")
 	costStyle, _ := book.GetStyle(costStyleID)
 	if headerStyle.Protection == nil || !headerStyle.Protection.Locked {
 		t.Fatal("header must be locked")
@@ -202,7 +202,7 @@ func TestBuildStandardProjectImportTemplateHasProtectedTwoRowHeader(t *testing.T
 	for _, merge := range merges {
 		merged[merge.GetStartAxis()+":"+merge.GetEndAxis()] = true
 	}
-	if !merged["A1:A2"] || !merged["R1:R2"] {
+	if !merged["A1:A2"] || !merged["T1:T2"] {
 		t.Fatalf("required header merges missing: %#v", merged)
 	}
 }
@@ -234,7 +234,7 @@ func TestBuildStandardProjectExportWorkbookMatchesImportContract(t *testing.T) {
 			"resourceName": "Creator One", "profileUrl": "https://www.instagram.com/creatorone/",
 			"resourceType": "KOL", "category": "科技", "market": "美国", "audienceSize": float64(1250000),
 			"collaboratorTier": "头部", "platform": "Instagram", "cooperationType": "付费合作",
-			"contentUrl": "https://www.instagram.com/p/example/", "cost": float64(2500),
+			"contentUrl": "https://www.instagram.com/p/example/", "contentType": "消费种草类", "cost": float64(2500),
 			"views": float64(500000), "engagement": float64(23000), "primaryContact": "creator@example.com",
 			"owner": "Mia", "vendor": "Vendor A", "notes": "项目导出", "cpm": float64(5),
 		},
@@ -247,25 +247,31 @@ func TestBuildStandardProjectExportWorkbookMatchesImportContract(t *testing.T) {
 	if actual, _ := book.GetCellValue("标准模板", "B5"); actual != "Creator One" {
 		t.Fatalf("B5 = %q, want creator display name", actual)
 	}
-	if ok, target, _ := book.GetCellHyperLink("标准模板", "B5"); !ok || target != "https://www.instagram.com/creatorone/" {
+	if actual, _ := book.GetCellValue("标准模板", "C5"); actual != "https://www.instagram.com/creatorone/" {
+		t.Fatalf("C5 = %q, want profile URL", actual)
+	}
+	if ok, target, _ := book.GetCellHyperLink("标准模板", "C5"); !ok || target != "https://www.instagram.com/creatorone/" {
 		t.Fatalf("profile hyperlink = %q, ok=%v", target, ok)
 	}
-	if ok, target, _ := book.GetCellHyperLink("标准模板", "J5"); !ok || target != "https://www.instagram.com/p/example/" {
+	if ok, target, _ := book.GetCellHyperLink("标准模板", "K5"); !ok || target != "https://www.instagram.com/p/example/" {
 		t.Fatalf("content hyperlink = %q, ok=%v", target, ok)
 	}
-	for cell, expected := range map[string]string{"F5": "1250000", "K5": "2500", "L5": "500000", "M5": "23000", "R5": "5"} {
+	if actual, _ := book.GetCellValue("标准模板", "L5"); actual != "消费种草类" {
+		t.Fatalf("L5 = %q, want content type", actual)
+	}
+	for cell, expected := range map[string]string{"G5": "1250000", "M5": "2500", "N5": "500000", "O5": "23000", "T5": "5"} {
 		if actual, _ := book.GetCellValue("标准模板", cell, excelize.Options{RawCellValue: true}); actual != expected {
 			t.Fatalf("%s = %q, want %q", cell, actual, expected)
 		}
 	}
-	if actual, _ := book.GetCellValue("标准模板", "K5"); actual != "$2,500.00" {
-		t.Fatalf("formatted K5 = %q, want $2,500.00", actual)
+	if actual, _ := book.GetCellValue("标准模板", "M5"); actual != "$2,500.00" {
+		t.Fatalf("formatted M5 = %q, want $2,500.00", actual)
 	}
-	if err := book.SetCellValue("标准模板", "K6", -1234.1); err != nil {
+	if err := book.SetCellValue("标准模板", "M6", -1234.1); err != nil {
 		t.Fatal(err)
 	}
-	if actual, _ := book.GetCellValue("标准模板", "K6"); actual != "-$1,234.10" {
-		t.Fatalf("formatted negative K6 = %q, want -$1,234.10", actual)
+	if actual, _ := book.GetCellValue("标准模板", "M6"); actual != "-$1,234.10" {
+		t.Fatalf("formatted negative M6 = %q, want -$1,234.10", actual)
 	}
 
 	parsed, err := parseExcelContentSheet(book, "标准模板")
@@ -277,6 +283,9 @@ func TestBuildStandardProjectExportWorkbookMatchesImportContract(t *testing.T) {
 	}
 	if parsed[0]["influencer"] != "https://www.instagram.com/creatorone/" || parsed[0]["deliverableLinks"] != "https://www.instagram.com/p/example/" {
 		t.Fatalf("export must be re-importable: %#v", parsed[0])
+	}
+	if parsed[0]["resourceName"] != "Creator One" || parsed[0]["contentType"] != "消费种草类" {
+		t.Fatalf("new standard fields were not re-imported: %#v", parsed[0])
 	}
 	if got := floatField(parsed[0], "quoteAmount"); got != 2500 {
 		t.Fatalf("parsed cooperation cost = %v, want 2500: %#v", got, parsed[0])
@@ -389,17 +398,17 @@ func TestDynamicStandardOptionsDriveTemplateAndParser(t *testing.T) {
 	}
 	found := false
 	for _, validation := range validations {
-		if validation.Sqref == "D5:D2000" && strings.Contains(validation.Formula1, "新能源") {
+		if validation.Sqref == "E5:E2000" && strings.Contains(validation.Formula1, "新能源") {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatal("dynamic category must be included in the template drop-down")
 	}
-	_ = book.SetCellValue("标准模板", "B5", "https://youtube.com/@creator")
-	_ = book.SetCellValue("标准模板", "C5", "KOL")
-	_ = book.SetCellValue("标准模板", "D5", "新能源")
-	_ = book.SetCellValue("标准模板", "H5", "YouTube")
+	_ = book.SetCellValue("标准模板", "C5", "https://youtube.com/@creator")
+	_ = book.SetCellValue("标准模板", "D5", "KOL")
+	_ = book.SetCellValue("标准模板", "E5", "新能源")
+	_ = book.SetCellValue("标准模板", "I5", "YouTube")
 	rows, err := parseExcelContentSheetWithOptions(book, "标准模板", options)
 	if err != nil {
 		t.Fatal(err)

@@ -45,6 +45,7 @@ type tableData struct {
 }
 
 var sensitiveQueryParamPattern = regexp.MustCompile(`(?i)([?&](?:key|api_key|access_token|refresh_token|token|tikhub_api_key)=)[^&\s"]+`)
+var sensitiveJSONFieldPattern = regexp.MustCompile(`(?i)("(?:password|accessToken|refreshToken|token|rtoken|utoken|appSecret)"\s*:\s*")[^"]*(")`)
 
 const defaultIPLocationEndpoint = "https://ipwho.is/"
 
@@ -190,6 +191,9 @@ func (a *app) routes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /refresh-token", a.refreshToken)
+	mux.HandleFunc("GET /auth/config", a.authConfig)
+	mux.HandleFunc("GET /auth/sso/login", a.ssoLogin)
+	mux.HandleFunc("POST /auth/sso/uac/callback", a.ssoUACCallback)
 	mux.HandleFunc("GET /mine", a.mine)
 	mux.HandleFunc("POST /mine-logs", a.mineLogs)
 	mux.HandleFunc("POST /mine/password", a.changeMinePassword)
@@ -264,6 +268,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /business/projects/report/download", a.requireMenu("/business/projects", a.downloadBusinessProjectReport))
 	mux.HandleFunc("POST /business/projects/create", a.requireMenu("/business/projects", a.createBusinessProject))
 	mux.HandleFunc("GET /business/projects/import-template", a.requireMenu("/business/projects", a.downloadProjectExcelImportTemplate))
+	mux.HandleFunc("GET /business/projects/import-notification-status", a.requireMenu("/business/projects", a.businessImportNotificationStatus))
 	mux.HandleFunc("POST /business/projects/import-excel/preview", a.requireMenu("/business/projects", a.previewProjectExcelImport))
 	mux.HandleFunc("POST /business/projects/import", a.requireMenu("/business/projects", a.importBusinessProjects))
 	mux.HandleFunc("POST /business/projects/update", a.requireMenu("/business/projects", a.updateBusinessProject))
@@ -333,35 +338,41 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
-	permissions, err := a.userPermissions(r.Context(), user.ID)
+	if !localPasswordLoginAllowed(a.Config().SSO, roles) {
+		a.recordLoginLog(r, user.Username, 0, "请使用企业 SSO 登录")
+		writeError(w, http.StatusOK, 10002, "普通用户请使用企业 SSO 登录")
+		return
+	}
+	data, err := a.loginResponseData(r.Context(), user.ID, user.Avatar, user.Username, user.Nickname)
 	if err != nil {
 		writeDBError(w, err)
 		return
-	}
-	if contains(roles, "admin") {
-		permissions = []string{"*:*:*"}
-	}
-
-	now := time.Now()
-	data := map[string]any{
-		"avatar":       user.Avatar,
-		"username":     user.Username,
-		"nickname":     user.Nickname,
-		"roles":        roles,
-		"permissions":  permissions,
-		"accessToken":  fmt.Sprintf("kol.%d.%d", user.ID, now.Unix()),
-		"refreshToken": fmt.Sprintf("kol.%d.refresh.%d", user.ID, now.Unix()),
-		"expires":      now.Add(2 * time.Hour).Format("2006/01/02 15:04:05"),
 	}
 	a.recordLoginLog(r, user.Username, 1, "登录系统")
 	writeOK(w, data)
 }
 
 func (a *app) refreshToken(w http.ResponseWriter, r *http.Request) {
+	refreshToken := stringField(readBody(r), "refreshToken")
+	parts := strings.Split(refreshToken, ".")
+	if len(parts) < 4 || parts[0] != "kol" || parts[2] != "refresh" {
+		writeError(w, http.StatusUnauthorized, 401, "刷新令牌无效")
+		return
+	}
+	userID, err := strconv.Atoi(parts[1])
+	if err != nil || userID <= 0 {
+		writeError(w, http.StatusUnauthorized, 401, "刷新令牌无效")
+		return
+	}
+	var status int
+	if err := a.DB().QueryRowContext(r.Context(), `select status from sys_users where id = ?`, userID).Scan(&status); err != nil || status != 1 {
+		writeError(w, http.StatusUnauthorized, 401, "账号不存在或已停用")
+		return
+	}
 	now := time.Now()
 	writeOK(w, map[string]any{
-		"accessToken":  fmt.Sprintf("kol.refresh.%d", now.Unix()),
-		"refreshToken": fmt.Sprintf("kol.refresh.next.%d", now.Unix()),
+		"accessToken":  fmt.Sprintf("kol.%d.%d", userID, now.Unix()),
+		"refreshToken": fmt.Sprintf("kol.%d.refresh.%d", userID, now.Unix()),
 		"expires":      now.Add(2 * time.Hour).Format("2006/01/02 15:04:05"),
 	})
 }
@@ -637,6 +648,8 @@ func (a *app) users(w http.ResponseWriter, r *http.Request) {
 	})
 	rows, err := a.queryMaps(r.Context(),
 		`select u.id, u.avatar, u.username, u.nickname, u.phone, u.email, u.sex, u.status,
+		        u.auth_provider as authProvider, u.employee_no as employeeNo, u.department_name as departmentName,
+		        cast(unix_timestamp(u.last_login_at) * 1000 as unsigned) as lastLoginAt,
 		        u.remark, cast(unix_timestamp(u.create_time) * 1000 as unsigned) as createTime,
 		        d.id as deptId, d.name as deptName
 		   from sys_users u left join sys_departments d on d.id = u.dept_id`+where+` order by u.id asc`,
@@ -1430,6 +1443,9 @@ func captureRequestBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
 	}
+	if strings.Contains(r.URL.Path, "/auth/sso/") {
+		return "[SSO credentials omitted]"
+	}
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "multipart/form-data") {
 		return "[multipart form data omitted]"
@@ -1488,7 +1504,7 @@ func (a *app) requestUsername(r *http.Request, requestBody string) string {
 func requestLogLabels(path string, status int, responseBody string) (string, string) {
 	module := "接口请求"
 	switch {
-	case strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/refresh-token"):
+	case strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/refresh-token") || strings.Contains(path, "/auth/sso/"):
 		module = "认证"
 	case strings.HasPrefix(path, "/mine"):
 		module = "账户设置"
@@ -1545,7 +1561,8 @@ func validUTF8Prefix(data []byte, limit int) []byte {
 }
 
 func redactSensitiveText(value string) string {
-	return sensitiveQueryParamPattern.ReplaceAllString(value, "${1}[REDACTED]")
+	value = sensitiveQueryParamPattern.ReplaceAllString(value, "${1}[REDACTED]")
+	return sensitiveJSONFieldPattern.ReplaceAllString(value, "${1}[REDACTED]${2}")
 }
 
 func (a *app) queryMaps(ctx context.Context, query string, args ...any) ([]map[string]any, error) {

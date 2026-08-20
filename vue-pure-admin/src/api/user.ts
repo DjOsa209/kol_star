@@ -36,6 +36,16 @@ export type RefreshTokenResult = {
   };
 };
 
+export type AuthConfigResult = {
+  code: number;
+  message: string;
+  data: {
+    ssoEnabled: boolean;
+    ssoProvider: string;
+    ssoLoginUrl: string;
+  };
+};
+
 export type UserInfo = {
   /** 头像 */
   avatar: string;
@@ -81,6 +91,16 @@ type Result = {
 /** 登录 */
 export const getLogin = (data?: object) => {
   return http.request<UserResult>("post", "/login", { data });
+};
+
+/** 登录方式配置 */
+export const getAuthConfig = () => {
+  return http.request<AuthConfigResult>("get", "/auth/config");
+};
+
+/** 提交企业 UAC SSO 回调 */
+export const submitUACSSOCallback = (data?: object) => {
+  return http.request<UserResult>("post", "/auth/sso/uac/callback", { data });
 };
 
 /** 刷新`token` */

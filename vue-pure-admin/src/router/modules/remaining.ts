@@ -11,6 +11,15 @@ export default [
       showLink: false
     }
   },
+  {
+    path: "/sso/callback",
+    name: "SSOCallback",
+    component: () => import("@/views/login/sso-callback.vue"),
+    meta: {
+      title: "企业身份认证",
+      showLink: false
+    }
+  },
   // 全屏403（无权访问）页面
   {
     path: "/access-denied",

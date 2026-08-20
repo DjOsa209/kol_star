@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from "vue";
 import { ElMessage } from "element-plus";
+import { fieldLabel } from "@/utils/fieldI18n";
 import { getBriefTemplateList, createBriefTemplate } from "@/api/business";
 
 defineOptions({ name: "BusinessBriefs" });
@@ -43,16 +44,16 @@ onMounted(loadData);
       >
     </div>
     <el-table :data="list" border>
-      <el-table-column prop="name" label="模板名称" min-width="180" />
-      <el-table-column prop="platform" label="平台" width="120" />
-      <el-table-column prop="market" label="市场" width="120" />
-      <el-table-column prop="contentType" label="内容类型" width="140" />
-      <el-table-column prop="language" label="语言" width="100" />
-      <el-table-column prop="status" label="状态" width="90" />
-      <el-table-column prop="owner" label="负责人" width="120" />
+      <el-table-column prop="name" :label="fieldLabel('模板名称')" min-width="180" />
+      <el-table-column prop="platform" :label="fieldLabel('平台')" width="120" />
+      <el-table-column prop="market" :label="fieldLabel('市场')" width="120" />
+      <el-table-column prop="contentType" :label="fieldLabel('内容类型')" width="140" />
+      <el-table-column prop="language" :label="fieldLabel('语言')" width="100" />
+      <el-table-column prop="status" :label="fieldLabel('状态')" width="90" />
+      <el-table-column prop="owner" :label="fieldLabel('负责人')" width="120" />
       <el-table-column
         prop="template"
-        label="模板内容"
+        :label="fieldLabel('模板内容')"
         min-width="300"
         show-overflow-tooltip
       />
@@ -62,31 +63,31 @@ onMounted(loadData);
       <el-form :model="form" label-width="96px">
         <el-row :gutter="12">
           <el-col :span="12"
-            ><el-form-item label="模板名称"
+            ><el-form-item :label="fieldLabel('模板名称')"
               ><el-input v-model="form.name" /></el-form-item
           ></el-col>
           <el-col :span="12"
-            ><el-form-item label="平台"
+            ><el-form-item :label="fieldLabel('平台')"
               ><el-input v-model="form.platform" /></el-form-item
           ></el-col>
           <el-col :span="12"
-            ><el-form-item label="市场"
+            ><el-form-item :label="fieldLabel('市场')"
               ><el-input v-model="form.market" /></el-form-item
           ></el-col>
           <el-col :span="12"
-            ><el-form-item label="内容类型"
+            ><el-form-item :label="fieldLabel('内容类型')"
               ><el-input v-model="form.contentType" /></el-form-item
           ></el-col>
           <el-col :span="12"
-            ><el-form-item label="语言"
+            ><el-form-item :label="fieldLabel('语言')"
               ><el-input v-model="form.language" /></el-form-item
           ></el-col>
           <el-col :span="12"
-            ><el-form-item label="负责人"
+            ><el-form-item :label="fieldLabel('负责人')"
               ><el-input v-model="form.owner" /></el-form-item
           ></el-col>
           <el-col :span="24"
-            ><el-form-item label="模板内容"
+            ><el-form-item :label="fieldLabel('模板内容')"
               ><el-input
                 v-model="form.template"
                 type="textarea"

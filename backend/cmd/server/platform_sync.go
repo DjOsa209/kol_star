@@ -47,6 +47,12 @@ func (a *app) savePlatformSyncControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if feishuConfigRaw, ok := body["feishuConfig"].(map[string]any); ok {
+		if err := a.saveFeishuConfig(feishuConfigRaw); err != nil {
+			writeError(w, http.StatusOK, 10002, err.Error())
+			return
+		}
+	}
 	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeDBError(w, err)
@@ -522,6 +528,7 @@ func (a *app) platformSyncStatus(ctx context.Context) (map[string]any, error) {
 		"lastResourceSyncAt": nullStringValue(lastResourceSyncAt),
 		"resourceCounts":     counts,
 		"apiConfig":          a.platformAPIConfigStatus(ctx),
+		"feishuConfig":       feishuConfigPublicContent(a.Config().Feishu),
 		"tokenStatus":        a.platformTokenStatus(ctx),
 	}, nil
 }

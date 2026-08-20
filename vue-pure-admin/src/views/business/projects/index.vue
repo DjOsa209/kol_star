@@ -1,17 +1,10 @@
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  reactive,
-  ref,
-  shallowRef,
-  onMounted,
-  onBeforeUnmount
-} from "vue";
+import { computed, nextTick, reactive, ref, shallowRef, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
+import { fieldLabel } from "@/utils/fieldI18n";
 import {
   countryOptionsWithLegacyValues,
   parseProjectTargetMarkets,
@@ -23,6 +16,7 @@ import {
   importProjects,
   previewProjectExcelImport,
   downloadProjectExcelImportTemplate,
+  getProjectImportNotificationStatus,
   downloadProjectData,
   updateProject,
   deleteProject,
@@ -31,7 +25,6 @@ import {
   updateCooperation,
   syncCooperation,
   importCooperations,
-  getProjectImportSyncStatus,
   getMarketOptions,
   createMarketOption,
   deleteMarketOption
@@ -53,12 +46,6 @@ const importDialog = ref(false);
 const importLoading = ref(false);
 const importParsing = ref(false);
 const importParseError = ref("");
-const importSyncDialogVisible = ref(false);
-const importSyncJob = ref<any | null>(null);
-const importSyncPollError = ref("");
-const importSyncStorageKey = "business-project-import-sync-job-id";
-let importSyncPollTimer: ReturnType<typeof setInterval> | null = null;
-let importSyncPollInFlight = false;
 const contentUploadKey = ref(0);
 const editingProjectId = ref<number | null>(null);
 const editingCooperationId = ref<number | null>(null);
@@ -66,9 +53,16 @@ type ImportTargetMode = "new" | "replace" | "incremental";
 const importTargetMode = ref<ImportTargetMode>("new");
 const importProjectId = ref<number | null>(null);
 const importProjectNameDraft = ref("");
+const importProjectOwnerDraft = ref("");
+const importProjectCycleRange = ref<string[]>([]);
 const importProjectCreating = ref(false);
 const importProjectOptionsLoading = ref(false);
 const importProjectOptionsError = ref("");
+const importNotificationStatus = ref({
+  enabled: false,
+  applicationEnabled: false,
+  webhookEnabled: false
+});
 const importWorkbookSheets = shallowRef<{ name: string; rows: any[] }[]>([]);
 const importRows = shallowRef<any[]>([]);
 const importFileName = ref("");
@@ -81,78 +75,6 @@ const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
 const projectStatusOptions = ["未开始", "进行中", "已结束"] as const;
-
-const importSyncRunning = computed(
-  () => importSyncJob.value?.status === "运行中"
-);
-const importSyncProgress = computed(() => {
-  const job = importSyncJob.value;
-  if (!job) return 0;
-  if (job.status !== "运行中") return 100;
-  const total = Number(job.totalCount || 0);
-  if (!total) return 0;
-  const completed =
-    Number(job.successCount || 0) +
-    Number(job.failedCount || 0) +
-    Number(job.skippedCount || 0);
-  return Math.min(99, Math.round((completed / total) * 100));
-});
-const importSyncProgressStatus = computed(() => {
-  const status = importSyncJob.value?.status;
-  if (status === "失败" || status === "部分失败" || status === "已中止") {
-    return "exception";
-  }
-  if (status === "成功") return "success";
-  return undefined;
-});
-
-function stopImportSyncPolling() {
-  if (importSyncPollTimer) {
-    clearInterval(importSyncPollTimer);
-    importSyncPollTimer = null;
-  }
-}
-
-async function pollImportSyncJob(jobId: number) {
-  if (importSyncPollInFlight) return;
-  importSyncPollInFlight = true;
-  try {
-    const res = await getProjectImportSyncStatus(jobId);
-    if (res.code !== 0) {
-      importSyncPollError.value = res.message || "读取同步进度失败";
-      return;
-    }
-    importSyncPollError.value = "";
-    importSyncJob.value = res.data;
-    if (res.data?.status === "运行中") return;
-    stopImportSyncPolling();
-    sessionStorage.removeItem(importSyncStorageKey);
-    await loadData();
-    if (res.data?.status === "成功") {
-      ElMessage.success("项目导入后的平台数据同步已完成");
-    } else {
-      ElMessage.warning(res.data?.message || "项目导入同步已结束，请检查失败项");
-    }
-  } catch {
-    importSyncPollError.value = "读取同步进度失败，系统仍会继续后台同步";
-  } finally {
-    importSyncPollInFlight = false;
-  }
-}
-
-function trackImportSyncJob(job: any) {
-  const jobId = Number(job?.id || 0);
-  if (!jobId) return;
-  stopImportSyncPolling();
-  importSyncJob.value = job;
-  importSyncPollError.value = "";
-  importSyncDialogVisible.value = true;
-  sessionStorage.setItem(importSyncStorageKey, String(jobId));
-  void pollImportSyncJob(jobId);
-  importSyncPollTimer = setInterval(() => {
-    void pollImportSyncJob(jobId);
-  }, 1500);
-}
 
 const defaultMarketOptions = [
   "美国",
@@ -386,6 +308,7 @@ const cooperationForm = reactive({
   projectId: 1,
   resourceId: 1,
   cooperationType: "",
+  contentType: "",
   quoteAmount: 0,
   currency: "USD",
   status: "邀约中",
@@ -480,11 +403,9 @@ function importRowMatchesExistingCooperation(row: any) {
     if (platform && existingPlatform && platform !== existingPlatform) {
       return false;
     }
-    return [
-      item?.platformUrl,
-      item?.resourceName,
-      item?.platformHandle
-    ].some(value => normalizeImportIdentity(value) === influencer);
+    return [item?.platformUrl, item?.resourceName, item?.platformHandle].some(
+      value => normalizeImportIdentity(value) === influencer
+    );
   });
 }
 
@@ -1066,6 +987,7 @@ function resetCooperationForm() {
     projectId: projects.value[0]?.id || 1,
     resourceId: 1,
     cooperationType: "",
+    contentType: "",
     quoteAmount: 0,
     currency: "USD",
     status: "邀约中",
@@ -1134,6 +1056,7 @@ function openEditCooperation(row: any) {
     projectId: Number(row.projectId || 1),
     resourceId: Number(row.resourceId || 1),
     cooperationType: row.cooperationType || "",
+    contentType: row.contentType || "",
     quoteAmount: numberValue(row.quoteAmount),
     currency: row.currency || "USD",
     status: row.status || "邀约中",
@@ -1259,6 +1182,7 @@ async function syncCooperationPost(row: any) {
 }
 
 const headerAliases = {
+  resourceName: ["Name"],
   influencer: ["collaboratorName"],
   resourceType: ["resourceType"],
   category: ["category"],
@@ -1268,6 +1192,7 @@ const headerAliases = {
   platform: ["platform"],
   cooperationType: ["collaborationType"],
   deliverableLinks: ["contentUrl"],
+  contentType: ["contentType"],
   quoteAmount: ["cost"],
   views: ["views"],
   engagementCount: ["engagement"],
@@ -1287,7 +1212,7 @@ const projectImportAliases = {
   budget: ["预算", "Budget"],
   currency: ["币种", "货币", "Currency"],
   status: ["状态", "Status"],
-  owner: ["负责人", "Owner", "Project Owner"],
+  owner: ["对接人", "负责人", "Owner", "Project Owner"],
   brief: ["项目说明", "简介", "Brief", "Description"],
   cycleStartDate: ["开始日期", "项目开始", "Start Date", "Cycle Start"],
   cycleEndDate: ["结束日期", "项目结束", "End Date", "Cycle End"]
@@ -1484,6 +1409,17 @@ async function downloadProjectImportTemplate() {
   URL.revokeObjectURL(url);
 }
 
+async function loadImportNotificationStatus() {
+  try {
+    const res = await getProjectImportNotificationStatus();
+    if (res.code === 0) {
+      Object.assign(importNotificationStatus.value, res.data || {});
+    }
+  } catch {
+    importNotificationStatus.value.enabled = false;
+  }
+}
+
 async function exportProjectData(row: any) {
   if (!row?.id || exportingProjectIds[row.id]) return;
   exportingProjectIds[row.id] = true;
@@ -1512,6 +1448,8 @@ async function exportProjectData(row: any) {
 function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
   importProjectId.value = null;
   importProjectNameDraft.value = projectNameFromFileName(fileName);
+  importProjectOwnerDraft.value = "";
+  importProjectCycleRange.value = [];
   importFileName.value = fileName;
   importWorkbookSheets.value = workbook.SheetNames.map(name => ({
     name,
@@ -1562,6 +1500,7 @@ function normalizeImportRow(
   index: number,
   previousResource: Record<string, any>
 ) {
+  const resourceName = cellText(pickValue(row, headerAliases.resourceName));
   const sourceName = cellText(pickValue(row, headerAliases.influencer));
   const sourcePlatform = cellText(pickValue(row, headerAliases.platform));
   const sourceCategory = cellText(pickValue(row, headerAliases.category));
@@ -1572,6 +1511,7 @@ function normalizeImportRow(
   const views = parseNumber(pickValue(row, headerAliases.views));
   const normalized: any = {
     rowNo: index + 1,
+    resourceName: resourceName || previousResource.resourceName || "",
     influencer: sourceName || previousResource.influencer || "",
     category: sourceCategory || previousResource.category || "",
     platform: sourcePlatform || previousResource.platform || "",
@@ -1585,6 +1525,7 @@ function normalizeImportRow(
     collaboratorTier: cellText(pickValue(row, headerAliases.rating)),
     cooperationType: cellText(pickValue(row, headerAliases.cooperationType)),
     deliverableLinks: sourceLink,
+    contentType: cellText(pickValue(row, headerAliases.contentType)),
     views,
     engagementCount: parseNumber(pickValue(row, headerAliases.engagementCount)),
     quoteAmount: cost,
@@ -1594,6 +1535,7 @@ function normalizeImportRow(
     notes: cellText(pickValue(row, headerAliases.notes)),
     cpm: views > 0 ? (cost * 1000) / views : 0,
     sourceHasIdentity: Boolean(
+      resourceName ||
       sourceName ||
       sourcePlatform ||
       sourceCategory ||
@@ -1965,8 +1907,10 @@ async function ensureImportProject() {
       budget: 0,
       currency: "USD",
       status: "未开始",
-      owner: "",
-      brief: "由合作内容导入时创建"
+      owner: importProjectOwnerDraft.value.trim(),
+      brief: "由合作内容导入时创建",
+      cycleStartDate: importProjectCycleRange.value[0] || "",
+      cycleEndDate: importProjectCycleRange.value[1] || ""
     });
     if (res.code !== 0) {
       ElMessage.warning(res.message || "项目创建失败");
@@ -2009,6 +1953,8 @@ async function removeProjects(rows: any[]) {
   if (projectIDs.includes(Number(importProjectId.value))) {
     importProjectId.value = null;
     importProjectNameDraft.value = "";
+    importProjectOwnerDraft.value = "";
+    importProjectCycleRange.value = [];
   }
   selectedProjectRows.value = selectedProjectRows.value.filter(
     project => !projectIDs.includes(Number(project.id))
@@ -2037,6 +1983,8 @@ async function handleUploadFile(file: any) {
     }
     importTargetMode.value = "new";
     importProjectId.value = null;
+    importProjectOwnerDraft.value = "";
+    importProjectCycleRange.value = [];
     importProjectNameDraft.value =
       String(res.data?.projectName || "").trim() ||
       projectNameFromFileName(rawFile.name);
@@ -2082,8 +2030,13 @@ async function submitImport() {
         : importTargetMode.value === "replace"
           ? "覆盖导入完成"
           : "导入完成";
+    const backgroundText = !res.data.backgroundSyncStarted
+      ? ""
+      : res.data.feishuNotificationEnabled
+        ? "；平台数据将在后台同步，完成后通过飞书通知"
+        : "；平台数据将在后台同步";
     ElMessage.success(
-      `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，移除旧内容 ${res.data.removedContent || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条`
+      `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，移除旧内容 ${res.data.removedContent || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条${backgroundText}`
     );
     if (res.data.failed) {
       const failures = (res.data.errors || [])
@@ -2100,10 +2053,10 @@ async function submitImport() {
     importDialog.value = false;
     importRows.value = [];
     await loadData();
-    if (res.data.platformSyncStarted && res.data.importSyncJob) {
-      trackImportSyncJob(res.data.importSyncJob);
-    } else if (res.data.imported) {
-      ElMessage.warning("项目已导入，但后台同步任务未能启动，请稍后手动同步资源");
+    if (!res.data.backgroundSyncStarted && res.data.imported) {
+      ElMessage.warning(
+        "项目已导入，但后台同步任务未能启动，请稍后手动同步资源"
+      );
     }
   }
 }
@@ -2117,20 +2070,7 @@ function importRowClassName({ row }: any) {
 onMounted(() => {
   loadMarkets();
   loadData();
-  const unfinishedJobId = Number(sessionStorage.getItem(importSyncStorageKey));
-  if (unfinishedJobId > 0) {
-    trackImportSyncJob({
-      id: unfinishedJobId,
-      status: "运行中",
-      totalCount: 3,
-      currentResourceName: "恢复同步进度",
-      message: "正在读取后台同步状态…"
-    });
-  }
-});
-
-onBeforeUnmount(() => {
-  stopImportSyncPolling();
+  loadImportNotificationStatus();
 });
 </script>
 
@@ -2143,6 +2083,14 @@ onBeforeUnmount(() => {
           <p>统一管理项目、合作达人/媒体、合作内容与执行数据。</p>
         </div>
         <div class="center-header-actions">
+          <el-tag
+            :type="importNotificationStatus.enabled ? 'success' : 'info'"
+            effect="plain"
+          >
+            飞书推送：{{
+              importNotificationStatus.enabled ? "已启用" : "未启用"
+            }}
+          </el-tag>
           <el-button @click="downloadProjectImportTemplate">
             <IconifyIconOnline icon="ri:download-2-line" /> 下载标准模板
           </el-button>
@@ -2184,7 +2132,7 @@ onBeforeUnmount(() => {
           <el-input
             v-model="projectSearch"
             clearable
-            placeholder="搜索项目、市场或负责人"
+            placeholder="搜索项目、市场或对接人"
             class="project-search"
           >
             <template #prefix
@@ -2200,7 +2148,7 @@ onBeforeUnmount(() => {
           @selection-change="rows => (selectedProjectRows = rows)"
         >
           <el-table-column type="selection" width="54" />
-          <el-table-column label="项目" min-width="270" sortable>
+          <el-table-column :label="fieldLabel('项目')" min-width="270" sortable>
             <template #default="{ row }">
               <div class="project-name-cell">
                 <span class="project-icon"
@@ -2214,7 +2162,7 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column
-            label="合作达人 / 媒体"
+            :label="fieldLabel('合作达人 / 媒体')"
             width="150"
             align="center"
             sortable
@@ -2223,13 +2171,18 @@ onBeforeUnmount(() => {
               projectStats(row.id).resourceCount
             }}</template>
           </el-table-column>
-          <el-table-column label="合作内容" width="120" align="center" sortable>
+          <el-table-column
+            :label="fieldLabel('合作内容')"
+            width="120"
+            align="center"
+            sortable
+          >
             <template #default="{ row }">{{
               projectStats(row.id).cooperationCount
             }}</template>
           </el-table-column>
           <el-table-column
-            label="曝光 / 播放"
+            :label="fieldLabel('曝光 / 播放')"
             width="150"
             align="right"
             sortable
@@ -2238,7 +2191,11 @@ onBeforeUnmount(() => {
               formatCount(projectStats(row.id).totalReach)
             }}</template>
           </el-table-column>
-          <el-table-column label="互动率" width="120" align="right">
+          <el-table-column
+            :label="fieldLabel('互动率')"
+            width="120"
+            align="right"
+          >
             <template #default="{ row }">{{
               ratioPercent(
                 projectStats(row.id).totalEngagements,
@@ -2246,12 +2203,12 @@ onBeforeUnmount(() => {
               )
             }}</template>
           </el-table-column>
-          <el-table-column label="负责人" width="130"
+          <el-table-column :label="fieldLabel('对接人')" width="130"
             ><template #default="{ row }">{{
               row.owner || "未指定"
             }}</template></el-table-column
           >
-          <el-table-column label="目标市场" min-width="310">
+          <el-table-column :label="fieldLabel('目标市场')" min-width="310">
             <template #default="{ row }">
               <div
                 v-if="projectMarketItems(row).length"
@@ -2304,14 +2261,19 @@ onBeforeUnmount(() => {
               <span v-else class="project-empty-value">未设置</span>
             </template>
           </el-table-column>
-          <el-table-column label="项目周期" width="210">
+          <el-table-column :label="fieldLabel('项目周期')" width="210">
             <template #default="{ row }">
               <span class="project-cycle-value">{{
                 projectCycleText(row)
               }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="240" fixed="right" align="right">
+          <el-table-column
+            :label="fieldLabel('操作')"
+            width="240"
+            fixed="right"
+            align="right"
+          >
             <template #default="{ row }">
               <el-button
                 link
@@ -2343,18 +2305,18 @@ onBeforeUnmount(() => {
         width="640px"
       >
         <el-form :model="projectForm" label-width="96px">
-          <el-form-item label="项目名称"
+          <el-form-item :label="fieldLabel('项目名称')"
             ><el-input
               v-model="projectForm.name"
               placeholder="例如：Infinix NOTE 60 新品推广"
           /></el-form-item>
-          <el-form-item label="负责人"
+          <el-form-item :label="fieldLabel('对接人')"
             ><el-input v-model="projectForm.owner"
           /></el-form-item>
-          <el-form-item label="项目说明"
+          <el-form-item :label="fieldLabel('项目说明')"
             ><el-input v-model="projectForm.brief" type="textarea" :rows="4"
           /></el-form-item>
-          <el-form-item label="目标市场"
+          <el-form-item :label="fieldLabel('目标市场')"
             ><el-select
               v-model="projectForm.targetMarkets"
               multiple
@@ -2378,7 +2340,7 @@ onBeforeUnmount(() => {
               </el-option></el-select
             ></el-form-item
           >
-          <el-form-item label="项目周期">
+          <el-form-item :label="fieldLabel('项目周期')">
             <el-date-picker
               v-model="projectCycleRange"
               type="daterange"
@@ -2398,59 +2360,6 @@ onBeforeUnmount(() => {
             >保存项目</el-button
           ></template
         >
-      </el-dialog>
-
-      <el-dialog
-        v-model="importSyncDialogVisible"
-        title="项目导入同步进度"
-        width="min(560px, 92vw)"
-        :close-on-click-modal="false"
-      >
-        <div v-if="importSyncJob" class="import-sync-progress">
-          <div class="import-sync-heading">
-            <div>
-              <strong>{{ importSyncJob.currentResourceName || "后台同步" }}</strong>
-              <span>{{ importSyncJob.message || "正在同步平台数据…" }}</span>
-            </div>
-            <el-tag
-              :type="
-                importSyncRunning
-                  ? 'warning'
-                  : importSyncJob.status === '成功'
-                    ? 'success'
-                    : 'danger'
-              "
-              effect="plain"
-            >
-              {{ importSyncJob.status }}
-            </el-tag>
-          </div>
-          <el-progress
-            :percentage="importSyncProgress"
-            :status="importSyncProgressStatus"
-            :stroke-width="14"
-          />
-          <div class="import-sync-stages">
-            <span :class="{ done: importSyncProgress >= 33 }">账号资料</span>
-            <span :class="{ done: importSyncProgress >= 67 }">合作内容</span>
-            <span :class="{ done: importSyncProgress === 100 }">图片处理</span>
-          </div>
-          <el-alert
-            v-if="importSyncPollError"
-            class="mt-3"
-            type="warning"
-            :closable="false"
-            :title="importSyncPollError"
-          />
-          <p v-if="importSyncRunning" class="import-sync-tip">
-            可以关闭此窗口继续操作；同步会在后台继续，完成后页面会提示结果。
-          </p>
-        </div>
-        <template #footer>
-          <el-button @click="importSyncDialogVisible = false">
-            {{ importSyncRunning ? "后台继续" : "关闭" }}
-          </el-button>
-        </template>
       </el-dialog>
 
       <el-dialog v-model="projectImportDialog" title="上传项目" width="780px">
@@ -2491,23 +2400,47 @@ onBeforeUnmount(() => {
           :row-class-name="importRowClassName"
         >
           <el-table-column prop="sourceSheet" label="Sheet" width="110" />
-          <el-table-column prop="rowNo" label="行号" width="70" />
-          <el-table-column prop="name" label="项目名称" min-width="180" />
-          <el-table-column prop="targetMarket" label="目标市场" width="120" />
-          <el-table-column prop="platform" label="平台" width="130" />
+          <el-table-column
+            prop="rowNo"
+            :label="fieldLabel('行号')"
+            width="70"
+          />
+          <el-table-column
+            prop="name"
+            :label="fieldLabel('项目名称')"
+            min-width="180"
+          />
+          <el-table-column
+            prop="targetMarket"
+            :label="fieldLabel('目标市场')"
+            width="120"
+          />
+          <el-table-column
+            prop="platform"
+            :label="fieldLabel('平台')"
+            width="130"
+          />
           <el-table-column
             prop="campaignType"
-            label="合作目标"
+            :label="fieldLabel('合作目标')"
             min-width="130"
           />
           <el-table-column
             prop="budget"
-            label="预算"
+            :label="fieldLabel('预算')"
             width="110"
             align="right"
           />
-          <el-table-column prop="owner" label="负责人" width="110" />
-          <el-table-column label="状态" min-width="150" fixed="right">
+          <el-table-column
+            prop="owner"
+            :label="fieldLabel('对接人')"
+            width="110"
+          />
+          <el-table-column
+            :label="fieldLabel('状态')"
+            min-width="150"
+            fixed="right"
+          >
             <template #default="{ row }">
               <el-tag v-if="row.errors.length === 0" type="success"
                 >可导入</el-tag
@@ -2547,6 +2480,17 @@ onBeforeUnmount(() => {
         :z-index="5000"
       >
         <el-alert
+          class="mb-3"
+          :type="importNotificationStatus.enabled ? 'success' : 'warning'"
+          :closable="false"
+          show-icon
+          :title="
+            importNotificationStatus.enabled
+              ? '飞书通知已启用：导入后将在后台同步，完成后自动推送结果。'
+              : '飞书通知未启用：导入后仍会后台同步，但不会发送完成消息。'
+          "
+        />
+        <el-alert
           v-if="importParsing"
           class="mb-3"
           type="info"
@@ -2561,7 +2505,7 @@ onBeforeUnmount(() => {
           :title="importParseError"
         />
         <el-form label-width="96px" class="import-target-form mb-3">
-          <el-form-item label="导入方式" required>
+          <el-form-item :label="fieldLabel('导入方式')" required>
             <el-radio-group
               v-model="importTargetMode"
               @change="handleImportTargetModeChange"
@@ -2573,7 +2517,7 @@ onBeforeUnmount(() => {
           </el-form-item>
           <el-form-item
             v-if="importTargetMode !== 'new'"
-            label="已有项目"
+            :label="fieldLabel('已有项目')"
             required
           >
             <el-select
@@ -2609,7 +2553,7 @@ onBeforeUnmount(() => {
               </el-option>
             </el-select>
           </el-form-item>
-          <el-form-item v-else label="新项目名称" required>
+          <el-form-item v-else :label="fieldLabel('新项目名称')" required>
             <el-input
               v-model="importProjectNameDraft"
               clearable
@@ -2618,6 +2562,32 @@ onBeforeUnmount(() => {
               :disabled="importProjectCreating"
             />
           </el-form-item>
+          <template v-if="importTargetMode === 'new'">
+            <el-form-item :label="fieldLabel('对接人')">
+              <el-input
+                v-model="importProjectOwnerDraft"
+                clearable
+                class="import-project-select"
+                placeholder="输入项目对接人"
+                :disabled="importProjectCreating"
+              />
+            </el-form-item>
+            <el-form-item :label="fieldLabel('项目周期')">
+              <el-date-picker
+                v-model="importProjectCycleRange"
+                type="daterange"
+                unlink-panels
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                format="YYYY-MM-DD"
+                value-format="YYYY-MM-DD"
+                class="import-project-select"
+                popper-class="import-project-date-popper"
+                :disabled="importProjectCreating"
+              />
+            </el-form-item>
+          </template>
         </el-form>
         <el-alert
           v-if="importTargetMode === 'incremental'"
@@ -2659,30 +2629,70 @@ onBeforeUnmount(() => {
           max-height="420"
           :row-class-name="importRowClassName"
         >
-          <el-table-column prop="rowNo" label="行号" width="70" fixed />
+          <el-table-column
+            prop="rowNo"
+            :label="fieldLabel('行号')"
+            width="70"
+            fixed
+          />
+          <el-table-column
+            prop="resourceName"
+            :label="fieldLabel('名称')"
+            min-width="150"
+            show-overflow-tooltip
+          />
           <el-table-column
             prop="influencer"
-            label="合作方主页"
+            :label="fieldLabel('合作方主页')"
             min-width="240"
             show-overflow-tooltip
           />
-          <el-table-column prop="resourceType" label="类型" width="120" />
-          <el-table-column prop="category" label="领域" min-width="120" />
-          <el-table-column prop="country" label="市场" width="110" />
-          <el-table-column prop="platform" label="平台" width="110" />
+          <el-table-column
+            prop="resourceType"
+            :label="fieldLabel('类型')"
+            width="120"
+          />
+          <el-table-column
+            prop="category"
+            :label="fieldLabel('领域')"
+            min-width="120"
+          />
+          <el-table-column
+            prop="country"
+            :label="fieldLabel('市场')"
+            width="110"
+          />
+          <el-table-column
+            prop="platform"
+            :label="fieldLabel('平台')"
+            width="110"
+          />
           <el-table-column
             prop="cooperationType"
-            label="合作类型"
+            :label="fieldLabel('合作类型')"
             width="150"
           />
           <el-table-column
             prop="deliverableLinks"
-            label="内容链接"
+            :label="fieldLabel('内容链接')"
             min-width="220"
             show-overflow-tooltip
           />
-          <el-table-column prop="quoteAmount" label="合作费用" width="110" />
-          <el-table-column label="状态" min-width="180" fixed="right">
+          <el-table-column
+            prop="contentType"
+            :label="fieldLabel('内容类型')"
+            width="140"
+          />
+          <el-table-column
+            prop="quoteAmount"
+            :label="fieldLabel('合作费用')"
+            width="110"
+          />
+          <el-table-column
+            :label="fieldLabel('状态')"
+            min-width="180"
+            fixed="right"
+          >
             <template #default="{ row }">
               <el-tag v-if="row.errors.length === 0" type="success"
                 >可导入</el-tag
@@ -2782,7 +2792,7 @@ onBeforeUnmount(() => {
 
       <el-card shadow="never" class="workspace-card">
         <el-tabs>
-          <el-tab-pane label="执行总览">
+          <el-tab-pane :label="fieldLabel('执行总览')">
             <section class="overview-dashboard">
               <header class="overview-header">
                 <div>
@@ -2805,7 +2815,7 @@ onBeforeUnmount(() => {
                     <span />
                     市场：{{ selectedProject?.targetMarket || "未设置" }}
                     <span />
-                    负责人：{{ selectedProject?.owner || "未指定" }}
+                    对接人：{{ selectedProject?.owner || "未指定" }}
                   </p>
                 </div>
                 <div class="overview-actions">
@@ -2880,7 +2890,7 @@ onBeforeUnmount(() => {
                   @click="activePipelineStage = stage.key"
                 >
                   <IconifyIconOnline :icon="stage.icon" />
-                  <span>{{ stage.label }}</span>
+                  <span>{{ fieldLabel(stage.label) }}</span>
                   <strong>{{ stage.count }}</strong>
                 </button>
               </section>
@@ -2940,22 +2950,22 @@ onBeforeUnmount(() => {
                   >
                     <el-table-column
                       prop="resourceName"
-                      label="资源"
+                      :label="fieldLabel('资源')"
                       min-width="160"
                     />
-                    <el-table-column label="阶段" width="140">
+                    <el-table-column :label="fieldLabel('阶段')" width="140">
                       <template #default="{ row }">
                         <el-tag :type="cooperationStageTag(row)" effect="light">
                           {{ cooperationStageLabel(row) }}
                         </el-tag>
                       </template>
                     </el-table-column>
-                    <el-table-column label="报价" width="120">
+                    <el-table-column :label="fieldLabel('报价')" width="120">
                       <template #default="{ row }">
                         {{ moneyText(row.quoteAmount, row.currency) }}
                       </template>
                     </el-table-column>
-                    <el-table-column label="操作" width="110">
+                    <el-table-column :label="fieldLabel('操作')" width="110">
                       <template #default="{ row }">
                         <el-button
                           link
@@ -3025,8 +3035,8 @@ onBeforeUnmount(() => {
                         Market:
                         {{ selectedProject?.targetMarket || "未设置市场" }}
                         <span />
-                        负责人：
-                        {{ selectedProject?.owner || "未指定负责人" }}
+                        对接人：
+                        {{ selectedProject?.owner || "未指定对接人" }}
                       </p>
                     </div>
                   </div>
@@ -3076,7 +3086,7 @@ onBeforeUnmount(() => {
                       />
                     </span>
                     <div>
-                      <strong>{{ stage.label }}</strong>
+                      <strong>{{ fieldLabel(stage.label) }}</strong>
                       <p>{{ stage.count }} 位达人 · {{ stage.description }}</p>
                     </div>
                   </div>
@@ -3196,7 +3206,7 @@ onBeforeUnmount(() => {
                           :class="{ active: activePipelineStage === stage.key }"
                           @click="activePipelineStage = stage.key"
                         >
-                          {{ stage.label }} {{ stage.count }}
+                          {{ fieldLabel(stage.label) }} {{ stage.count }}
                         </button>
                       </div>
                       <el-table
@@ -3348,7 +3358,7 @@ onBeforeUnmount(() => {
                           <span />
                           <article>
                             <div>
-                              <strong>{{ stage.label }}</strong>
+                              <strong>{{ fieldLabel(stage.label) }}</strong>
                               <el-tag
                                 v-if="
                                   stage.key ===
@@ -3419,42 +3429,62 @@ onBeforeUnmount(() => {
               </section>
             </div>
           </el-tab-pane>
-          <el-tab-pane label="项目管理">
+          <el-tab-pane :label="fieldLabel('项目管理')">
             <div class="toolbar">
               <span class="toolbar-title">营销项目需求池</span>
             </div>
             <el-table :data="projects" stripe class="business-table">
-              <el-table-column prop="name" label="项目名称" min-width="180" />
+              <el-table-column
+                prop="name"
+                :label="fieldLabel('项目名称')"
+                min-width="180"
+              />
               <el-table-column
                 prop="targetMarket"
-                label="目标市场"
+                :label="fieldLabel('目标市场')"
                 width="120"
               />
-              <el-table-column prop="platform" label="平台" width="140" />
+              <el-table-column
+                prop="platform"
+                :label="fieldLabel('平台')"
+                width="140"
+              />
               <el-table-column
                 prop="campaignType"
-                label="合作目标"
+                :label="fieldLabel('合作目标')"
                 width="120"
               />
-              <el-table-column prop="budget" label="预算" width="120" />
-              <el-table-column label="状态" width="120">
+              <el-table-column
+                prop="budget"
+                :label="fieldLabel('预算')"
+                width="120"
+              />
+              <el-table-column :label="fieldLabel('状态')" width="120">
                 <template #default="{ row }">
                   {{ projectStatusText(row.status) }}
                 </template>
               </el-table-column>
-              <el-table-column prop="owner" label="负责人" width="120" />
-              <el-table-column label="合作复盘" min-width="250">
+              <el-table-column
+                prop="owner"
+                :label="fieldLabel('对接人')"
+                width="120"
+              />
+              <el-table-column :label="fieldLabel('合作复盘')" min-width="250">
                 <template #default="{ row }">
                   {{ reviewSummaryText(projectStats(row.id)) }}
                 </template>
               </el-table-column>
               <el-table-column
                 prop="brief"
-                label="需求摘要"
+                :label="fieldLabel('需求摘要')"
                 min-width="260"
                 show-overflow-tooltip
               />
-              <el-table-column label="操作" width="150" fixed="right">
+              <el-table-column
+                :label="fieldLabel('操作')"
+                width="150"
+                fixed="right"
+              >
                 <template #default="{ row }">
                   <el-button
                     link
@@ -3470,7 +3500,7 @@ onBeforeUnmount(() => {
               </el-table-column>
             </el-table>
           </el-tab-pane>
-          <el-tab-pane label="效果复盘">
+          <el-tab-pane :label="fieldLabel('效果复盘')">
             <section class="review-report">
               <div class="review-report-heading">
                 <div>
@@ -3490,33 +3520,44 @@ onBeforeUnmount(() => {
               >
                 <el-table-column
                   prop="name"
-                  label="项目"
+                  :label="fieldLabel('项目')"
                   min-width="180"
                   fixed
                 />
-                <el-table-column prop="targetMarket" label="市场" width="120" />
-                <el-table-column prop="platform" label="平台" width="130" />
-                <el-table-column label="合作达人 / 媒体" width="140">
+                <el-table-column
+                  prop="targetMarket"
+                  :label="fieldLabel('市场')"
+                  width="120"
+                />
+                <el-table-column
+                  prop="platform"
+                  :label="fieldLabel('平台')"
+                  width="130"
+                />
+                <el-table-column
+                  :label="fieldLabel('合作达人 / 媒体')"
+                  width="140"
+                >
                   <template #default="{ row }">
                     {{ row.review.resourceCount }}
                   </template>
                 </el-table-column>
-                <el-table-column label="合作内容" width="110">
+                <el-table-column :label="fieldLabel('合作内容')" width="110">
                   <template #default="{ row }">
                     {{ row.review.cooperationCount }}
                   </template>
                 </el-table-column>
-                <el-table-column label="曝光 / 触达" width="140">
+                <el-table-column :label="fieldLabel('曝光 / 触达')" width="140">
                   <template #default="{ row }">
                     {{ formatCount(row.review.totalReach) }}
                   </template>
                 </el-table-column>
-                <el-table-column label="互动" width="120">
+                <el-table-column :label="fieldLabel('互动')" width="120">
                   <template #default="{ row }">
                     {{ formatCount(row.review.totalEngagements) }}
                   </template>
                 </el-table-column>
-                <el-table-column label="互动率" width="110">
+                <el-table-column :label="fieldLabel('互动率')" width="110">
                   <template #default="{ row }">
                     {{
                       ratioPercent(
@@ -3526,7 +3567,7 @@ onBeforeUnmount(() => {
                     }}
                   </template>
                 </el-table-column>
-                <el-table-column label="付费金额" width="130">
+                <el-table-column :label="fieldLabel('付费金额')" width="130">
                   <template #default="{ row }">
                     {{ moneyText(row.review.totalCost) }}
                   </template>
@@ -3558,7 +3599,7 @@ onBeforeUnmount(() => {
                     <span>
                       {{ project.targetMarket || "-" }} ·
                       {{ project.platform || "全平台" }} ·
-                      {{ project.owner || "未指定负责人" }}
+                      {{ project.owner || "未指定对接人" }}
                     </span>
                   </div>
                   <div class="project-card-actions">
@@ -3627,7 +3668,7 @@ onBeforeUnmount(() => {
               </article>
             </div>
           </el-tab-pane>
-          <el-tab-pane label="合作记录">
+          <el-tab-pane :label="fieldLabel('合作记录')">
             <div class="toolbar">
               <el-upload
                 accept=".xlsx,.xls,.csv"
@@ -3645,39 +3686,55 @@ onBeforeUnmount(() => {
             <el-table :data="cooperations" stripe class="business-table">
               <el-table-column
                 prop="projectName"
-                label="项目"
+                :label="fieldLabel('项目')"
                 min-width="160"
               />
               <el-table-column
                 prop="resourceName"
-                label="资源"
+                :label="fieldLabel('资源')"
                 min-width="160"
               />
-              <el-table-column label="合作形式" min-width="150">
+              <el-table-column :label="fieldLabel('合作形式')" min-width="150">
                 <template #default="{ row }">
                   <CooperationTypeTags :value="row.cooperationType" />
                 </template>
               </el-table-column>
-              <el-table-column label="报价" width="120">
+              <el-table-column :label="fieldLabel('报价')" width="120">
                 <template #default="{ row }">
                   {{ moneyText(row.quoteAmount, row.currency) }}
                 </template>
               </el-table-column>
-              <el-table-column prop="status" label="状态" width="120" />
               <el-table-column
-                prop="deliverableStatus"
-                label="交付状态"
+                prop="status"
+                :label="fieldLabel('状态')"
                 width="120"
               />
-              <el-table-column prop="impressions" label="曝光" width="110" />
-              <el-table-column prop="views" label="播放量" width="110" />
               <el-table-column
-                prop="engagementCount"
-                label="转赞藏"
+                prop="deliverableStatus"
+                :label="fieldLabel('交付状态')"
+                width="120"
+              />
+              <el-table-column
+                prop="impressions"
+                :label="fieldLabel('曝光')"
                 width="110"
               />
-              <el-table-column prop="commentsCount" label="评论" width="90" />
-              <el-table-column label="互动率" width="100">
+              <el-table-column
+                prop="views"
+                :label="fieldLabel('播放量')"
+                width="110"
+              />
+              <el-table-column
+                prop="engagementCount"
+                :label="fieldLabel('转赞藏')"
+                width="110"
+              />
+              <el-table-column
+                prop="commentsCount"
+                :label="fieldLabel('评论')"
+                width="90"
+              />
+              <el-table-column :label="fieldLabel('互动率')" width="100">
                 <template #default="{ row }">
                   {{
                     ratioPercent(
@@ -3697,12 +3754,12 @@ onBeforeUnmount(() => {
               </el-table-column>
               <el-table-column
                 prop="releaseDate"
-                label="发布日期"
+                :label="fieldLabel('发布日期')"
                 width="120"
               />
               <el-table-column
                 prop="deliverableLinks"
-                label="发布链接"
+                :label="fieldLabel('发布链接')"
                 min-width="180"
               >
                 <template #default="{ row }">
@@ -3717,15 +3774,23 @@ onBeforeUnmount(() => {
                   <span v-else>-</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="clicks" label="点击" width="110" />
+              <el-table-column
+                prop="clicks"
+                :label="fieldLabel('点击')"
+                width="110"
+              />
               <el-table-column prop="roi" label="ROI" width="90" />
               <el-table-column
                 prop="notes"
-                label="备注"
+                :label="fieldLabel('备注')"
                 min-width="200"
                 show-overflow-tooltip
               />
-              <el-table-column label="操作" width="150" fixed="right">
+              <el-table-column
+                :label="fieldLabel('操作')"
+                width="150"
+                fixed="right"
+              >
                 <template #default="{ row }">
                   <el-button
                     link
@@ -3826,10 +3891,10 @@ onBeforeUnmount(() => {
                     <span>如需正式 Logo，可后续在项目资料中补充。</span>
                   </div>
                   <div class="wizard-two-col">
-                    <el-form-item label="品牌名称">
+                    <el-form-item :label="fieldLabel('品牌名称')">
                       <el-input v-model="campaignWizardForm.businessName" />
                     </el-form-item>
-                    <el-form-item label="产品/服务类型">
+                    <el-form-item :label="fieldLabel('产品/服务类型')">
                       <el-select
                         v-model="campaignWizardForm.productType"
                         class="w-full!"
@@ -3843,10 +3908,10 @@ onBeforeUnmount(() => {
                       </el-select>
                     </el-form-item>
                   </div>
-                  <el-form-item label="可搜索品牌">
+                  <el-form-item :label="fieldLabel('可搜索品牌')">
                     <el-input v-model="campaignWizardForm.searchableBrands" />
                   </el-form-item>
-                  <el-form-item label="品牌介绍">
+                  <el-form-item :label="fieldLabel('品牌介绍')">
                     <el-input
                       v-model="campaignWizardForm.businessIntroduction"
                       type="textarea"
@@ -3874,10 +3939,10 @@ onBeforeUnmount(() => {
               </div>
               <el-form label-position="top">
                 <div class="wizard-two-col">
-                  <el-form-item label="项目目标">
+                  <el-form-item :label="fieldLabel('项目目标')">
                     <el-input v-model="campaignWizardForm.campaignType" />
                   </el-form-item>
-                  <el-form-item label="目标市场">
+                  <el-form-item :label="fieldLabel('目标市场')">
                     <el-select
                       v-model="campaignWizardForm.targetMarket"
                       allow-create
@@ -3893,7 +3958,7 @@ onBeforeUnmount(() => {
                       />
                     </el-select>
                   </el-form-item>
-                  <el-form-item label="投放平台">
+                  <el-form-item :label="fieldLabel('投放平台')">
                     <el-select
                       v-model="campaignWizardForm.platform"
                       multiple
@@ -3907,11 +3972,11 @@ onBeforeUnmount(() => {
                       />
                     </el-select>
                   </el-form-item>
-                  <el-form-item label="语言">
+                  <el-form-item :label="fieldLabel('语言')">
                     <el-input v-model="campaignWizardForm.language" />
                   </el-form-item>
                 </div>
-                <el-form-item label="内容偏好">
+                <el-form-item :label="fieldLabel('内容偏好')">
                   <el-input
                     v-model="campaignWizardForm.contentPreference"
                     type="textarea"
@@ -3944,7 +4009,7 @@ onBeforeUnmount(() => {
                     <el-form-item
                       v-for="field in group.fields"
                       :key="field.key"
-                      :label="field.label"
+                      :label="fieldLabel(field.label)"
                     >
                       <el-input
                         v-if="/audience/i.test(field.key)"
@@ -4021,13 +4086,13 @@ onBeforeUnmount(() => {
               </div>
               <el-form label-position="top">
                 <div class="wizard-two-col">
-                  <el-form-item label="项目名称">
+                  <el-form-item :label="fieldLabel('项目名称')">
                     <el-input v-model="campaignWizardForm.campaignGoal" />
                   </el-form-item>
-                  <el-form-item label="负责人">
+                  <el-form-item :label="fieldLabel('对接人')">
                     <el-input v-model="campaignWizardForm.owner" />
                   </el-form-item>
-                  <el-form-item label="达人营销预算">
+                  <el-form-item :label="fieldLabel('达人营销预算')">
                     <el-input-number
                       v-model="campaignWizardForm.budget"
                       :min="0"
@@ -4035,10 +4100,10 @@ onBeforeUnmount(() => {
                       class="w-full!"
                     />
                   </el-form-item>
-                  <el-form-item label="币种">
+                  <el-form-item :label="fieldLabel('币种')">
                     <el-input v-model="campaignWizardForm.currency" />
                   </el-form-item>
-                  <el-form-item label="开始日期">
+                  <el-form-item :label="fieldLabel('开始日期')">
                     <el-date-picker
                       v-model="campaignWizardForm.cycleStartDate"
                       value-format="YYYY-MM-DD"
@@ -4046,7 +4111,7 @@ onBeforeUnmount(() => {
                       class="w-full!"
                     />
                   </el-form-item>
-                  <el-form-item label="结束日期">
+                  <el-form-item :label="fieldLabel('结束日期')">
                     <el-date-picker
                       v-model="campaignWizardForm.cycleEndDate"
                       value-format="YYYY-MM-DD"
@@ -4083,23 +4148,31 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <el-table :data="sampleInfluencers" class="business-table" stripe>
-                <el-table-column prop="name" label="达人" min-width="160" />
-                <el-table-column prop="price" label="预计报价" width="150">
+                <el-table-column
+                  prop="name"
+                  :label="fieldLabel('达人')"
+                  min-width="160"
+                />
+                <el-table-column
+                  prop="price"
+                  :label="fieldLabel('预计报价')"
+                  width="150"
+                >
                   <template #default="{ row }">{{
                     moneyText(row.price)
                   }}</template>
                 </el-table-column>
                 <el-table-column
                   prop="predictedCpm"
-                  label="预计 CPM"
+                  :label="fieldLabel('预计 CPM')"
                   width="150"
                 />
                 <el-table-column
                   prop="predictedViews"
-                  label="预计播放"
+                  :label="fieldLabel('预计播放')"
                   width="160"
                 />
-                <el-table-column label="反馈" width="130">
+                <el-table-column :label="fieldLabel('反馈')" width="130">
                   <template #default="{ row }">
                     <el-tag v-if="row.matched === true" type="success"
                       >匹配</el-tag
@@ -4146,10 +4219,10 @@ onBeforeUnmount(() => {
         width="640px"
       >
         <el-form :model="projectForm" label-width="96px">
-          <el-form-item label="项目名称"
+          <el-form-item :label="fieldLabel('项目名称')"
             ><el-input v-model="projectForm.name"
           /></el-form-item>
-          <el-form-item label="目标市场"
+          <el-form-item :label="fieldLabel('目标市场')"
             ><el-select
               v-model="projectForm.targetMarkets"
               multiple
@@ -4165,7 +4238,7 @@ onBeforeUnmount(() => {
                 :value="country.name"
               /> </el-select
           ></el-form-item>
-          <el-form-item label="项目周期">
+          <el-form-item :label="fieldLabel('项目周期')">
             <el-date-picker
               v-model="projectCycleRange"
               type="daterange"
@@ -4176,19 +4249,19 @@ onBeforeUnmount(() => {
               class="w-full!"
             />
           </el-form-item>
-          <el-form-item label="合作目标"
+          <el-form-item :label="fieldLabel('合作目标')"
             ><el-input v-model="projectForm.campaignType"
           /></el-form-item>
-          <el-form-item label="预算"
+          <el-form-item :label="fieldLabel('预算')"
             ><el-input-number
               v-model="projectForm.budget"
               :min="0"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="状态"
+          <el-form-item :label="fieldLabel('状态')"
             ><el-input v-model="projectForm.status"
           /></el-form-item>
-          <el-form-item label="负责人"
+          <el-form-item :label="fieldLabel('对接人')"
             ><el-input v-model="projectForm.owner"
           /></el-form-item>
           <el-form-item label="Brief"
@@ -4207,61 +4280,64 @@ onBeforeUnmount(() => {
         width="640px"
       >
         <el-form :model="cooperationForm" label-width="100px">
-          <el-form-item label="项目ID"
+          <el-form-item :label="fieldLabel('项目ID')"
             ><el-input-number
               v-model="cooperationForm.projectId"
               :min="1"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="资源ID"
+          <el-form-item :label="fieldLabel('资源ID')"
             ><el-input-number
               v-model="cooperationForm.resourceId"
               :min="1"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="合作形式"
+          <el-form-item :label="fieldLabel('合作形式')"
             ><el-input v-model="cooperationForm.cooperationType"
           /></el-form-item>
-          <el-form-item label="报价"
+          <el-form-item :label="fieldLabel('内容类型')"
+            ><el-input v-model="cooperationForm.contentType"
+          /></el-form-item>
+          <el-form-item :label="fieldLabel('报价')"
             ><el-input-number
               v-model="cooperationForm.quoteAmount"
               :min="0"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="币种"
+          <el-form-item :label="fieldLabel('币种')"
             ><el-input v-model="cooperationForm.currency"
           /></el-form-item>
-          <el-form-item label="曝光"
+          <el-form-item :label="fieldLabel('曝光')"
             ><el-input-number
               v-model="cooperationForm.impressions"
               :min="0"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="播放/阅读"
+          <el-form-item :label="fieldLabel('播放/阅读')"
             ><el-input-number
               v-model="cooperationForm.views"
               :min="0"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="转赞藏"
+          <el-form-item :label="fieldLabel('转赞藏')"
             ><el-input-number
               v-model="cooperationForm.engagementCount"
               :min="0"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="评论"
+          <el-form-item :label="fieldLabel('评论')"
             ><el-input-number
               v-model="cooperationForm.commentsCount"
               :min="0"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="点击"
+          <el-form-item :label="fieldLabel('点击')"
             ><el-input-number
               v-model="cooperationForm.clicks"
               :min="0"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="转化"
+          <el-form-item :label="fieldLabel('转化')"
             ><el-input-number
               v-model="cooperationForm.conversions"
               :min="0"
@@ -4274,14 +4350,14 @@ onBeforeUnmount(() => {
               :step="0.1"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="团队评分"
+          <el-form-item :label="fieldLabel('团队评分')"
             ><el-input-number
               v-model="cooperationForm.teamRating"
               :min="0"
               :max="5"
               class="w-full!"
           /></el-form-item>
-          <el-form-item label="发布日期">
+          <el-form-item :label="fieldLabel('发布日期')">
             <el-date-picker
               v-model="cooperationForm.releaseDate"
               value-format="YYYY-MM-DD"
@@ -4289,16 +4365,16 @@ onBeforeUnmount(() => {
               class="w-full!"
             />
           </el-form-item>
-          <el-form-item label="发布链接"
+          <el-form-item :label="fieldLabel('发布链接')"
             ><el-input v-model="cooperationForm.deliverableLinks"
           /></el-form-item>
-          <el-form-item label="状态"
+          <el-form-item :label="fieldLabel('状态')"
             ><el-input v-model="cooperationForm.status"
           /></el-form-item>
-          <el-form-item label="交付状态"
+          <el-form-item :label="fieldLabel('交付状态')"
             ><el-input v-model="cooperationForm.deliverableStatus"
           /></el-form-item>
-          <el-form-item label="备注"
+          <el-form-item :label="fieldLabel('备注')"
             ><el-input v-model="cooperationForm.notes" type="textarea"
           /></el-form-item>
         </el-form>
@@ -5905,6 +5981,10 @@ onBeforeUnmount(() => {
   z-index: 6001 !important;
 }
 
+:global(.import-project-date-popper) {
+  z-index: 6001 !important;
+}
+
 .import-preview-more {
   margin: 10px 0 0;
   color: #64748b;
@@ -6091,42 +6171,6 @@ onBeforeUnmount(() => {
   color: #7a7d86;
   font-size: 12px;
   line-height: 1.5;
-}
-.import-sync-progress {
-  display: grid;
-  gap: 16px;
-}
-.import-sync-heading {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-.import-sync-heading strong,
-.import-sync-heading span {
-  display: block;
-}
-.import-sync-heading span {
-  margin-top: 5px;
-  color: #73767e;
-  font-size: 13px;
-}
-.import-sync-stages {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  color: #9a9da5;
-  font-size: 12px;
-  text-align: center;
-}
-.import-sync-stages .done {
-  color: #2f63e7;
-  font-weight: 650;
-}
-.import-sync-tip {
-  margin: 0;
-  color: #7a7d86;
-  font-size: 12px;
-  line-height: 1.6;
 }
 .center-header {
   display: flex;

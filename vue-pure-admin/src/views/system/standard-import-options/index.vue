@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { fieldLabel } from "@/utils/fieldI18n";
 import {
   createStandardImportOption,
   deleteStandardImportOption,
@@ -45,6 +46,13 @@ const fieldDefinitions = [
     label: "合作类型",
     description: "项目合作方式，对应模板 collaborationType 列。",
     icon: "ri:shake-hands-line",
+    readonly: false
+  },
+  {
+    key: "contentType",
+    label: "内容类型",
+    description: "合作内容分类，对应模板 contentType 列。",
+    icon: "ri:movie-2-line",
     readonly: false
   }
 ];
@@ -205,7 +213,7 @@ onMounted(loadData);
       width="460px"
     >
       <el-form label-position="top">
-        <el-form-item label="字段">
+        <el-form-item :label="fieldLabel('字段')">
           <el-select v-model="form.fieldKey" class="w-full!" disabled>
             <el-option
               v-for="field in fieldDefinitions"
@@ -215,7 +223,7 @@ onMounted(loadData);
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="选项值" required>
+        <el-form-item :label="fieldLabel('选项值')" required>
           <el-input
             v-model="form.value"
             maxlength="128"
@@ -224,7 +232,7 @@ onMounted(loadData);
             @keyup.enter="saveOption"
           />
         </el-form-item>
-        <el-form-item label="排序">
+        <el-form-item :label="fieldLabel('排序')">
           <el-input-number
             v-model="form.sortOrder"
             :min="0"

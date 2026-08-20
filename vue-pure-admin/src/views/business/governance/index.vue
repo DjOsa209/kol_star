@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getGovernanceRules, saveGovernanceRule } from "@/api/business";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "BusinessGovernance" });
 
@@ -601,12 +602,12 @@ onMounted(loadData);
             </div>
             <el-row :gutter="14">
               <el-col :xs="24" :md="12">
-                <el-form-item label="规则名称">
+                <el-form-item :label="fieldLabel('规则名称')">
                   <el-input v-model="activeRule.name" />
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="12">
-                <el-form-item label="最近更新">
+                <el-form-item :label="fieldLabel('最近更新')">
                   <el-input
                     :model-value="updatedText(activeRule.updatedAt)"
                     disabled
@@ -789,19 +790,19 @@ onMounted(loadData);
                   <strong>{{ level }} 级</strong>
                   <el-tag effect="plain">{{ trustBadgeMap[level] }}</el-tag>
                 </div>
-                <el-form-item label="判定来源">
+                <el-form-item :label="fieldLabel('判定来源')">
                   <el-input
                     v-model="activeRule.content[level].source"
                     placeholder="来源类型"
                   />
                 </el-form-item>
-                <el-form-item label="证据要求">
+                <el-form-item :label="fieldLabel('证据要求')">
                   <el-input
                     v-model="activeRule.content[level].evidence"
                     placeholder="截图、链接、同步记录等"
                   />
                 </el-form-item>
-                <el-form-item label="适用字段">
+                <el-form-item :label="fieldLabel('适用字段')">
                   <el-select
                     v-model="activeRule.content[level].appliesTo"
                     multiple
@@ -820,7 +821,7 @@ onMounted(loadData);
                     />
                   </el-select>
                 </el-form-item>
-                <el-form-item label="折算系数">
+                <el-form-item :label="fieldLabel('折算系数')">
                   <el-input-number
                     v-model="activeRule.content[level].factor"
                     :min="0"
@@ -843,7 +844,7 @@ onMounted(loadData);
             </div>
             <el-row :gutter="14">
               <el-col :xs="24" :md="8">
-                <el-form-item label="最低推荐等级">
+                <el-form-item :label="fieldLabel('最低推荐等级')">
                   <el-select v-model="activeRule.content.minimumLevel">
                     <el-option
                       v-for="level in ['S', 'A', 'B', 'C', 'D']"
@@ -855,7 +856,7 @@ onMounted(loadData);
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="8">
-                <el-form-item label="资料完整度下限">
+                <el-form-item :label="fieldLabel('资料完整度下限')">
                   <el-input-number
                     v-model="activeRule.content.minimumCompleteness"
                     :min="0"
@@ -865,7 +866,7 @@ onMounted(loadData);
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="8">
-                <el-form-item label="最长未更新天数">
+                <el-form-item :label="fieldLabel('最长未更新天数')">
                   <el-input-number
                     v-model="activeRule.content.maxDaysSinceUpdate"
                     :min="1"
@@ -875,7 +876,7 @@ onMounted(loadData);
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="12">
-                <el-form-item label="超预算策略">
+                <el-form-item :label="fieldLabel('超预算策略')">
                   <el-radio-group v-model="activeRule.content.overBudgetPolicy">
                     <el-radio-button value="filter">过滤</el-radio-button>
                     <el-radio-button value="downgrade">降权</el-radio-button>
@@ -883,11 +884,11 @@ onMounted(loadData);
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="12">
-                <el-form-item label="高风险策略">
+                <el-form-item :label="fieldLabel('高风险策略')">
                   <el-select v-model="activeRule.content.highRiskPolicy">
-                    <el-option label="降权或过滤" value="downgrade_or_filter" />
-                    <el-option label="仅提示风险" value="warn_only" />
-                    <el-option label="直接过滤" value="filter" />
+                    <el-option :label="fieldLabel('降权或过滤')" value="downgrade_or_filter" />
+                    <el-option :label="fieldLabel('仅提示风险')" value="warn_only" />
+                    <el-option :label="fieldLabel('直接过滤')" value="filter" />
                   </el-select>
                 </el-form-item>
               </el-col>
@@ -922,7 +923,7 @@ onMounted(loadData);
             </div>
             <el-row :gutter="14">
               <el-col :xs="24" :md="8">
-                <el-form-item label="评分下降预警">
+                <el-form-item :label="fieldLabel('评分下降预警')">
                   <el-input-number
                     v-model="activeRule.content.scoreDrop"
                     :min="1"
@@ -932,7 +933,7 @@ onMounted(loadData);
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="8">
-                <el-form-item label="报价高于同类均值">
+                <el-form-item :label="fieldLabel('报价高于同类均值')">
                   <el-input-number
                     v-model="activeRule.content.costAbovePeerAveragePercent"
                     :min="1"
@@ -942,7 +943,7 @@ onMounted(loadData);
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="8">
-                <el-form-item label="交付延迟次数">
+                <el-form-item :label="fieldLabel('交付延迟次数')">
                   <el-input-number
                     v-model="activeRule.content.deliveryDelayTimes"
                     :min="1"

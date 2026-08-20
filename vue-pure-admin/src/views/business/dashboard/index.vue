@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import echarts from "@/plugins/echarts";
 import { getBusinessDashboard } from "@/api/business";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "BusinessDashboard" });
 
@@ -376,7 +377,7 @@ onBeforeUnmount(() => {
         class="metric-card"
         :style="{ '--tone': item.color }"
       >
-        <span>{{ item.label }}</span>
+        <span>{{ fieldLabel(item.label) }}</span>
         <strong>{{ item.value }}</strong>
         <small>{{ item.hint }}</small>
         <svg viewBox="0 0 104 40" aria-hidden="true">

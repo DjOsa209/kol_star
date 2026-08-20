@@ -1,5 +1,5 @@
 -- kol-admin database bootstrap bundle
--- Generated from backend/migrations/001_init.sql through 030_project_status_values.sql.
+-- Generated from backend/migrations/001_init.sql through 033_sso_default_role.sql.
 -- Execute with: mysql -uroot -p < migrations/all.sql
 
 
@@ -1637,3 +1637,135 @@ set status = case
   when lower(trim(status)) in ('completed') or trim(status) in ('已完成', '已结束', '结束') then '已结束'
   else '未开始'
 end;
+
+-- ============================================================
+-- Source: migrations/031_standard_project_name_content_type.sql
+-- ============================================================
+
+use kol_admin;
+
+drop procedure if exists add_standard_project_template_column;
+
+delimiter $$
+
+create procedure add_standard_project_template_column()
+begin
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = database()
+       and table_name = 'biz_cooperations'
+       and column_name = 'content_type'
+  ) then
+    alter table biz_cooperations
+      add column content_type varchar(64) not null default '' after cooperation_type;
+  end if;
+end$$
+
+delimiter ;
+
+call add_standard_project_template_column();
+
+drop procedure if exists add_standard_project_template_column;
+
+insert into biz_standard_import_options (field_key, value, status, source, sort_order)
+values
+  ('contentType', '生活记录类', '启用', '系统预置', 10),
+  ('contentType', '娱乐搞笑类', '启用', '系统预置', 20),
+  ('contentType', '兴趣圈层类', '启用', '系统预置', 30),
+  ('contentType', '消费种草类', '启用', '系统预置', 40),
+  ('contentType', '商业/品牌类', '启用', '系统预置', 50),
+  ('contentType', '新闻资讯类', '启用', '系统预置', 60),
+  ('contentType', '动画/创意类', '启用', '系统预置', 70),
+  ('contentType', '短剧类', '启用', '系统预置', 80)
+on duplicate key update
+  status = '启用',
+  source = '系统预置',
+  sort_order = values(sort_order);
+
+-- ============================================================
+-- Source: migrations/032_sso_users.sql
+-- ============================================================
+
+use kol_admin;
+
+drop procedure if exists add_sso_user_columns;
+
+delimiter $$
+
+create procedure add_sso_user_columns()
+begin
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = database() and table_name = 'sys_users' and column_name = 'auth_provider'
+  ) then
+    alter table sys_users add column auth_provider varchar(32) not null default 'local' after remark;
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = database() and table_name = 'sys_users' and column_name = 'external_subject'
+  ) then
+    alter table sys_users add column external_subject varchar(128) null after auth_provider;
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = database() and table_name = 'sys_users' and column_name = 'employee_no'
+  ) then
+    alter table sys_users add column employee_no varchar(64) not null default '' after external_subject;
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = database() and table_name = 'sys_users' and column_name = 'department_name'
+  ) then
+    alter table sys_users add column department_name varchar(128) not null default '' after employee_no;
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = database() and table_name = 'sys_users' and column_name = 'last_login_at'
+  ) then
+    alter table sys_users add column last_login_at datetime null after department_name;
+  end if;
+  if not exists (
+    select 1 from information_schema.statistics
+     where table_schema = database() and table_name = 'sys_users' and index_name = 'uk_sys_users_sso_identity'
+  ) then
+    alter table sys_users add unique key uk_sys_users_sso_identity (auth_provider, external_subject);
+  end if;
+end$$
+
+delimiter ;
+
+call add_sso_user_columns();
+
+drop procedure if exists add_sso_user_columns;
+
+-- ============================================================
+-- Source: migrations/033_sso_default_role.sql
+-- ============================================================
+
+use kol_admin;
+
+-- SSO users default to the non-administrator operations role.
+insert into sys_roles (name, code, status, remark)
+values ('运营', 'operation', 1, '企业 SSO 新用户默认角色')
+on duplicate key update status = values(status);
+
+-- The default role can use business features, but cannot access system or monitor menus.
+insert ignore into sys_role_menus (role_id, menu_id)
+select r.id, m.id
+  from sys_roles r
+  join sys_menus m on m.id = 900 or m.parent_id = 900
+ where r.code = 'operation' and r.status = 1;
+
+-- Repair SSO accounts created before default-role assignment was configurable.
+insert ignore into sys_user_roles (user_id, role_id)
+select u.id, r.id
+  from sys_users u
+  join sys_roles r on r.code = 'operation' and r.status = 1
+ where u.auth_provider = 'uac'
+   and not exists (
+     select 1
+       from sys_user_roles ur
+       join sys_roles assigned_role on assigned_role.id = ur.role_id
+      where ur.user_id = u.id and assigned_role.status = 1
+   );

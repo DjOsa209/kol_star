@@ -15,10 +15,11 @@ import { useUserStoreHook } from "@/store/modules/user";
 import { initRouter, getTopMenu } from "@/router/utils";
 import { bg, avatar, illustration } from "./utils/static";
 import { ReImageVerify } from "@/components/ReImageVerify";
-import { ref, toRaw, reactive, watch } from "vue";
+import { onMounted, ref, toRaw, reactive, watch } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { useTranslationLang } from "@/layout/hooks/useTranslationLang";
 import { useDataThemeChange } from "@/layout/hooks/useDataThemeChange";
+import { getAuthConfig } from "@/api/user";
 
 import dayIcon from "@/assets/svg/day.svg?component";
 import darkIcon from "@/assets/svg/dark.svg?component";
@@ -40,6 +41,10 @@ const loading = ref(false);
 const checked = ref(false);
 const disabled = ref(false);
 const ruleFormRef = ref<FormInstance>();
+const ssoEnabled = ref(false);
+const ssoLoginUrl = ref("/api/auth/sso/login");
+const authConfigLoaded = ref(false);
+const adminLoginVisible = ref(false);
 
 const { t } = useI18n();
 const { initStorage } = useLayout();
@@ -91,6 +96,24 @@ const onLogin = async (formEl: FormInstance | undefined) => {
   });
 };
 
+function onSSOLogin() {
+  window.location.assign(ssoLoginUrl.value || "/api/auth/sso/login");
+}
+
+onMounted(async () => {
+  try {
+    const response = await getAuthConfig();
+    if (response.code === 0) {
+      ssoEnabled.value = Boolean(response.data?.ssoEnabled);
+      ssoLoginUrl.value = response.data?.ssoLoginUrl || "/api/auth/sso/login";
+    }
+  } catch {
+    ssoEnabled.value = false;
+  } finally {
+    authConfigLoaded.value = true;
+  }
+});
+
 const immediateDebounce: any = debounce(
   formRef => onLogin(formRef),
   1000,
@@ -100,6 +123,7 @@ const immediateDebounce: any = debounce(
 useEventListener(document, "keydown", ({ code }) => {
   if (
     ["Enter", "NumpadEnter"].includes(code) &&
+    (!ssoEnabled.value || adminLoginVisible.value) &&
     !disabled.value &&
     !loading.value
   )
@@ -177,7 +201,31 @@ watch(loginDay, value => {
             </h2>
           </Motion>
 
+          <Motion v-if="authConfigLoaded && ssoEnabled" :delay="80">
+            <div class="sso-login-block">
+              <el-button
+                class="w-full"
+                size="large"
+                type="primary"
+                @click="onSSOLogin"
+              >
+                <IconifyIconOnline icon="ri:shield-user-line" class="mr-2" />
+                企业 SSO 登录
+              </el-button>
+              <p>使用企业统一身份进入 XMP</p>
+              <el-divider>或</el-divider>
+              <el-button
+                link
+                type="primary"
+                @click="adminLoginVisible = !adminLoginVisible"
+              >
+                {{ adminLoginVisible ? "收起管理员登录" : "管理员账号登录" }}
+              </el-button>
+            </div>
+          </Motion>
+
           <el-form
+            v-show="!ssoEnabled || adminLoginVisible"
             ref="ruleFormRef"
             :model="ruleForm"
             :rules="loginRules"
@@ -293,6 +341,21 @@ watch(loginDay, value => {
 <style lang="scss" scoped>
 :deep(.el-input-group__append, .el-input-group__prepend) {
   padding: 0;
+}
+
+.sso-login-block {
+  margin: 18px 0 14px;
+  text-align: center;
+
+  p {
+    margin: 8px 0 0;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+  }
+
+  :deep(.el-divider) {
+    margin: 18px 0 10px;
+  }
 }
 
 .translation {

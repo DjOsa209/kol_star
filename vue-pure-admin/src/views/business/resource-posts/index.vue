@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { getResourcePosts } from "@/api/business";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "BusinessResourcePosts" });
 
@@ -172,10 +173,10 @@ onMounted(loadData);
 
     <section class="filter-panel">
       <el-form :model="search" inline>
-        <el-form-item label="资源ID">
+        <el-form-item :label="fieldLabel('资源ID')">
           <el-input-number v-model="search.resourceId" :min="0" />
         </el-form-item>
-        <el-form-item label="平台">
+        <el-form-item :label="fieldLabel('平台')">
           <el-select
             v-model="search.platform"
             clearable
@@ -187,7 +188,7 @@ onMounted(loadData);
             <el-option label="TikTok" value="TikTok" />
           </el-select>
         </el-form-item>
-        <el-form-item label="关键词">
+        <el-form-item :label="fieldLabel('关键词')">
           <el-input
             v-model="search.keyword"
             clearable

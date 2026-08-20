@@ -58,6 +58,11 @@ func TestRedactSensitiveText(t *testing.T) {
 	if got != `https://www.googleapis.com/youtube/v3/channels?forHandle=%40demo&key=[REDACTED]&part=snippet` {
 		t.Fatalf("redactSensitiveText() = %q", got)
 	}
+	jsonInput := `{"password":"admin123","accessToken":"token-value","rtoken":"uac-token"}`
+	jsonGot := redactSensitiveText(jsonInput)
+	if strings.Contains(jsonGot, "admin123") || strings.Contains(jsonGot, "token-value") || strings.Contains(jsonGot, "uac-token") {
+		t.Fatalf("redactSensitiveText() leaked JSON credentials: %s", jsonGot)
+	}
 }
 
 func TestAPIPrefixRoutesToBackendHandlers(t *testing.T) {

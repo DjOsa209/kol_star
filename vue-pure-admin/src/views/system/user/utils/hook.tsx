@@ -110,6 +110,25 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
       minWidth: 130
     },
     {
+      label: "认证方式",
+      prop: "authProvider",
+      minWidth: 100,
+      cellRenderer: ({ row, props }) => (
+        <el-tag
+          size={props.size}
+          type={row.authProvider === "uac" ? "success" : "info"}
+          effect="plain"
+        >
+          {row.authProvider === "uac" ? "企业 SSO" : "本地账号"}
+        </el-tag>
+      )
+    },
+    {
+      label: "工号",
+      prop: "employeeNo",
+      minWidth: 100
+    },
+    {
       label: "性别",
       prop: "sex",
       minWidth: 90,

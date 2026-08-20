@@ -213,28 +213,32 @@ function initRouter() {
         resolve(router);
       });
     } else {
-      return new Promise(resolve => {
-        getAsyncRoutes().then(({ code, data }) => {
+      return new Promise((resolve, reject) => {
+        getAsyncRoutes()
+          .then(({ code, data }) => {
+            if (code === 0) {
+              handleAsyncRoutes(cloneDeep(data));
+              storageLocal().setItem(key, data);
+              resolve(router);
+            } else {
+              resolve(router);
+            }
+          })
+          .catch(reject);
+      });
+    }
+  } else {
+    return new Promise((resolve, reject) => {
+      getAsyncRoutes()
+        .then(({ code, data }) => {
           if (code === 0) {
             handleAsyncRoutes(cloneDeep(data));
-            storageLocal().setItem(key, data);
             resolve(router);
           } else {
             resolve(router);
           }
-        });
-      });
-    }
-  } else {
-    return new Promise(resolve => {
-      getAsyncRoutes().then(({ code, data }) => {
-        if (code === 0) {
-          handleAsyncRoutes(cloneDeep(data));
-          resolve(router);
-        } else {
-          resolve(router);
-        }
-      });
+        })
+        .catch(reject);
     });
   }
 }

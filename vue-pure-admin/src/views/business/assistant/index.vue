@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
+import { fieldLabel } from "@/utils/fieldI18n";
 import {
   addProjectResource,
   createMarketOption,
@@ -1130,7 +1131,7 @@ onBeforeUnmount(stopTimer);
         </section>
 
         <el-tabs v-model="profileTab" class="profile-tabs">
-          <el-tab-pane label="达人概览" name="overview">
+          <el-tab-pane :label="fieldLabel('达人概览')" name="overview">
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
@@ -1203,7 +1204,7 @@ onBeforeUnmount(stopTimer);
             </section>
           </el-tab-pane>
 
-          <el-tab-pane label="历史合作" name="history">
+          <el-tab-pane :label="fieldLabel('历史合作')" name="history">
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
@@ -1222,15 +1223,15 @@ onBeforeUnmount(stopTimer);
                 />
                 <el-table-column
                   prop="cooperationType"
-                  label="合作形式"
+                  :label="fieldLabel('合作形式')"
                   width="130"
                 />
-                <el-table-column label="报价" width="130">
+                <el-table-column :label="fieldLabel('报价')" width="130">
                   <template #default="{ row }">
                     {{ moneyWithCurrency(row.quoteAmount, row.currency) }}
                   </template>
                 </el-table-column>
-                <el-table-column label="触达" width="120">
+                <el-table-column :label="fieldLabel('触达')" width="120">
                   <template #default="{ row }">
                     {{ formatCount(primaryReach(row)) }}
                   </template>
@@ -1238,12 +1239,12 @@ onBeforeUnmount(stopTimer);
                 <el-table-column prop="roi" label="ROI" width="90" />
                 <el-table-column
                   prop="teamRating"
-                  label="团队评分"
+                  :label="fieldLabel('团队评分')"
                   width="110"
                 />
                 <el-table-column
                   prop="notes"
-                  label="复盘备注"
+                  :label="fieldLabel('复盘备注')"
                   min-width="200"
                 />
               </el-table>
@@ -1254,7 +1255,7 @@ onBeforeUnmount(stopTimer);
             </section>
           </el-tab-pane>
 
-          <el-tab-pane label="内容交付" name="delivery">
+          <el-tab-pane :label="fieldLabel('内容交付')" name="delivery">
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
@@ -1301,7 +1302,7 @@ onBeforeUnmount(stopTimer);
             </section>
           </el-tab-pane>
 
-          <el-tab-pane label="平台作品" name="posts">
+          <el-tab-pane :label="fieldLabel('平台作品')" name="posts">
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>

@@ -13,6 +13,7 @@ var standardImportFieldLabels = map[string]string{
 	"collaboratorTier": "层级",
 	"platform":         "平台",
 	"cooperationType":  "合作类型",
+	"contentType":      "内容类型",
 }
 
 var systemCalculatedStandardImportFields = map[string]bool{

@@ -22,6 +22,7 @@ var excelContentAliases = []struct {
 	field   string
 	aliases []string
 }{
+	{"resourceName", []string{"Name"}},
 	{"influencer", []string{"collaboratorName"}},
 	{"resourceType", []string{"resourceType"}},
 	{"category", []string{"category"}},
@@ -31,6 +32,7 @@ var excelContentAliases = []struct {
 	{"platform", []string{"platform"}},
 	{"cooperationType", []string{"collaborationType"}},
 	{"deliverableLinks", []string{"contentUrl"}},
+	{"contentType", []string{"contentType"}},
 	{"quoteAmount", []string{"cost"}},
 	{"views", []string{"views"}},
 	{"engagementCount", []string{"engagement"}},
@@ -42,18 +44,19 @@ var excelContentAliases = []struct {
 }
 
 var standardProjectImportHeaders = []string{
-	"标准字段", "collaboratorName", "resourceType", "category", "market", "audienceSize",
-	"collaboratorTier", "platform", "collaborationType", "contentUrl", "cost", "views",
+	"标准字段", "Name", "collaboratorName", "resourceType", "category", "market", "audienceSize",
+	"collaboratorTier", "platform", "collaborationType", "contentUrl", "contentType", "cost", "views",
 	"engagement", "primaryContact", "owner", "vendor", "notes", "CPM",
 }
 
 var standardProjectImportLabels = []string{
-	"", "合作方", "类型", "领域", "市场", "粉丝数/访问量", "合作方层级", "平台", "合作类型",
-	"内容链接", "合作费用", "曝光量/播放量", "互动量", "联系方式", "对接人", "供应商", "备注", "",
+	"", "名称", "合作方", "类型", "领域", "市场", "粉丝数/访问量", "合作方层级", "平台", "合作类型",
+	"内容链接", "内容类型", "合作费用", "曝光量/播放量", "互动量", "联系方式", "对接人", "供应商", "备注", "",
 }
 
 var standardProjectImportScopes = []string{
 	"填写范畴",
+	"媒体名称\n达人名称",
 	"媒体官网链接\n创作者账号链接",
 	"KOL\n媒体\n艺术家",
 	"科技\n生活方式\n商业\n设计\n游戏\n摄影\n体育\n娱乐\n汽车\n财经\n教育\n大众媒体",
@@ -63,11 +66,12 @@ var standardProjectImportScopes = []string{
 	"网站\n播客\n电视\n报刊\nYouTube\nTikTok\nInstagram\nFacebook\nX\nLinkedIn\nReddit",
 	"付费合作\n产品置换\n联盟合作\n活动合作\n采访合作",
 	"文章链接\n视频链接\n帖子链接\n内容链接\n发布链接",
+	"生活记录类\n娱乐搞笑类\n兴趣圈层类\n消费种草类\n商业/品牌类\n新闻资讯类\n动画/创意类\n短剧类",
 	"paid费用填写：实际支付金额\nseeding或不产生费用则填写：/",
 	"系统通过 contentUrl 自动回填播放量、曝光量或阅读量",
 	"系统通过 contentUrl 自动回填总互动量（点赞、评论、分享、收藏）",
 	"邮箱 / WhatsApp / Telegram",
-	"In-house项目负责人",
+	"In-house项目对接人",
 	"项目供应商",
 	"",
 	"",
@@ -75,6 +79,7 @@ var standardProjectImportScopes = []string{
 
 var standardProjectImportRules = []string{
 	"填写规范",
+	"填写对应合作方名称",
 	"1. 填写合作方对应网址\n-媒体填写官网链接\n-KOL填写达人对应平台主页\n\n2.一个资源对应一条URL，填写完整https链接",
 	"使用平台预设分类表述，不允许自由填写",
 	"使用平台预设分类表述，不允许新增自由分类",
@@ -84,6 +89,7 @@ var standardProjectImportRules = []string{
 	"1.使用平台标准名称，而非缩写\n2.媒体网站资源对应平台填写Website",
 	"使用系统预设选项",
 	"一个内容对应一条URL，填写完整https链接",
+	"生活记录类：日常vlog/旅行vlog/职场日常\n娱乐搞笑类：搞笑情景剧/恶搞整蛊/挑战类\n兴趣圈层类：科技数码测评/游戏实况/时尚穿搭/音乐原创/舞蹈原创\n消费种草类：开箱体验/购物分享/年度榜单\n商业/品牌类：品牌科普/品牌活动记录\n新闻资讯类：热点解读/社会纪实/科技前沿/本地资讯\n动画/创意类：原创动画/创意实验\n短剧类：都市情感短剧/家庭伦理剧/悬疑推理剧",
 	"填写实际支付美元金额（数字），币种统一使用Currency字段，不在金额中填写货币符号",
 	"无需填写。系统通过 contentUrl 解析；暂不支持的平台保留为空并记录同步提示。",
 	"无需填写。系统通过 contentUrl 解析；暂不支持的平台保留为空并记录同步提示。",
@@ -108,6 +114,7 @@ var defaultStandardProjectImportOptions = map[string][]string{
 	"collaboratorTier": {"头部", "腰部", "尾部"},
 	"platform":         {"Website", "播客", "电视", "报刊", "YouTube", "TikTok", "Instagram", "Facebook", "X", "LinkedIn", "Reddit"},
 	"cooperationType":  {"付费合作", "产品置换", "联盟合作", "活动合作", "采访合作"},
+	"contentType":      {"生活记录类", "娱乐搞笑类", "兴趣圈层类", "消费种草类", "商业/品牌类", "新闻资讯类", "动画/创意类", "短剧类"},
 }
 
 func (a *app) previewProjectExcelImport(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +254,7 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 	if err := book.MergeCell(sheet, "A1", "A2"); err != nil {
 		return nil, err
 	}
-	if err := book.MergeCell(sheet, "R1", "R2"); err != nil {
+	if err := book.MergeCell(sheet, "T1", "T2"); err != nil {
 		return nil, err
 	}
 
@@ -287,8 +294,8 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 		end   string
 		style int
 	}{
-		{"B1", "E2", yellow}, {"F1", "G2", gray}, {"H1", "M2", yellow},
-		{"N1", "Q2", green}, {"R1", "R1", gray},
+		{"B1", "F2", yellow}, {"G1", "H2", gray}, {"I1", "M2", yellow},
+		{"N1", "O2", gray}, {"P1", "S2", green}, {"T1", "T1", gray},
 	} {
 		if err := book.SetCellStyle(sheet, group.start, group.end, group.style); err != nil {
 			return nil, err
@@ -298,10 +305,10 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 	if err != nil {
 		return nil, err
 	}
-	if err := book.SetColStyle(sheet, "B:Q", editableStyle); err != nil {
+	if err := book.SetColStyle(sheet, "B:S", editableStyle); err != nil {
 		return nil, err
 	}
-	if err := book.SetCellStyle(sheet, "B5", "Q2000", editableStyle); err != nil {
+	if err := book.SetCellStyle(sheet, "B5", "S2000", editableStyle); err != nil {
 		return nil, err
 	}
 	costStyle, err := book.NewStyle(&excelize.Style{
@@ -311,7 +318,7 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 	if err != nil {
 		return nil, err
 	}
-	if err := book.SetCellStyle(sheet, "K5", "K2000", costStyle); err != nil {
+	if err := book.SetCellStyle(sheet, "M5", "M2000", costStyle); err != nil {
 		return nil, err
 	}
 	calculatedStyle, err := book.NewStyle(&excelize.Style{
@@ -323,7 +330,7 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 	}
 	// audienceSize、collaboratorTier、views、engagement 和 CPM 都由平台逻辑
 	// 自动回填。即使用户解除工作表保护，解析器也不会采纳这些列的值。
-	for _, column := range []string{"F", "G", "L", "M", "R"} {
+	for _, column := range []string{"G", "H", "N", "O", "T"} {
 		if err := book.SetCellStyle(sheet, column+"5", column+"2000", calculatedStyle); err != nil {
 			return nil, err
 		}
@@ -332,7 +339,7 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 		column string
 		field  string
 	}{
-		{"C", "resourceType"}, {"D", "category"}, {"H", "platform"}, {"I", "cooperationType"},
+		{"D", "resourceType"}, {"E", "category"}, {"I", "platform"}, {"J", "cooperationType"}, {"L", "contentType"},
 	} {
 		validation := excelize.NewDataValidation(true)
 		validation.Sqref = definition.column + "5:" + definition.column + "2000"
@@ -351,7 +358,8 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 		end   string
 		style int
 	}{
-		{"B1", "E2", yellow}, {"F1", "G2", gray}, {"H1", "M2", yellow}, {"N1", "Q2", green},
+		{"B1", "F2", yellow}, {"G1", "H2", gray}, {"I1", "M2", yellow},
+		{"N1", "O2", gray}, {"P1", "S2", green},
 	} {
 		if err := book.SetCellStyle(sheet, group.start, group.end, group.style); err != nil {
 			return nil, err
@@ -369,13 +377,13 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 	if err != nil {
 		return nil, err
 	}
-	if err := book.SetCellStyle(sheet, "B3", "R4", instructionStyle); err != nil {
+	if err := book.SetCellStyle(sheet, "B3", "T4", instructionStyle); err != nil {
 		return nil, err
 	}
 	if err := book.SetCellStyle(sheet, "A3", "A4", blue); err != nil {
 		return nil, err
 	}
-	widths := []float64{12, 25, 16, 16, 14, 18, 18, 16, 20, 32, 14, 18, 16, 24, 16, 16, 24, 12}
+	widths := []float64{12, 25, 25, 16, 16, 14, 18, 18, 16, 20, 32, 32, 14, 18, 16, 24, 16, 16, 24, 12}
 	for index, width := range widths {
 		column, _ := excelize.ColumnNumberToName(index + 1)
 		if err := book.SetColWidth(sheet, column, column, width); err != nil {
@@ -445,8 +453,8 @@ func populateStandardProjectExportRows(book *excelize.File, rows []map[string]an
 		values := []any{
 			nil,
 			excelTextOrNil(firstNonEmpty(stringValue(row["resourceName"]), profileURL)),
-			excelTextOrNil(row["resourceType"]), excelTextOrNil(row["category"]), excelTextOrNil(row["market"]), row["audienceSize"],
-			excelTextOrNil(row["collaboratorTier"]), excelTextOrNil(row["platform"]), excelTextOrNil(row["cooperationType"]), excelTextOrNil(contentValue),
+			excelTextOrNil(profileURL), excelTextOrNil(row["resourceType"]), excelTextOrNil(row["category"]), excelTextOrNil(row["market"]), row["audienceSize"],
+			excelTextOrNil(row["collaboratorTier"]), excelTextOrNil(row["platform"]), excelTextOrNil(row["cooperationType"]), excelTextOrNil(contentValue), excelTextOrNil(row["contentType"]),
 			row["cost"], row["views"], row["engagement"], excelTextOrNil(row["primaryContact"]),
 			excelTextOrNil(row["owner"]), excelTextOrNil(row["vendor"]), excelTextOrNil(row["notes"]), row["cpm"],
 		}
@@ -455,24 +463,24 @@ func populateStandardProjectExportRows(book *excelize.File, rows []map[string]an
 			return err
 		}
 		if profileURL != "" {
-			if err := book.SetCellHyperLink(sheet, fmt.Sprintf("B%d", rowNumber), profileURL, "External"); err != nil {
+			if err := book.SetCellHyperLink(sheet, fmt.Sprintf("C%d", rowNumber), profileURL, "External"); err != nil {
 				return err
 			}
 		}
 		if contentURL := firstHTTPExcelURL(contentValue); contentURL != "" {
-			if err := book.SetCellHyperLink(sheet, fmt.Sprintf("J%d", rowNumber), contentURL, "External"); err != nil {
+			if err := book.SetCellHyperLink(sheet, fmt.Sprintf("K%d", rowNumber), contentURL, "External"); err != nil {
 				return err
 			}
 		}
-		if err := book.SetCellStyle(sheet, fmt.Sprintf("K%d", rowNumber), fmt.Sprintf("K%d", rowNumber), editableNumberStyle); err != nil {
+		if err := book.SetCellStyle(sheet, fmt.Sprintf("M%d", rowNumber), fmt.Sprintf("M%d", rowNumber), editableNumberStyle); err != nil {
 			return err
 		}
-		for _, column := range []string{"F", "L", "M"} {
+		for _, column := range []string{"G", "N", "O"} {
 			if err := book.SetCellStyle(sheet, fmt.Sprintf("%s%d", column, rowNumber), fmt.Sprintf("%s%d", column, rowNumber), calculatedIntegerStyle); err != nil {
 				return err
 			}
 		}
-		if err := book.SetCellStyle(sheet, fmt.Sprintf("R%d", rowNumber), fmt.Sprintf("R%d", rowNumber), calculatedDecimalStyle); err != nil {
+		if err := book.SetCellStyle(sheet, fmt.Sprintf("T%d", rowNumber), fmt.Sprintf("T%d", rowNumber), calculatedDecimalStyle); err != nil {
 			return err
 		}
 		_ = book.SetRowHeight(sheet, rowNumber, 24)
@@ -588,6 +596,9 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 		inheritedInfluencer := excelCellString(row["influencer"]) == ""
 		if inheritedInfluencer {
 			row["influencer"] = previous["influencer"]
+			if excelCellString(row["resourceName"]) == "" {
+				row["resourceName"] = previous["resourceName"]
+			}
 			if excelCellString(row["resourceType"]) == "" {
 				row["resourceType"] = previous["resourceType"]
 			}
@@ -623,7 +634,7 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 			row["influencer"] = profileURL
 		}
 		row["platform"] = normalizeImportedPlatform(excelCellString(row["platform"]), excelCellString(row["influencer"]))
-		for _, field := range []string{"resourceType", "category", "platform", "cooperationType"} {
+		for _, field := range []string{"resourceType", "category", "platform", "cooperationType", "contentType"} {
 			value := excelCellString(row[field])
 			if value != "" && !standardImportOptionAllowed(options, field, value) {
 				errors = append(errors, fmt.Sprintf("%s 必须使用平台预设选项", headerForImportField(field)))
@@ -640,7 +651,10 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 		row["resourceType"] = resourceType
 		row["mediaOutlet"] = ""
 		if row["resourceType"] == "媒体" {
-			row["mediaOutlet"] = importedProfilePlaceholderName(excelCellString(row["influencer"]))
+			row["mediaOutlet"] = firstNonEmpty(
+				excelCellString(row["resourceName"]),
+				importedProfilePlaceholderName(excelCellString(row["influencer"])),
+			)
 			if excelCellString(row["platform"]) == "" {
 				row["platform"] = "Website"
 			}

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
+import { fieldLabel } from "@/utils/fieldI18n";
 import {
   getAIModelConfig,
   saveAIModelConfig,
@@ -181,12 +182,12 @@ onMounted(loadData);
 
         <el-row :gutter="14">
           <el-col :xs="24" :md="12">
-            <el-form-item label="配置名称">
+            <el-form-item :label="fieldLabel('配置名称')">
               <el-input v-model="form.name" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="供应商">
+            <el-form-item :label="fieldLabel('供应商')">
               <el-select
                 v-model="form.provider"
                 allow-create
@@ -204,7 +205,7 @@ onMounted(loadData);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="模型">
+            <el-form-item :label="fieldLabel('模型')">
               <el-input v-model="form.model" placeholder="如 gpt-4.1-mini" />
             </el-form-item>
           </el-col>
@@ -217,7 +218,7 @@ onMounted(loadData);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="更新 API Key">
+            <el-form-item :label="fieldLabel('更新 API Key')">
               <el-input
                 v-model="apiKeyInput"
                 type="password"
@@ -227,7 +228,7 @@ onMounted(loadData);
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="API Key 状态">
+            <el-form-item :label="fieldLabel('API Key 状态')">
               <div class="key-status">
                 <strong>{{
                   form.apiKeyConfigured ? "已配置" : "未配置"
@@ -257,7 +258,7 @@ onMounted(loadData);
 
         <el-row :gutter="14">
           <el-col :xs="24" :md="12">
-            <el-form-item label="超时时间（秒）">
+            <el-form-item :label="fieldLabel('超时时间（秒）')">
               <el-input-number
                 v-model="form.timeoutSeconds"
                 :min="5"

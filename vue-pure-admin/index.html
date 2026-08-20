@@ -79,6 +79,20 @@
       </style>
       <div class="loader"></div>
     </div>
+    <script>
+      if (window.location.pathname === "/sso/callback") {
+        const returnedFragment = window.location.hash.replace(/^#/, "");
+        const callbackFragment =
+          returnedFragment && !returnedFragment.startsWith("/")
+            ? `?${returnedFragment.replace(/^\?/, "")}`
+            : "";
+        window.history.replaceState(
+          null,
+          "",
+          `/${window.location.search}#/sso/callback${callbackFragment}`
+        );
+      }
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -11,6 +11,7 @@ import {
   type UserResult,
   type RefreshTokenResult,
   getLogin,
+  submitUACSSOCallback,
   refreshTokenApi
 } from "@/api/user";
 import { useMultiTagsStoreHook } from "./multiTags";
@@ -90,6 +91,21 @@ export const useUserStore = defineStore("pure-user", {
           .catch(error => {
             reject(error);
           });
+      });
+    },
+    /** 企业 SSO 登录 */
+    async loginBySSO(data) {
+      return new Promise<UserResult>((resolve, reject) => {
+        submitUACSSOCallback(data)
+          .then(data => {
+            if (data.code === 0) {
+              setToken(data.data);
+              resolve(data);
+            } else {
+              reject(data.message);
+            }
+          })
+          .catch(error => reject(error));
       });
     },
     /** 前端登出（不调用接口） */

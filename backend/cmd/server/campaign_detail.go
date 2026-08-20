@@ -151,6 +151,7 @@ func (a *app) projectResourceRows(ctx context.Context, projectID int) ([]map[str
 		        r.tier as collaboratorTier, r.contact as primaryContact,
 		        r.engagement_rate as engagementRate, r.score, r.level,
 		        ifnull(c.id, 0) as id, ifnull(c.cooperation_type, '') as cooperationType,
+		        ifnull(c.content_type, '') as contentType,
 		        ifnull(c.quote_amount, 0) as quoteAmount, ifnull(c.currency, 'USD') as currency,
 		        ifnull(c.status, '候选') as status, ifnull(c.deliverable_status, '未开始') as deliverableStatus,
 		        ifnull(c.impressions, 0) as impressions, ifnull(c.views, 0) as views,
@@ -185,7 +186,7 @@ func (a *app) projectCooperationRows(ctx context.Context, projectID int) ([]map[
 		        r.audience_size_unit as audienceSizeUnit, r.umv_month as umvMonth,
 		        r.tier as collaboratorTier, r.contact as primaryContact,
 		        r.engagement_rate as engagementRate, r.score, r.level,
-		        c.cooperation_type as cooperationType, c.owner, c.vendor, c.audience_segment as audienceSegment,
+		        c.cooperation_type as cooperationType, c.content_type as contentType, c.owner, c.vendor, c.audience_segment as audienceSegment,
 		        c.content_platform as contentPlatform,
 		        coalesce(nullif(c.content_cover_url, ''), nullif(c.content_cover_remote_url, ''), '') as contentCoverUrl,
 		        c.content_cover_remote_url as contentCoverRemoteUrl,
@@ -856,6 +857,7 @@ func standardProjectExportRow(project, source map[string]any) map[string]any {
 		"platform":         stringValue(source["platform"]),
 		"cooperationType":  stringValue(source["cooperationType"]),
 		"contentUrl":       firstNonEmpty(stringValue(source["finalLink"]), stringValue(source["deliverableLinks"])),
+		"contentType":      stringValue(source["contentType"]),
 		"cost":             cost,
 		"views":            views,
 		"engagement":       floatFromAny(source["engagementCount"]),
@@ -931,7 +933,7 @@ func buildProjectReportContentRows(posts, cooperations []map[string]any) []proje
 		seenURLs[strings.ToLower(strings.TrimSpace(contentURL))] = true
 		rows = append(rows, projectReportContentRow{
 			resourceName: stringValue(cooperation["resourceName"]), platform: stringValue(cooperation["platform"]),
-			contentType: stringValue(cooperation["cooperationType"]), title: stringValue(cooperation["creativeName"]),
+			contentType: firstNonEmpty(stringValue(cooperation["contentType"]), stringValue(cooperation["cooperationType"])), title: stringValue(cooperation["creativeName"]),
 			contentURL: contentURL, publishedAt: firstNonEmpty(stringValue(cooperation["publishTime"]), stringValue(cooperation["releaseDate"])),
 			views:      maxFloat(floatFromAny(cooperation["views"]), floatFromAny(cooperation["impressions"])),
 			engagement: floatFromAny(cooperation["engagementCount"]), comments: floatFromAny(cooperation["commentsCount"]),

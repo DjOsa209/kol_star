@@ -3,6 +3,7 @@ import { reactive, ref, computed, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import AddLine from "~icons/ri/add-line";
 import { getTagList, createTag } from "@/api/business";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "BusinessTags" });
 
@@ -154,20 +155,20 @@ onMounted(loadData);
 
     <el-dialog v-model="dialogVisible" title="新增标签" width="420px">
       <el-form :model="form" label-width="88px">
-        <el-form-item label="标签名称"
+        <el-form-item :label="fieldLabel('标签名称')"
           ><el-input v-model="form.name"
         /></el-form-item>
-        <el-form-item label="标签分类">
+        <el-form-item :label="fieldLabel('标签分类')">
           <el-select v-model="form.category" class="w-full!">
-            <el-option label="基础标签" value="基础标签" />
-            <el-option label="内容标签" value="内容标签" />
-            <el-option label="人群标签" value="人群标签" />
-            <el-option label="能力标签" value="能力标签" />
-            <el-option label="合作标签" value="合作标签" />
-            <el-option label="风险标签" value="风险标签" />
+            <el-option :label="fieldLabel('基础标签')" value="基础标签" />
+            <el-option :label="fieldLabel('内容标签')" value="内容标签" />
+            <el-option :label="fieldLabel('人群标签')" value="人群标签" />
+            <el-option :label="fieldLabel('能力标签')" value="能力标签" />
+            <el-option :label="fieldLabel('合作标签')" value="合作标签" />
+            <el-option :label="fieldLabel('风险标签')" value="风险标签" />
           </el-select>
         </el-form-item>
-        <el-form-item label="颜色"
+        <el-form-item :label="fieldLabel('颜色')"
           ><el-color-picker v-model="form.color"
         /></el-form-item>
       </el-form>

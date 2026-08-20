@@ -1,4 +1,3 @@
-import "@/utils/sso";
 import Cookies from "js-cookie";
 import { getConfig } from "@/config";
 import NProgress from "@/utils/progress";
@@ -110,7 +109,7 @@ export function resetRouter() {
 }
 
 /** 路由白名单 */
-const whiteList = ["/login"];
+const whiteList = ["/login", "/sso/callback"];
 
 const { VITE_HIDE_HOME } = import.meta.env;
 
