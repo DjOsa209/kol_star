@@ -109,12 +109,14 @@ var excelNumericFields = map[string]bool{
 }
 
 var defaultStandardProjectImportOptions = map[string][]string{
-	"resourceType":     {"KOL", "媒体", "艺术家"},
-	"category":         {"科技", "生活方式", "商业", "设计", "游戏", "摄影", "体育", "娱乐", "汽车", "财经", "教育", "大众媒体"},
-	"collaboratorTier": {"头部", "腰部", "尾部"},
-	"platform":         {"Website", "播客", "电视", "报刊", "YouTube", "TikTok", "Instagram", "Facebook", "X", "LinkedIn", "Reddit"},
-	"cooperationType":  {"付费合作", "产品置换", "联盟合作", "活动合作", "采访合作"},
-	"contentType":      {"生活记录类", "娱乐搞笑类", "兴趣圈层类", "消费种草类", "商业/品牌类", "新闻资讯类", "动画/创意类", "短剧类"},
+	"resourceType":       {"KOL", "媒体", "艺术家"},
+	"category":           {"科技", "生活方式", "商业", "设计", "游戏", "摄影", "体育", "娱乐", "汽车", "财经", "教育", "大众媒体"},
+	"collaboratorTier":   {"头部", "腰部", "尾部"},
+	"platform":           {"Website", "播客", "电视", "报刊", "YouTube", "TikTok", "Instagram", "Facebook", "X", "LinkedIn", "Reddit"},
+	"cooperationType":    {"付费合作", "产品置换", "联盟合作", "活动合作", "采访合作"},
+	"contentType":        {"生活记录类", "娱乐搞笑类", "兴趣圈层类", "消费种草类", "商业/品牌类", "新闻资讯类", "动画/创意类", "短剧类"},
+	"projectDivision":    {"总部_公关", "总部_整合营销", "总部_创意", "总部_达人中台", "区域"},
+	"projectProductLine": {"NOTE 60 Series", "NOTE EDGE", "GT 50 Pro", "HOT 70 Series", "ZClip2 Pro", "XEH1", "XPAD 30 Series", "XPAD Edge", "XBook B14", "XBook 14 Neo", "GTWatch 5 Pro"},
 }
 
 func (a *app) previewProjectExcelImport(w http.ResponseWriter, r *http.Request) {

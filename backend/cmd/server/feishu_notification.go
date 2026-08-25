@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -50,6 +51,11 @@ type projectImportSyncResult struct {
 	ContentSynced int
 	Screenshots   int
 	WarningCount  int
+}
+
+type projectImportNotificationDelivery struct {
+	Status  string
+	Message string
 }
 
 func newFeishuClient(cfg FeishuConfig, client *http.Client) *feishuClient {
@@ -285,30 +291,57 @@ func validateFeishuWebhookURL(value string) error {
 	return nil
 }
 
-func (a *app) notifyProjectImportCompletion(notification projectImportNotification, result projectImportSyncResult) error {
+func (a *app) notifyProjectImportCompletion(notification projectImportNotification, result projectImportSyncResult) projectImportNotificationDelivery {
 	cfg := a.Config().Feishu
 	if !cfg.ApplicationEnabled && !cfg.WebhookEnabled {
-		return nil
+		log.Printf("[project-import][batch=%s][feishu] skipped: notification disabled", notification.BatchID)
+		return projectImportNotificationDelivery{Status: "未启用", Message: "飞书通知未启用，未发送"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	client := newFeishuClient(cfg, nil)
 	message := buildProjectImportFeishuMessage(cfg, notification, result)
-	var sendErrors []error
+	var channelResults []string
+	attempted := 0
+	succeeded := 0
 	if cfg.ApplicationEnabled {
+		attempted++
+		log.Printf("[project-import][batch=%s][feishu][application] sending", notification.BatchID)
 		var email string
 		if err := a.DB().QueryRowContext(ctx, `select coalesce(email, '') from sys_users where id = ?`, notification.UserID).Scan(&email); err != nil {
-			sendErrors = append(sendErrors, fmt.Errorf("读取导入用户邮箱：%w", err))
+			message := redactSensitiveText(fmt.Sprintf("读取导入用户邮箱：%v", err))
+			channelResults = append(channelResults, "应用机器人失败："+message)
+			log.Printf("[project-import][batch=%s][feishu][application] failed: %s", notification.BatchID, message)
 		} else if err := client.sendToEmail(ctx, email, message); err != nil {
-			sendErrors = append(sendErrors, err)
+			failure := redactSensitiveText(err.Error())
+			channelResults = append(channelResults, "应用机器人失败："+failure)
+			log.Printf("[project-import][batch=%s][feishu][application] failed: %s", notification.BatchID, failure)
+		} else {
+			succeeded++
+			channelResults = append(channelResults, "应用机器人发送成功")
+			log.Printf("[project-import][batch=%s][feishu][application] sent", notification.BatchID)
 		}
 	}
 	if cfg.WebhookEnabled {
+		attempted++
+		log.Printf("[project-import][batch=%s][feishu][webhook] sending", notification.BatchID)
 		if err := client.sendWebhook(ctx, cfg.WebhookURL, message); err != nil {
-			sendErrors = append(sendErrors, err)
+			failure := redactSensitiveText(err.Error())
+			channelResults = append(channelResults, "群机器人失败："+failure)
+			log.Printf("[project-import][batch=%s][feishu][webhook] failed: %s", notification.BatchID, failure)
+		} else {
+			succeeded++
+			channelResults = append(channelResults, "群机器人发送成功")
+			log.Printf("[project-import][batch=%s][feishu][webhook] sent", notification.BatchID)
 		}
 	}
-	return errors.Join(sendErrors...)
+	status := "发送失败"
+	if succeeded == attempted {
+		status = "发送成功"
+	} else if succeeded > 0 {
+		status = "部分成功"
+	}
+	return projectImportNotificationDelivery{Status: status, Message: strings.Join(channelResults, "；")}
 }
 
 func buildProjectImportFeishuMessage(cfg FeishuConfig, notification projectImportNotification, result projectImportSyncResult) string {

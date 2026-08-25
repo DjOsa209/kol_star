@@ -8,12 +8,26 @@ import (
 )
 
 var standardImportFieldLabels = map[string]string{
-	"resourceType":     "类型",
-	"category":         "领域",
-	"collaboratorTier": "层级",
-	"platform":         "平台",
-	"cooperationType":  "合作类型",
-	"contentType":      "内容类型",
+	"resourceType":       "类型",
+	"category":           "领域",
+	"collaboratorTier":   "层级",
+	"platform":           "平台",
+	"cooperationType":    "合作类型",
+	"contentType":        "内容类型",
+	"projectDivision":    "项目一级分类",
+	"projectProductLine": "项目产品线",
+}
+
+func (a *app) businessProjectNameOptions(w http.ResponseWriter, r *http.Request) {
+	options, err := a.standardImportOptions(r.Context())
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{
+		"divisions":    options["projectDivision"],
+		"productLines": options["projectProductLine"],
+	})
 }
 
 var systemCalculatedStandardImportFields = map[string]bool{

@@ -4123,7 +4123,9 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 	for resourceID := range resourceIDs {
 		importedResourceIDs = append(importedResourceIDs, int(resourceID))
 	}
+	log.Printf("[project-import][batch=%s] committed: project=%d imported=%d profiles=%d content=%d createdResources=%d matchedResources=%d createdCooperations=%d updatedCooperations=%d skipped=%d failed=%d syncResources=%d", batchID, projectID, imported, importedProfiles, importedContent, createdResources, len(matchedResourceIDs), createdCooperations, updatedCooperations, skippedCooperations, len(errors), len(importedResourceIDs))
 	backgroundSyncStarted := false
+	var backgroundSyncJobID int64
 	if shouldStartImportedProjectSync(len(importedResourceIDs)) {
 		result, jobErr := a.DB().ExecContext(context.Background(),
 			`insert into biz_platform_sync_jobs
@@ -4153,6 +4155,8 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 				Failed:              len(errors),
 			}
 			backgroundSyncStarted = true
+			backgroundSyncJobID = jobID
+			log.Printf("[project-import][batch=%s][job=%d] queued: project=%d resources=%d feishuEnabled=%t", batchID, jobID, projectID, len(importedResourceIDs), a.Config().Feishu.ApplicationEnabled || a.Config().Feishu.WebhookEnabled)
 			go a.runImportedProjectSync(int(jobID), batchID, importedResourceIDs, notification)
 		}
 	}
@@ -4172,6 +4176,7 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 		"removedContent":            removedContent,
 		"removedResources":          removedResources,
 		"backgroundSyncStarted":     backgroundSyncStarted,
+		"backgroundSyncJobId":       backgroundSyncJobID,
 		"feishuNotificationEnabled": a.Config().Feishu.ApplicationEnabled || a.Config().Feishu.WebhookEnabled,
 		"errors":                    errors,
 	})
@@ -4189,22 +4194,23 @@ func shouldStartImportedProjectSync(resourceCount int) bool {
 
 func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []int, notification projectImportNotification) {
 	ctx := context.Background()
+	log.Printf("[project-import][batch=%s][job=%d] started: project=%d resources=%d", batchID, jobID, notification.ProjectID, len(resourceIDs))
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			message := fmt.Sprintf("导入同步任务异常：%v", recovered)
 			a.finishPlatformSyncJob(ctx, jobID, "失败", message)
 			log.Printf("import batch %s sync panic: %s", batchID, redactSensitiveText(message))
-			if err := a.notifyProjectImportCompletion(notification, projectImportSyncResult{
+			delivery := a.notifyProjectImportCompletion(notification, projectImportSyncResult{
 				Status:  "失败",
 				Message: "后台同步异常终止，请到资源列表查看同步状态",
-			}); err != nil {
-				log.Printf("send import batch %s Feishu notification failed: %v", batchID, err)
-			}
+			})
+			a.finishPlatformSyncJob(ctx, jobID, "失败", message+"；飞书推送："+delivery.Status+"（"+delivery.Message+"）")
 		}
 	}()
 
 	successfulStages := 0
 	failedStages := 0
+	log.Printf("[project-import][batch=%s][job=%d][stage=1/3] syncing profiles", batchID, jobID)
 	profileSynced, profileWarnings := a.syncImportedResources(ctx, resourceIDs)
 	if len(profileWarnings) > 0 {
 		failedStages++
@@ -4212,7 +4218,9 @@ func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []in
 		successfulStages++
 	}
 	a.updateImportSyncStage(ctx, jobID, successfulStages, failedStages, "合作内容", fmt.Sprintf("账号资料完成：成功 %d，提示 %d", profileSynced, len(profileWarnings)))
+	log.Printf("[project-import][batch=%s][job=%d][stage=1/3] completed: success=%d warnings=%d", batchID, jobID, profileSynced, len(profileWarnings))
 
+	log.Printf("[project-import][batch=%s][job=%d][stage=2/3] syncing cooperation content", batchID, jobID)
 	contentSynced, contentWarnings := a.syncImportedCooperations(ctx, batchID)
 	if len(contentWarnings) > 0 {
 		failedStages++
@@ -4220,7 +4228,9 @@ func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []in
 		successfulStages++
 	}
 	a.updateImportSyncStage(ctx, jobID, successfulStages, failedStages, "图片处理", fmt.Sprintf("合作内容完成：成功 %d，提示 %d", contentSynced, len(contentWarnings)))
+	log.Printf("[project-import][batch=%s][job=%d][stage=2/3] completed: success=%d warnings=%d", batchID, jobID, contentSynced, len(contentWarnings))
 
+	log.Printf("[project-import][batch=%s][job=%d][stage=3/3] capturing screenshots", batchID, jobID)
 	screenshots, screenshotWarnings := a.captureImportedPageScreenshots(ctx, batchID)
 	if len(screenshotWarnings) > 0 {
 		failedStages++
@@ -4228,6 +4238,7 @@ func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []in
 		successfulStages++
 	}
 	a.updateImportSyncStage(ctx, jobID, successfulStages, failedStages, "完成", fmt.Sprintf("图片处理完成：成功 %d，提示 %d", screenshots, len(screenshotWarnings)))
+	log.Printf("[project-import][batch=%s][job=%d][stage=3/3] completed: success=%d warnings=%d", batchID, jobID, screenshots, len(screenshotWarnings))
 
 	warnings := append(profileWarnings, contentWarnings...)
 	warnings = append(warnings, screenshotWarnings...)
@@ -4239,20 +4250,22 @@ func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []in
 	}
 	message := fmt.Sprintf("导入同步完成：账号 %d，内容 %d，截图 %d", profileSynced, contentSynced, screenshots)
 	if len(warnings) > 0 {
-		message += fmt.Sprintf("；%d 条提示，请到资源列表查看各账号同步状态", len(warnings))
-		log.Printf("import batch %s sync warnings: %s", batchID, redactSensitiveText(strings.Join(warnings, "; ")))
+		warningDetails := redactSensitiveText(strings.Join(warnings, "\n"))
+		message += fmt.Sprintf("；%d 条提示\n提示明细：\n%s", len(warnings), warningDetails)
+		log.Printf("[project-import][batch=%s][job=%d] warnings:\n%s", batchID, jobID, warningDetails)
 	}
-	a.finishPlatformSyncJob(ctx, jobID, status, message)
-	if err := a.notifyProjectImportCompletion(notification, projectImportSyncResult{
+	a.updateImportSyncStage(ctx, jobID, successfulStages, failedStages, "飞书推送", message+"；正在发送飞书通知")
+	delivery := a.notifyProjectImportCompletion(notification, projectImportSyncResult{
 		Status:        status,
 		Message:       message,
 		ProfileSynced: profileSynced,
 		ContentSynced: contentSynced,
 		Screenshots:   screenshots,
 		WarningCount:  len(warnings),
-	}); err != nil {
-		log.Printf("send import batch %s Feishu notification failed: %v", batchID, err)
-	}
+	})
+	finalMessage := message + "；飞书推送：" + delivery.Status + "（" + delivery.Message + "）"
+	a.finishPlatformSyncJob(ctx, jobID, status, finalMessage)
+	log.Printf("[project-import][batch=%s][job=%d] finished: status=%s profiles=%d content=%d screenshots=%d warnings=%d feishu=%s detail=%s", batchID, jobID, status, profileSynced, contentSynced, screenshots, len(warnings), delivery.Status, redactSensitiveText(delivery.Message))
 }
 
 func (a *app) updateImportSyncStage(ctx context.Context, jobID, successCount, failedCount int, stage, message string) {
@@ -4265,9 +4278,22 @@ func (a *app) updateImportSyncStage(ctx context.Context, jobID, successCount, fa
 }
 
 func (a *app) businessCooperationImportSyncStatus(w http.ResponseWriter, r *http.Request) {
-	jobID, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("jobId")))
-	if err != nil || jobID <= 0 {
-		writeError(w, http.StatusOK, 10001, "同步任务 id 不能为空")
+	jobID := 0
+	rawJobID := strings.TrimSpace(r.URL.Query().Get("jobId"))
+	if rawJobID != "" {
+		parsedJobID, err := strconv.Atoi(rawJobID)
+		if err != nil || parsedJobID <= 0 {
+			writeError(w, http.StatusOK, 10001, "同步任务 id 不正确")
+			return
+		}
+		jobID = parsedJobID
+	} else if err := a.DB().QueryRowContext(r.Context(),
+		`select id from biz_platform_sync_jobs where job_type = 'project_import_sync' order by id desc limit 1`,
+	).Scan(&jobID); errors.Is(err, sql.ErrNoRows) {
+		writeOK(w, nil)
+		return
+	} else if err != nil {
+		writeDBError(w, err)
 		return
 	}
 	job, err := a.platformSyncJob(r.Context(), jobID)

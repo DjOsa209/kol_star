@@ -54,6 +54,21 @@ const fieldDefinitions = [
     description: "合作内容分类，对应模板 contentType 列。",
     icon: "ri:movie-2-line",
     readonly: false
+  },
+  {
+    key: "projectDivision",
+    label: "项目一级分类",
+    description:
+      "项目导入时的组织归属。保留“区域”选项可让导入人员继续选择世界国家和地区。",
+    icon: "ri:organization-chart",
+    readonly: false
+  },
+  {
+    key: "projectProductLine",
+    label: "项目产品线",
+    description: "项目导入时的二级分类，用于统一项目名称中的产品线表述。",
+    icon: "ri:archive-stack-line",
+    readonly: false
   }
 ];
 
@@ -156,7 +171,7 @@ onMounted(loadData);
         <span>Standard Fields</span>
         <h1>标准字段配置</h1>
         <p>
-          维护项目统一模板的预设选项。保存后，模板下载和上传校验会立即使用最新配置。
+          维护项目统一模板和项目命名的预设选项。保存后，项目导入会立即使用最新配置。
         </p>
       </div>
     </section>

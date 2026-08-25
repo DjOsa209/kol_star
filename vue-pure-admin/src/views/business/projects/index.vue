@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, shallowRef, onMounted } from "vue";
+import {
+  computed,
+  nextTick,
+  reactive,
+  ref,
+  shallowRef,
+  onMounted,
+  onUnmounted
+} from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
@@ -8,15 +16,18 @@ import { fieldLabel } from "@/utils/fieldI18n";
 import {
   countryOptionsWithLegacyValues,
   parseProjectTargetMarkets,
-  serializeProjectTargetMarkets
+  serializeProjectTargetMarkets,
+  worldCountryOptions
 } from "@/utils/worldCountries";
 import {
   getProjectList,
+  getProjectNameOptions,
   createProject,
   importProjects,
   previewProjectExcelImport,
   downloadProjectExcelImportTemplate,
   getProjectImportNotificationStatus,
+  getCooperationImportSyncStatus,
   downloadProjectData,
   updateProject,
   deleteProject,
@@ -53,6 +64,12 @@ type ImportTargetMode = "new" | "replace" | "incremental";
 const importTargetMode = ref<ImportTargetMode>("new");
 const importProjectId = ref<number | null>(null);
 const importProjectNameDraft = ref("");
+const importProjectDivision = ref("");
+const importProjectCountry = ref("");
+const importProjectProductLine = ref("");
+const importProjectCustomName = ref("");
+const importProjectDivisionOptions = ref<string[]>([]);
+const importProjectProductLineOptions = ref<string[]>([]);
 const importProjectOwnerDraft = ref("");
 const importProjectCycleRange = ref<string[]>([]);
 const importProjectCreating = ref(false);
@@ -63,6 +80,8 @@ const importNotificationStatus = ref({
   applicationEnabled: false,
   webhookEnabled: false
 });
+const latestImportSyncJob = ref<any>(null);
+let importSyncPollTimer: number | undefined;
 const importWorkbookSheets = shallowRef<{ name: string; rows: any[] }[]>([]);
 const importRows = shallowRef<any[]>([]);
 const importFileName = ref("");
@@ -75,6 +94,69 @@ const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
 const projectStatusOptions = ["未开始", "进行中", "已结束"] as const;
+
+const fallbackProjectDivisionOptions = [
+  "总部_公关",
+  "总部_整合营销",
+  "总部_创意",
+  "总部_达人中台",
+  "区域"
+];
+const fallbackProjectProductLineOptions = [
+  "NOTE 60 Series",
+  "NOTE EDGE",
+  "GT 50 Pro",
+  "HOT 70 Series",
+  "ZClip2 Pro",
+  "XEH1",
+  "XPAD 30 Series",
+  "XPAD Edge",
+  "XBook B14",
+  "XBook 14 Neo",
+  "GTWatch 5 Pro"
+];
+
+const isRegionalProjectDivision = computed(
+  () => importProjectDivision.value === "区域"
+);
+const normalizedImportProjectCustomName = computed(() =>
+  importProjectCustomName.value.trim().replace(/_+/g, "-")
+);
+const standardizedImportProjectName = computed(() => {
+  const division = isRegionalProjectDivision.value
+    ? importProjectCountry.value
+      ? `区域_${importProjectCountry.value}`
+      : ""
+    : importProjectDivision.value;
+  return [
+    division,
+    importProjectProductLine.value,
+    normalizedImportProjectCustomName.value
+  ]
+    .filter(Boolean)
+    .join("_");
+});
+const hasCompleteImportProjectName = computed(
+  () =>
+    Boolean(importProjectDivision.value) &&
+    (!isRegionalProjectDivision.value || Boolean(importProjectCountry.value)) &&
+    Boolean(importProjectProductLine.value) &&
+    Boolean(normalizedImportProjectCustomName.value)
+);
+const latestImportSyncProgress = computed(() => {
+  const job = latestImportSyncJob.value;
+  const total = Number(job?.totalCount || 0);
+  const completed =
+    Number(job?.successCount || 0) + Number(job?.failedCount || 0);
+  return total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+});
+const latestImportSyncAlertType = computed(() => {
+  const status = String(latestImportSyncJob.value?.status || "");
+  if (status === "运行中") return "info";
+  if (status === "成功") return "success";
+  if (status === "部分失败") return "warning";
+  return "error";
+});
 
 const defaultMarketOptions = [
   "美国",
@@ -785,6 +867,27 @@ async function loadMarkets() {
   }
 }
 
+async function loadProjectNameOptions() {
+  importProjectDivisionOptions.value = fallbackProjectDivisionOptions;
+  importProjectProductLineOptions.value = fallbackProjectProductLineOptions;
+  try {
+    const res = await getProjectNameOptions();
+    if (res.code !== 0) return;
+    const divisions = Array.isArray(res.data?.divisions)
+      ? res.data.divisions.map(value => String(value).trim()).filter(Boolean)
+      : [];
+    const productLines = Array.isArray(res.data?.productLines)
+      ? res.data.productLines.map(value => String(value).trim()).filter(Boolean)
+      : [];
+    if (divisions.length) importProjectDivisionOptions.value = divisions;
+    if (productLines.length) {
+      importProjectProductLineOptions.value = productLines;
+    }
+  } catch {
+    // Keep the built-in options available if configuration loading fails.
+  }
+}
+
 async function handleMarketChange(value: string) {
   const name = String(value || "").trim();
   if (!name) return;
@@ -1420,6 +1523,39 @@ async function loadImportNotificationStatus() {
   }
 }
 
+async function pollImportSyncStatus(jobId: number) {
+  if (importSyncPollTimer) window.clearTimeout(importSyncPollTimer);
+  try {
+    const res = await getCooperationImportSyncStatus(jobId);
+    if (res.code !== 0) return;
+    latestImportSyncJob.value = res.data || null;
+    if (res.data?.status === "运行中") {
+      importSyncPollTimer = window.setTimeout(
+        () => pollImportSyncStatus(jobId),
+        2000
+      );
+    }
+  } catch {
+    importSyncPollTimer = window.setTimeout(
+      () => pollImportSyncStatus(jobId),
+      4000
+    );
+  }
+}
+
+async function loadLatestImportSyncStatus() {
+  try {
+    const res = await getCooperationImportSyncStatus();
+    if (res.code !== 0 || !res.data) return;
+    latestImportSyncJob.value = res.data;
+    if (res.data.status === "运行中") {
+      pollImportSyncStatus(Number(res.data.id));
+    }
+  } catch {
+    // The project list remains usable when no import-sync history is available.
+  }
+}
+
 async function exportProjectData(row: any) {
   if (!row?.id || exportingProjectIds[row.id]) return;
   exportingProjectIds[row.id] = true;
@@ -1447,7 +1583,11 @@ async function exportProjectData(row: any) {
 
 function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
   importProjectId.value = null;
-  importProjectNameDraft.value = projectNameFromFileName(fileName);
+  importProjectNameDraft.value = "";
+  importProjectDivision.value = "";
+  importProjectCountry.value = "";
+  importProjectProductLine.value = "";
+  importProjectCustomName.value = projectNameFromFileName(fileName);
   importProjectOwnerDraft.value = "";
   importProjectCycleRange.value = [];
   importFileName.value = fileName;
@@ -1886,10 +2026,10 @@ async function ensureImportProject() {
     return true;
   }
 
-  const name = importProjectNameDraft.value.trim();
+  const name = standardizedImportProjectName.value;
   importProjectId.value = null;
-  if (!name) {
-    ElMessage.warning("请输入新项目名称");
+  if (!hasCompleteImportProjectName.value) {
+    ElMessage.warning("请完整选择一级分类、产品线并填写三级项目名称");
     return false;
   }
   const existing = projects.value.find(project => project.name === name);
@@ -1953,6 +2093,10 @@ async function removeProjects(rows: any[]) {
   if (projectIDs.includes(Number(importProjectId.value))) {
     importProjectId.value = null;
     importProjectNameDraft.value = "";
+    importProjectDivision.value = "";
+    importProjectCountry.value = "";
+    importProjectProductLine.value = "";
+    importProjectCustomName.value = "";
     importProjectOwnerDraft.value = "";
     importProjectCycleRange.value = [];
   }
@@ -1985,7 +2129,11 @@ async function handleUploadFile(file: any) {
     importProjectId.value = null;
     importProjectOwnerDraft.value = "";
     importProjectCycleRange.value = [];
-    importProjectNameDraft.value =
+    importProjectNameDraft.value = "";
+    importProjectDivision.value = "";
+    importProjectCountry.value = "";
+    importProjectProductLine.value = "";
+    importProjectCustomName.value =
       String(res.data?.projectName || "").trim() ||
       projectNameFromFileName(rawFile.name);
     importFileName.value = res.data?.fileName || rawFile.name;
@@ -2038,6 +2186,19 @@ async function submitImport() {
     ElMessage.success(
       `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，移除旧内容 ${res.data.removedContent || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条${backgroundText}`
     );
+    const syncJobId = Number(res.data.backgroundSyncJobId || 0);
+    if (syncJobId > 0) {
+      latestImportSyncJob.value = {
+        id: syncJobId,
+        status: "运行中",
+        totalCount: 3,
+        successCount: 0,
+        failedCount: 0,
+        currentResourceName: "账号资料",
+        message: "后台同步任务已启动，正在读取进度…"
+      };
+      pollImportSyncStatus(syncJobId);
+    }
     if (res.data.failed) {
       const failures = (res.data.errors || [])
         .slice(0, 3)
@@ -2069,8 +2230,14 @@ function importRowClassName({ row }: any) {
 
 onMounted(() => {
   loadMarkets();
+  loadProjectNameOptions();
   loadData();
   loadImportNotificationStatus();
+  loadLatestImportSyncStatus();
+});
+
+onUnmounted(() => {
+  if (importSyncPollTimer) window.clearTimeout(importSyncPollTimer);
 });
 </script>
 
@@ -2108,6 +2275,25 @@ onMounted(() => {
           </el-upload>
         </div>
       </header>
+
+      <el-alert
+        v-if="latestImportSyncJob"
+        class="import-sync-status"
+        :type="latestImportSyncAlertType"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          导入后台同步 #{{ latestImportSyncJob.id }}：{{
+            latestImportSyncJob.status
+          }}
+          <span v-if="latestImportSyncJob.status === '运行中'">
+            · {{ latestImportSyncJob.currentResourceName || "处理中" }} ·
+            {{ latestImportSyncProgress }}%
+          </span>
+        </template>
+        <pre>{{ latestImportSyncJob.message || "暂无日志" }}</pre>
+      </el-alert>
 
       <section class="projects-workspace">
         <div class="projects-heading">
@@ -2553,16 +2739,76 @@ onMounted(() => {
               </el-option>
             </el-select>
           </el-form-item>
-          <el-form-item v-else :label="fieldLabel('新项目名称')" required>
-            <el-input
-              v-model="importProjectNameDraft"
-              clearable
-              class="import-project-select"
-              placeholder="输入要创建的新项目名称"
-              :disabled="importProjectCreating"
-            />
-          </el-form-item>
           <template v-if="importTargetMode === 'new'">
+            <el-form-item :label="fieldLabel('一级分类')" required>
+              <div class="project-name-fields">
+                <el-select
+                  v-model="importProjectDivision"
+                  filterable
+                  class="import-project-select"
+                  placeholder="选择总部职能或区域"
+                  :disabled="importProjectCreating"
+                  @change="importProjectCountry = ''"
+                >
+                  <el-option
+                    v-for="option in importProjectDivisionOptions"
+                    :key="option"
+                    :label="option"
+                    :value="option"
+                  />
+                </el-select>
+                <el-select
+                  v-if="isRegionalProjectDivision"
+                  v-model="importProjectCountry"
+                  filterable
+                  class="import-project-select"
+                  placeholder="选择国家或地区"
+                  :disabled="importProjectCreating"
+                >
+                  <el-option
+                    v-for="country in worldCountryOptions"
+                    :key="country.code"
+                    :label="country.label"
+                    :value="country.name"
+                  />
+                </el-select>
+              </div>
+            </el-form-item>
+            <el-form-item :label="fieldLabel('二级分类')" required>
+              <el-select
+                v-model="importProjectProductLine"
+                filterable
+                class="import-project-select"
+                placeholder="选择产品线"
+                :disabled="importProjectCreating"
+              >
+                <el-option
+                  v-for="option in importProjectProductLineOptions"
+                  :key="option"
+                  :label="option"
+                  :value="option"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item :label="fieldLabel('三级分类')" required>
+              <el-input
+                v-model="importProjectCustomName"
+                clearable
+                maxlength="64"
+                show-word-limit
+                class="import-project-select"
+                placeholder="输入项目名称，如：世界杯营销"
+                :disabled="importProjectCreating"
+              />
+            </el-form-item>
+            <el-form-item :label="fieldLabel('规范名称')">
+              <div class="standard-project-name-preview-wrap">
+                <div class="standard-project-name-preview">
+                  {{ standardizedImportProjectName || "完成分类后自动生成" }}
+                </div>
+                <small>命名规则：一级分类_产品线_自定义项目名</small>
+              </div>
+            </el-form-item>
             <el-form-item :label="fieldLabel('对接人')">
               <el-input
                 v-model="importProjectOwnerDraft"
@@ -2724,7 +2970,7 @@ onMounted(() => {
               rowsForImport.length === 0 ||
               importProjectCreating ||
               (importTargetMode !== 'new' && !importProjectId) ||
-              (importTargetMode === 'new' && !importProjectNameDraft.trim())
+              (importTargetMode === 'new' && !hasCompleteImportProjectName)
             "
             @click="submitImport"
           >
@@ -5975,6 +6221,45 @@ onMounted(() => {
 
 .import-project-select {
   width: min(100%, 420px);
+}
+
+.import-sync-status {
+  margin-bottom: 16px;
+}
+
+.import-sync-status pre {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.project-name-fields {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 420px);
+}
+
+.standard-project-name-preview {
+  width: min(100%, 560px);
+  min-height: 38px;
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+}
+
+.standard-project-name-preview-wrap {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+}
+
+.standard-project-name-preview-wrap small {
+  color: #64748b;
 }
 
 :global(.import-project-select-popper) {

@@ -130,6 +130,13 @@ export const getProjectList = (data?: object) => {
   return http.request<ResultTable>("post", "/business/projects", { data });
 };
 
+export const getProjectNameOptions = () => {
+  return http.request<Result<{ divisions: string[]; productLines: string[] }>>(
+    "get",
+    "/business/projects/name-options"
+  );
+};
+
 export const createProject = (data?: object) => {
   return http.request<Result>("post", "/business/projects/create", { data });
 };
@@ -175,6 +182,14 @@ export const getProjectImportNotificationStatus = () => {
       webhookEnabled: boolean;
     }>
   >("get", "/business/projects/import-notification-status");
+};
+
+export const getCooperationImportSyncStatus = (jobId?: number) => {
+  return http.request<Result<any>>(
+    "get",
+    "/business/cooperations/import-sync-status",
+    { params: jobId ? { jobId } : undefined }
+  );
 };
 
 export const updateProject = (data?: object) => {

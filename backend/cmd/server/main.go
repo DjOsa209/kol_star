@@ -269,6 +269,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/projects/create", a.requireMenu("/business/projects", a.createBusinessProject))
 	mux.HandleFunc("GET /business/projects/import-template", a.requireMenu("/business/projects", a.downloadProjectExcelImportTemplate))
 	mux.HandleFunc("GET /business/projects/import-notification-status", a.requireMenu("/business/projects", a.businessImportNotificationStatus))
+	mux.HandleFunc("GET /business/projects/name-options", a.requireMenu("/business/projects", a.businessProjectNameOptions))
 	mux.HandleFunc("POST /business/projects/import-excel/preview", a.requireMenu("/business/projects", a.previewProjectExcelImport))
 	mux.HandleFunc("POST /business/projects/import", a.requireMenu("/business/projects", a.importBusinessProjects))
 	mux.HandleFunc("POST /business/projects/update", a.requireMenu("/business/projects", a.updateBusinessProject))
