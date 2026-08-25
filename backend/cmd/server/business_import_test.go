@@ -96,8 +96,8 @@ func TestInsertImportCooperationStoresContentType(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`insert into biz_cooperations\s+\(project_id, resource_id, cooperation_type, content_type`).
-		WithArgs(11, int64(22), "付费合作", "消费种草类", "Mia", "Vendor A", float64(1200), "IMP-1", "新品合作").
+	mock.ExpectExec(`insert into biz_cooperations\s+\(project_id, resource_id, cooperation_type, content_platform, content_type`).
+		WithArgs(11, int64(22), "付费合作", "TikTok", "消费种草类", "Mia", "Vendor A", float64(1200), "IMP-1", "新品合作").
 		WillReturnResult(sqlmock.NewResult(33, 1))
 	mock.ExpectCommit()
 
@@ -107,6 +107,8 @@ func TestInsertImportCooperationStoresContentType(t *testing.T) {
 	}
 	action, err := insertImportCooperation(context.Background(), tx, 11, 22, "IMP-1", map[string]any{
 		"cooperationType": "付费合作",
+		"platform":        "TikTok",
+		"influencer":      "https://www.tiktok.com/@creator",
 		"contentType":     "消费种草类",
 		"owner":           "Mia",
 		"vendor":          "Vendor A",
@@ -118,6 +120,49 @@ func TestInsertImportCooperationStoresContentType(t *testing.T) {
 	}
 	if action != importCooperationCreated {
 		t.Fatalf("action = %q, want %q", action, importCooperationCreated)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpsertImportResourceMatchesExplicitNameBeforePlatformIdentity(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`select id from biz_resources\s+where lower\(trim\(name\)\) = lower\(trim\(\?\)\)`).
+		WithArgs("Creator One").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(42))
+	mock.ExpectExec(`update biz_resources set\s+name = if\(trim\(name\) = ''`).
+		WithArgs(
+			"Creator One", "Creator One", "https://www.youtube.com/@creatorone",
+			"creatorone", "creatorone", "creatorone", "creatorone", int64(42),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceID, created, err := upsertImportResource(context.Background(), tx, map[string]any{
+		"resourceName": "Creator One",
+		"influencer":   "https://www.youtube.com/@creatorone",
+		"platform":     "YouTube",
+		"resourceType": "KOL",
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created || resourceID != 42 {
+		t.Fatalf("resourceID = %d, created = %t; want existing resource 42", resourceID, created)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)

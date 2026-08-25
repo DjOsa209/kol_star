@@ -58,6 +58,7 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	projectResources = aggregateProjectResourcesByName(projectResources, cooperations)
 	deliverables, err := a.queryMaps(r.Context(),
 		`select id, project_id as projectId, cooperation_id as cooperationId, stage_key as stageKey,
 		        title, status, date_format(submitted_at, '%Y-%m-%d %H:%i:%s') as submittedAt,
@@ -138,6 +139,90 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 		"billingEvents":    billingEvents,
 		"contentPosts":     contentPosts,
 	})
+}
+
+func projectResourceNameKey(row map[string]any) string {
+	name := strings.Join(strings.Fields(strings.TrimSpace(stringValue(row["resourceName"]))), " ")
+	if name != "" {
+		return strings.ToLower(name)
+	}
+	return fmt.Sprintf("resource:%d", intField(row, "resourceId"))
+}
+
+func aggregateProjectResourcesByName(resources, cooperations []map[string]any) []map[string]any {
+	groups := make(map[string]map[string]any, len(resources))
+	order := make([]string, 0, len(resources))
+	resourceIDs := make(map[string][]int, len(resources))
+	platforms := make(map[string][]string, len(resources))
+	platformSeen := make(map[string]map[string]bool, len(resources))
+
+	addPlatform := func(key, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		platformKey := strings.ToLower(value)
+		if platformSeen[key] == nil {
+			platformSeen[key] = make(map[string]bool)
+		}
+		if platformSeen[key][platformKey] {
+			return
+		}
+		platformSeen[key][platformKey] = true
+		platforms[key] = append(platforms[key], value)
+	}
+
+	for _, resource := range resources {
+		key := projectResourceNameKey(resource)
+		if _, exists := groups[key]; !exists {
+			group := make(map[string]any, len(resource)+6)
+			for field, value := range resource {
+				group[field] = value
+			}
+			groups[key] = group
+			order = append(order, key)
+		}
+		resourceID := intField(resource, "resourceId")
+		if resourceID > 0 {
+			resourceIDs[key] = append(resourceIDs[key], resourceID)
+		}
+		addPlatform(key, stringValue(resource["platform"]))
+	}
+
+	totals := make(map[string]struct{ cost, views float64 }, len(groups))
+	for _, cooperation := range cooperations {
+		key := projectResourceNameKey(cooperation)
+		if _, exists := groups[key]; !exists {
+			continue
+		}
+		total := totals[key]
+		total.cost += floatFromAny(cooperation["quoteAmount"])
+		total.views += floatFromAny(cooperation["views"])
+		totals[key] = total
+		platform := firstNonEmpty(
+			stringValue(cooperation["contentPlatform"]),
+			stringValue(cooperation["platform"]),
+		)
+		addPlatform(key, platform)
+	}
+
+	result := make([]map[string]any, 0, len(order))
+	for _, key := range order {
+		group := groups[key]
+		total := totals[key]
+		cpm := float64(0)
+		if total.views > 0 {
+			cpm = total.cost / total.views * 1000
+		}
+		group["resourceIds"] = resourceIDs[key]
+		group["platforms"] = platforms[key]
+		group["projectCost"] = total.cost
+		group["projectViews"] = total.views
+		group["projectCpm"] = cpm
+		group["cpm"] = cpm
+		result = append(result, group)
+	}
+	return result
 }
 
 func (a *app) projectResourceRows(ctx context.Context, projectID int) ([]map[string]any, error) {

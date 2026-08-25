@@ -38,6 +38,41 @@ func TestReplaceCooperationContentURL(t *testing.T) {
 	}
 }
 
+func TestAggregateProjectResourcesByName(t *testing.T) {
+	resources := []map[string]any{
+		{"resourceId": 11, "resourceName": "Creator One", "platform": "YouTube"},
+		{"resourceId": 12, "resourceName": " Creator   One ", "platform": "TikTok"},
+		{"resourceId": 13, "resourceName": "Creator Two", "platform": "Instagram"},
+	}
+	cooperations := []map[string]any{
+		{"resourceId": 11, "resourceName": "Creator One", "platform": "YouTube", "contentPlatform": "YouTube", "quoteAmount": 1200, "views": 300000},
+		{"resourceId": 12, "resourceName": "creator one", "platform": "TikTok", "contentPlatform": "TikTok", "quoteAmount": 800, "views": 200000},
+		{"resourceId": 13, "resourceName": "Creator Two", "platform": "Instagram", "quoteAmount": 500, "views": 0},
+	}
+
+	rows := aggregateProjectResourcesByName(resources, cooperations)
+	if len(rows) != 2 {
+		t.Fatalf("aggregate rows = %d, want 2: %#v", len(rows), rows)
+	}
+	if got := rows[0]["projectCost"]; got != float64(2000) {
+		t.Fatalf("projectCost = %#v, want 2000", got)
+	}
+	if got := rows[0]["projectViews"]; got != float64(500000) {
+		t.Fatalf("projectViews = %#v, want 500000", got)
+	}
+	if got := rows[0]["projectCpm"]; got != float64(4) {
+		t.Fatalf("projectCpm = %#v, want 4", got)
+	}
+	platforms, ok := rows[0]["platforms"].([]string)
+	if !ok || len(platforms) != 2 || platforms[0] != "YouTube" || platforms[1] != "TikTok" {
+		t.Fatalf("platforms = %#v, want YouTube and TikTok", rows[0]["platforms"])
+	}
+	resourceIDs, ok := rows[0]["resourceIds"].([]int)
+	if !ok || len(resourceIDs) != 2 || resourceIDs[0] != 11 || resourceIDs[1] != 12 {
+		t.Fatalf("resourceIds = %#v, want 11 and 12", rows[0]["resourceIds"])
+	}
+}
+
 func TestUpdateBusinessProjectContentReturnsAllLinkedFields(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

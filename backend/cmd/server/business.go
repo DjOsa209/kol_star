@@ -4348,7 +4348,8 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any, p
 	category := cleanImportString(str(row, "category"))
 	platform := normalizeImportedPlatform(str(row, "platform"), profileURL)
 	platformHandle := importedPlatformHandle(platform, profileURL)
-	name := cleanImportString(str(row, "resourceName"))
+	providedName := cleanImportString(str(row, "resourceName"))
+	name := providedName
 	if name == "" {
 		name = importedProfilePlaceholderName(profileURL)
 	}
@@ -4377,12 +4378,25 @@ func upsertImportResource(ctx context.Context, tx *sql.Tx, row map[string]any, p
 		website = profileURL
 	}
 	var id int64
-	err = tx.QueryRowContext(ctx,
-		`select id from biz_resources
+	if providedName != "" {
+		err = tx.QueryRowContext(ctx,
+			`select id from biz_resources
+			  where lower(trim(name)) = lower(trim(?))
+			  order by id asc
+			  limit 1`,
+			providedName,
+		).Scan(&id)
+	} else {
+		err = sql.ErrNoRows
+	}
+	if err == sql.ErrNoRows {
+		err = tx.QueryRowContext(ctx,
+			`select id from biz_resources
 		  where lower(trim(trailing '/' from platform_url)) = lower(trim(trailing '/' from ?))
 		  limit 1`,
-		profileURL,
-	).Scan(&id)
+			profileURL,
+		).Scan(&id)
+	}
 	if err == sql.ErrNoRows {
 		err = tx.QueryRowContext(ctx,
 			`select id from biz_resources
@@ -4484,6 +4498,7 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 	views := 0
 	engagement := 0
 	cooperationType := defaultString(str(row, "cooperationType"), "内容合作")
+	contentPlatform := normalizeImportedPlatform(str(row, "platform"), str(row, "influencer"))
 	contentType := cleanImportString(str(row, "contentType"))
 	owner := cleanImportString(str(row, "owner"))
 	vendor := cleanImportString(str(row, "vendor"))
@@ -4508,6 +4523,13 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 				projectID, resourceID, link,
 			).Scan(&existingID)
 			if err == nil {
+				_, err = tx.ExecContext(ctx,
+					`update biz_cooperations set content_platform = if(? <> '', ?, content_platform) where id = ?`,
+					contentPlatform, contentPlatform, existingID,
+				)
+				if err != nil {
+					return "", err
+				}
 				return importCooperationSkipped, nil
 			}
 			if err != sql.ErrNoRows {
@@ -4517,20 +4539,20 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 		if link == "" {
 			_, err := tx.ExecContext(ctx,
 				`insert into biz_cooperations
-				 (project_id, resource_id, cooperation_type, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
+				 (project_id, resource_id, cooperation_type, content_platform, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
 				  import_batch_id, notes)
-				 values (?, ?, ?, ?, ?, ?, ?, 'USD', '邀约中', '未开始', ?, ?)`,
-				projectID, resourceID, cooperationType, contentType, owner, vendor, floatField(row, "quoteAmount"), batchID, notes,
+				 values (?, ?, ?, ?, ?, ?, ?, ?, 'USD', '邀约中', '未开始', ?, ?)`,
+				projectID, resourceID, cooperationType, contentPlatform, contentType, owner, vendor, floatField(row, "quoteAmount"), batchID, notes,
 			)
 			return importCooperationCreated, err
 		}
 		_, err := tx.ExecContext(ctx,
 			`insert into biz_cooperations
-			 (project_id, resource_id, cooperation_type, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
+			 (project_id, resource_id, cooperation_type, content_platform, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
 			  impressions, views, engagement_count, comments_count, release_date, deliverable_links,
 			  final_link, import_batch_id, notes)
-			 values (?, ?, ?, ?, ?, ?, ?, 'USD', '已发布', '已完成', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			projectID, resourceID, cooperationType, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
+			 values (?, ?, ?, ?, ?, ?, ?, ?, 'USD', '已发布', '已完成', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			projectID, resourceID, cooperationType, contentPlatform, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
 			0, nil, link, link, batchID, notes,
 		)
 		return importCooperationCreated, err
@@ -4546,8 +4568,8 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 		).Scan(&existingID)
 		if err == nil {
 			_, err = tx.ExecContext(ctx,
-				`update biz_cooperations set cooperation_type = ?, content_type = ?, owner = ?, vendor = ?, import_batch_id = ?, notes = ? where id = ?`,
-				cooperationType, contentType, owner, vendor, batchID, notes, existingID,
+				`update biz_cooperations set cooperation_type = ?, content_platform = ?, content_type = ?, owner = ?, vendor = ?, import_batch_id = ?, notes = ? where id = ?`,
+				cooperationType, contentPlatform, contentType, owner, vendor, batchID, notes, existingID,
 			)
 			return importCooperationUpdated, err
 		}
@@ -4556,10 +4578,10 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 		}
 		_, err = tx.ExecContext(ctx,
 			`insert into biz_cooperations
-			 (project_id, resource_id, cooperation_type, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
+			 (project_id, resource_id, cooperation_type, content_platform, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
 			  import_batch_id, notes)
-			 values (?, ?, ?, ?, ?, ?, ?, 'USD', '邀约中', '未开始', ?, ?)`,
-			projectID, resourceID, cooperationType, contentType, owner, vendor, floatField(row, "quoteAmount"), batchID, notes,
+			 values (?, ?, ?, ?, ?, ?, ?, ?, 'USD', '邀约中', '未开始', ?, ?)`,
+			projectID, resourceID, cooperationType, contentPlatform, contentType, owner, vendor, floatField(row, "quoteAmount"), batchID, notes,
 		)
 		return importCooperationCreated, err
 	}
@@ -4573,10 +4595,10 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 	).Scan(&existingID)
 	if err == nil {
 		_, err = tx.ExecContext(ctx,
-			`update biz_cooperations set cooperation_type = ?, content_type = ?, owner = ?, vendor = ?, quote_amount = ?, status = '已发布', deliverable_status = '已完成',
+			`update biz_cooperations set cooperation_type = ?, content_platform = ?, content_type = ?, owner = ?, vendor = ?, quote_amount = ?, status = '已发布', deliverable_status = '已完成',
 				 impressions = ?, views = ?, engagement_count = ?, comments_count = ?, release_date = ?,
 				 deliverable_links = ?, final_link = ?, import_batch_id = ?, notes = ? where id = ?`,
-			cooperationType, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
+			cooperationType, contentPlatform, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
 			0, nil, link, link, batchID, notes, existingID,
 		)
 		return importCooperationUpdated, err
@@ -4595,10 +4617,10 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 	).Scan(&existingID)
 	if err == nil {
 		_, err = tx.ExecContext(ctx,
-			`update biz_cooperations set cooperation_type = ?, content_type = ?, owner = ?, vendor = ?, quote_amount = ?, status = '已发布', deliverable_status = '已完成',
+			`update biz_cooperations set cooperation_type = ?, content_platform = ?, content_type = ?, owner = ?, vendor = ?, quote_amount = ?, status = '已发布', deliverable_status = '已完成',
 				 impressions = ?, views = ?, engagement_count = ?, comments_count = ?, release_date = ?,
 				 deliverable_links = ?, final_link = ?, import_batch_id = ?, notes = ? where id = ?`,
-			cooperationType, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
+			cooperationType, contentPlatform, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
 			0, nil, link, link, batchID, notes, existingID,
 		)
 		return importCooperationUpdated, err
@@ -4608,11 +4630,11 @@ func insertImportCooperation(ctx context.Context, tx *sql.Tx, projectID int, res
 	}
 	_, err = tx.ExecContext(ctx,
 		`insert into biz_cooperations
-		 (project_id, resource_id, cooperation_type, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
+		 (project_id, resource_id, cooperation_type, content_platform, content_type, owner, vendor, quote_amount, currency, status, deliverable_status,
 		  impressions, views, engagement_count, comments_count, release_date, deliverable_links,
 		  final_link, import_batch_id, notes)
-		 values (?, ?, ?, ?, ?, ?, ?, 'USD', '已发布', '已完成', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		projectID, resourceID, cooperationType, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
+		 values (?, ?, ?, ?, ?, ?, ?, ?, 'USD', '已发布', '已完成', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		projectID, resourceID, cooperationType, contentPlatform, contentType, owner, vendor, floatField(row, "quoteAmount"), views, views, engagement,
 		0, nil, link, link, batchID, notes,
 	)
 	return importCooperationCreated, err

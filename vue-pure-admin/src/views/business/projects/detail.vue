@@ -417,11 +417,18 @@ const projectCreators = computed(() => {
     const existing = creatorGroups.get(key);
     const platform = normalizePlatformName(item.platform);
     if (!existing) {
+      const resourceIds = Array.isArray(item.resourceIds)
+        ? item.resourceIds.map(Number).filter(Boolean)
+        : [Number(item.resourceId)].filter(Boolean);
+      const platforms = Array.isArray(item.platforms)
+        ? item.platforms.map(normalizePlatformName).filter(Boolean)
+        : [];
+      if (platform && !platforms.includes(platform)) platforms.push(platform);
       creatorGroups.set(key, {
         ...item,
-        resourceIds: [Number(item.resourceId)].filter(Boolean),
+        resourceIds,
         resources: [{ ...item }],
-        platforms: platform ? [platform] : []
+        platforms
       });
       return;
     }
@@ -1204,6 +1211,9 @@ function creatorPlatforms(row: any) {
     const platform = normalizePlatformName(value);
     if (platform) platforms.add(platform);
   };
+  if (Array.isArray(row?.platforms)) {
+    row.platforms.forEach(addPlatform);
+  }
   (Array.isArray(row?.resources) ? row.resources : [row]).forEach(item =>
     addPlatform(item?.platform)
   );
@@ -1288,6 +1298,9 @@ function projectEngagement(row: any) {
 }
 
 function projectCPM(row: any) {
+  if (Object.prototype.hasOwnProperty.call(row || {}, "projectCpm")) {
+    return numberValue(row.projectCpm);
+  }
   const totals = projectCooperationsForCreator(row).reduce(
     (result, item) => {
       result.cost += numberValue(item.quoteAmount);
