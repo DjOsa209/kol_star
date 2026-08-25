@@ -383,6 +383,8 @@ const projectContentPosts = computed(() => {
         platformHandle: item.platformHandle,
         cooperationId: item.id,
         platform: item.contentPlatform || item.platform || "Website",
+        cooperationType: item.cooperationType,
+        contentType: item.contentType,
         title: importedContentTitle(item),
         description: item.notes,
         postUrl,
@@ -404,25 +406,50 @@ const projectContentPosts = computed(() => {
 });
 
 const projectCreators = computed(() => {
-  const creatorByResource = new Map<string, any>();
+  const creatorGroups = new Map<string, any>();
   const source = projectResources.value.length
     ? projectResources.value
     : cooperations.value;
   source.forEach(item => {
-    const key = String(item.resourceId || `cooperation-${item.id}`);
-    const existing = creatorByResource.get(key);
-    if (!existing || cooperationStage(item) === "published") {
-      creatorByResource.set(key, { ...item });
+    const name = creatorNameKey(item);
+    const fallback = String(item.resourceId || `cooperation-${item.id}`);
+    const key = name || fallback;
+    const existing = creatorGroups.get(key);
+    const platform = normalizePlatformName(item.platform);
+    if (!existing) {
+      creatorGroups.set(key, {
+        ...item,
+        resourceIds: [Number(item.resourceId)].filter(Boolean),
+        resources: [{ ...item }],
+        platforms: platform ? [platform] : []
+      });
+      return;
+    }
+    if (
+      cooperationStage(item) === "published" ||
+      (!existing.resourceAvatarUrl && item.resourceAvatarUrl)
+    ) {
+      Object.assign(existing, item);
+    }
+    if (
+      item.resourceId &&
+      !existing.resourceIds.includes(Number(item.resourceId))
+    ) {
+      existing.resourceIds.push(Number(item.resourceId));
+      existing.resources.push({ ...item });
+    }
+    if (platform && !existing.platforms.includes(platform)) {
+      existing.platforms.push(platform);
     }
   });
-  return Array.from(creatorByResource.values());
+  return Array.from(creatorGroups.values());
 });
 
 const creatorCategoryOptions = computed(() =>
   uniqueOptions(projectCreators.value.map(item => item.category))
 );
 const creatorPlatformOptions = computed(() =>
-  uniqueOptions(projectCreators.value.map(item => item.platform))
+  uniqueOptions(projectCreators.value.flatMap(item => creatorPlatforms(item)))
 );
 const creatorTierOptions = computed(() =>
   uniqueOptions(projectCreators.value.map(item => item.collaboratorTier))
@@ -438,7 +465,7 @@ const filteredCreators = computed(() => {
       return false;
     if (
       creatorPlatform.value !== "all" &&
-      item.platform !== creatorPlatform.value
+      !creatorPlatforms(item).includes(creatorPlatform.value)
     )
       return false;
     if (
@@ -447,7 +474,12 @@ const filteredCreators = computed(() => {
     )
       return false;
     if (!keyword) return true;
-    return [item.resourceName, item.platform, item.resourceType, item.category]
+    return [
+      item.resourceName,
+      ...creatorPlatforms(item),
+      item.resourceType,
+      item.category
+    ]
       .filter(Boolean)
       .some(value => String(value).toLowerCase().includes(keyword));
   });
@@ -493,10 +525,6 @@ const filteredContentPosts = computed(() => {
       return postExposure(right) - postExposure(left);
     if (contentSort.value === "engagement")
       return postEngagement(right) - postEngagement(left);
-    if (contentSort.value === "playbackRate")
-      return contentPlaybackRate(right) - contentPlaybackRate(left);
-    if (contentSort.value === "cpm")
-      return contentCPM(right) - contentCPM(left);
     return contentDateRank(right) - contentDateRank(left);
   });
 });
@@ -1065,25 +1093,6 @@ function contentOpenLabel(post: any) {
   return isWebsiteContent(post) ? "打开网页" : "前往平台查看";
 }
 
-function contentPlaybackRate(post: any) {
-  const audience = contentFollowers(post);
-  return audience > 0 ? postExposure(post) / audience : 0;
-}
-
-function contentPlaybackRateText(post: any) {
-  return ratioPercent(postExposure(post), contentFollowers(post));
-}
-
-function contentPlaybackRateHint(post: any) {
-  return isWebsiteContent(post) ? "访问量 / UMV" : "播放量 / 粉丝量";
-}
-
-function contentCPMHint(post: any) {
-  return isWebsiteContent(post)
-    ? "该内容合作费用 / 访问量 × 1000"
-    : "该内容合作费用 / 播放量 × 1000";
-}
-
 function contentAvatar(post: any) {
   const resource = contentResource(post);
   const localURL = String(
@@ -1135,16 +1144,18 @@ function contentCooperationType(post: any) {
   ).trim();
 }
 
+function contentTypeTag(post: any) {
+  return String(
+    post?.contentType || contentCooperation(post)?.contentType || ""
+  ).trim();
+}
+
 function contentDisplayTitle(post: any) {
   return (
     String(post?.title || post?.description || "").trim() ||
     contentTitleFromUrl(post?.postUrl) ||
     "标题获取中"
   );
-}
-
-function contentCPM(post: any) {
-  return cpmValue(contentCooperation(post)?.quoteAmount, postExposure(post));
 }
 
 function isViralContent(post: any) {
@@ -1163,29 +1174,70 @@ function normalizedContentUrl(value: unknown) {
     .toLowerCase();
 }
 
-function cooperationContentUrls(resourceId: unknown) {
+function creatorNameKey(row: any) {
+  return String(row?.resourceName || row?.name || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase();
+}
+
+function creatorResourceIds(row: any) {
+  const ids = Array.isArray(row?.resourceIds)
+    ? row.resourceIds
+    : [row?.resourceId];
+  return new Set(ids.map(Number).filter(Boolean));
+}
+
+function projectCooperationsForCreator(row: any) {
+  const name = creatorNameKey(row);
+  const resourceIds = creatorResourceIds(row);
+  return cooperations.value.filter(item => {
+    if (name) return creatorNameKey(item) === name;
+    return resourceIds.has(Number(item.resourceId));
+  });
+}
+
+function creatorPlatforms(row: any) {
+  const platforms = new Set<string>();
+  const addPlatform = (value: unknown) => {
+    if (!String(value || "").trim()) return;
+    const platform = normalizePlatformName(value);
+    if (platform) platforms.add(platform);
+  };
+  (Array.isArray(row?.resources) ? row.resources : [row]).forEach(item =>
+    addPlatform(item?.platform)
+  );
+  projectCooperationsForCreator(row).forEach(item =>
+    addPlatform(item.contentPlatform || item.platform)
+  );
+  const resourceIds = creatorResourceIds(row);
+  projectContentPosts.value
+    .filter(post => resourceIds.has(Number(post.resourceId)))
+    .forEach(post => addPlatform(post.platform));
+  return Array.from(platforms);
+}
+
+function cooperationContentUrls(row: any) {
   const urls = new Set<string>();
-  cooperations.value
-    .filter(item => Number(item.resourceId) === Number(resourceId))
-    .forEach(item => {
-      [item.finalLink, item.deliverableLinks].forEach(value => {
-        const raw = String(value || "").trim();
-        const matches = raw.match(/https?:\/\/[^\s,，;；]+/g) || [];
-        (matches.length ? matches : raw ? [raw] : []).forEach(url => {
-          const normalized = normalizedContentUrl(url);
-          if (normalized) urls.add(normalized);
-        });
+  projectCooperationsForCreator(row).forEach(item => {
+    [item.finalLink, item.deliverableLinks].forEach(value => {
+      const raw = String(value || "").trim();
+      const matches = raw.match(/https?:\/\/[^\s,，;；]+/g) || [];
+      (matches.length ? matches : raw ? [raw] : []).forEach(url => {
+        const normalized = normalizedContentUrl(url);
+        if (normalized) urls.add(normalized);
       });
     });
+  });
   return urls;
 }
 
 function projectPostsForResource(row: any) {
-  const resourceId = Number(row?.resourceId || 0);
-  const projectLinks = cooperationContentUrls(resourceId);
+  const resourceIds = creatorResourceIds(row);
+  const projectLinks = cooperationContentUrls(row);
   if (!projectLinks.size) return [];
   return projectContentPosts.value.filter(post => {
-    if (Number(post.resourceId) !== resourceId) return false;
+    if (!resourceIds.has(Number(post.resourceId))) return false;
     return projectLinks.has(normalizedContentUrl(post.postUrl));
   });
 }
@@ -1195,8 +1247,16 @@ function projectContentCount(row: any) {
 }
 
 function projectAudience(row: any) {
-  if (isMediaResource(row)) return numberValue(row.audienceSize);
-  return numberValue(row.followers) || numberValue(row.audienceSize);
+  const resources = Array.isArray(row?.resources) ? row.resources : [row];
+  return resources.reduce((total, resource) => {
+    if (isMediaResource(resource)) {
+      return total + numberValue(resource.audienceSize);
+    }
+    return (
+      total +
+      (numberValue(resource.followers) || numberValue(resource.audienceSize))
+    );
+  }, 0);
 }
 
 function projectExposure(row: any) {
@@ -1204,7 +1264,13 @@ function projectExposure(row: any) {
     (sum, post) => sum + postExposure(post),
     0
   );
-  return total || primaryReach(row);
+  return (
+    total ||
+    projectCooperationsForCreator(row).reduce(
+      (sum, item) => sum + numberValue(item.views),
+      0
+    )
+  );
 }
 
 function projectEngagement(row: any) {
@@ -1212,7 +1278,25 @@ function projectEngagement(row: any) {
     (sum, post) => sum + postEngagement(post),
     0
   );
-  return total || numberValue(row.engagementCount);
+  return (
+    total ||
+    projectCooperationsForCreator(row).reduce(
+      (sum, item) => sum + numberValue(item.engagementCount),
+      0
+    )
+  );
+}
+
+function projectCPM(row: any) {
+  const totals = projectCooperationsForCreator(row).reduce(
+    (result, item) => {
+      result.cost += numberValue(item.quoteAmount);
+      result.views += numberValue(item.views);
+      return result;
+    },
+    { cost: 0, views: 0 }
+  );
+  return totals.views > 0 ? (totals.cost / totals.views) * 1000 : 0;
 }
 
 function latestProjectPost(row: any) {
@@ -1250,6 +1334,10 @@ function sortByExposure(left: any, right: any) {
 
 function sortByEngagement(left: any, right: any) {
   return projectEngagement(left) - projectEngagement(right);
+}
+
+function sortByCPM(left: any, right: any) {
+  return projectCPM(left) - projectCPM(right);
 }
 
 function resetCreatorForm() {
@@ -2372,6 +2460,16 @@ onBeforeUnmount(() => {
                     class="content-detail-cooperation-types"
                     :value="contentCooperationType(contentDetailView)"
                   />
+                  <el-tag
+                    v-if="contentTypeTag(contentDetailView)"
+                    class="content-type-tag content-detail-type-tag"
+                    type="primary"
+                    effect="plain"
+                    size="small"
+                    title="内容类型"
+                  >
+                    {{ contentTypeTag(contentDetailView) }}
+                  </el-tag>
                 </div>
                 <el-button type="primary" @click="openPost(contentDetailView)">
                   {{ contentOpenLabel(contentDetailView) }}
@@ -2415,16 +2513,6 @@ onBeforeUnmount(() => {
                 formatCount(postEngagement(contentDetailView))
               }}</strong>
               <small>点赞、评论、分享与收藏</small>
-            </article>
-            <article>
-              <span>播放率</span>
-              <strong>{{ contentPlaybackRateText(contentDetailView) }}</strong>
-              <small>{{ contentPlaybackRateHint(contentDetailView) }}</small>
-            </article>
-            <article>
-              <span>CPM</span>
-              <strong>{{ moneyText(contentCPM(contentDetailView)) }}</strong>
-              <small>{{ contentCPMHint(contentDetailView) }}</small>
             </article>
           </div>
 
@@ -2685,7 +2773,7 @@ onBeforeUnmount(() => {
           <span>{{ influencerRows.length }} 位达人</span>
         </div>
         <el-table :data="influencerRows" class="creator-table">
-          <el-table-column :label="fieldLabel('达人')" min-width="210" sortable>
+          <el-table-column :label="fieldLabel('达人')" min-width="250" sortable>
             <template #default="{ row }">
               <button
                 type="button"
@@ -2696,21 +2784,26 @@ onBeforeUnmount(() => {
                   String(row.resourceName || "R").slice(0, 1)
                 }}</el-avatar>
                 <div>
-                  <strong>{{ row.resourceName || "未命名达人" }}</strong>
+                  <span class="creator-name-line">
+                    <strong>{{ row.resourceName || "未命名达人" }}</strong>
+                    <span class="creator-platform-icons">
+                      <PlatformIconBadge
+                        v-for="platform in creatorPlatforms(row)"
+                        :key="platform"
+                        :platform="platform"
+                      />
+                    </span>
+                  </span>
                   <span>查看资源档案</span>
                 </div>
               </button>
             </template>
           </el-table-column>
-          <el-table-column prop="category" :label="fieldLabel('领域')" min-width="120" />
-          <el-table-column prop="platform" :label="fieldLabel('平台')" min-width="120">
-            <template #default="{ row }">
-              <span class="creator-platform">
-                <PlatformIconBadge :platform="row.platform" />
-                {{ row.platform || "未设置" }}
-              </span>
-            </template>
-          </el-table-column>
+          <el-table-column
+            prop="category"
+            :label="fieldLabel('领域')"
+            min-width="120"
+          />
           <el-table-column
             :label="fieldLabel('内容数量')"
             width="110"
@@ -2758,14 +2851,35 @@ onBeforeUnmount(() => {
               formatCount(projectEngagement(row))
             }}</template>
           </el-table-column>
-          <el-table-column prop="collaboratorTier" :label="fieldLabel('层级')" width="100">
+          <el-table-column
+            :label="fieldLabel('CPM')"
+            width="120"
+            align="right"
+            sortable
+            :sort-method="sortByCPM"
+          >
+            <template #default="{ row }">
+              <span :title="'项目内该达人全部平台总成本 / 总播放量 × 1000'">
+                {{ moneyText(projectCPM(row)) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            prop="collaboratorTier"
+            :label="fieldLabel('层级')"
+            width="100"
+          >
             <template #default="{ row }">
               <el-tag effect="plain">{{
                 row.collaboratorTier || "待同步"
               }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="fieldLabel('最新合作内容')" width="140" align="center">
+          <el-table-column
+            :label="fieldLabel('最新合作内容')"
+            width="140"
+            align="center"
+          >
             <template #default="{ row }">
               <button
                 v-if="latestProjectPost(row)"
@@ -2790,7 +2904,11 @@ onBeforeUnmount(() => {
               <span v-else class="latest-content-empty">暂无内容</span>
             </template>
           </el-table-column>
-          <el-table-column :label="fieldLabel('操作')" width="120" fixed="right">
+          <el-table-column
+            :label="fieldLabel('操作')"
+            width="120"
+            fixed="right"
+          >
             <template #default="{ row }">
               <el-button
                 link
@@ -2819,7 +2937,7 @@ onBeforeUnmount(() => {
           <span>{{ mediaRows.length }} 家媒体</span>
         </div>
         <el-table :data="mediaRows" class="creator-table media-table">
-          <el-table-column :label="fieldLabel('媒体')" min-width="210" sortable>
+          <el-table-column :label="fieldLabel('媒体')" min-width="250" sortable>
             <template #default="{ row }">
               <button
                 type="button"
@@ -2830,22 +2948,26 @@ onBeforeUnmount(() => {
                   String(row.resourceName || "M").slice(0, 1)
                 }}</el-avatar>
                 <div>
-                  <strong>{{ row.resourceName || "未命名媒体" }}</strong
-                  ><span>查看资源档案</span>
+                  <span class="creator-name-line">
+                    <strong>{{ row.resourceName || "未命名媒体" }}</strong>
+                    <span class="creator-platform-icons">
+                      <PlatformIconBadge
+                        v-for="platform in creatorPlatforms(row)"
+                        :key="platform"
+                        :platform="platform"
+                      />
+                    </span>
+                  </span>
+                  <span>查看资源档案</span>
                 </div>
               </button>
             </template>
           </el-table-column>
-          <el-table-column prop="category" :label="fieldLabel('领域')" min-width="120" />
-          <el-table-column prop="platform" :label="fieldLabel('平台')" min-width="120">
-            <template #default="{ row }"
-              ><span class="creator-platform"
-                ><PlatformIconBadge :platform="row.platform" />{{
-                  row.platform || "未设置"
-                }}</span
-              ></template
-            >
-          </el-table-column>
+          <el-table-column
+            prop="category"
+            :label="fieldLabel('领域')"
+            min-width="120"
+          />
           <el-table-column
             :label="fieldLabel('内容数量')"
             width="110"
@@ -2890,14 +3012,35 @@ onBeforeUnmount(() => {
               formatCount(projectEngagement(row))
             }}</template>
           </el-table-column>
-          <el-table-column prop="collaboratorTier" :label="fieldLabel('层级')" width="100">
+          <el-table-column
+            :label="fieldLabel('CPM')"
+            width="120"
+            align="right"
+            sortable
+            :sort-method="sortByCPM"
+          >
+            <template #default="{ row }">
+              <span :title="'项目内该媒体全部平台总成本 / 总播放量 × 1000'">
+                {{ moneyText(projectCPM(row)) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            prop="collaboratorTier"
+            :label="fieldLabel('层级')"
+            width="100"
+          >
             <template #default="{ row }"
               ><el-tag effect="plain">{{
                 row.collaboratorTier || "待同步"
               }}</el-tag></template
             >
           </el-table-column>
-          <el-table-column :label="fieldLabel('最新合作内容')" width="140" align="center">
+          <el-table-column
+            :label="fieldLabel('最新合作内容')"
+            width="140"
+            align="center"
+          >
             <template #default="{ row }">
               <button
                 v-if="latestProjectPost(row)"
@@ -2921,7 +3064,11 @@ onBeforeUnmount(() => {
               <span v-else class="latest-content-empty">暂无内容</span>
             </template>
           </el-table-column>
-          <el-table-column :label="fieldLabel('操作')" width="120" fixed="right">
+          <el-table-column
+            :label="fieldLabel('操作')"
+            width="120"
+            fixed="right"
+          >
             <template #default="{ row }">
               <el-button
                 link
@@ -2964,9 +3111,10 @@ onBeforeUnmount(() => {
           <el-select v-model="contentSort" class="content-sort-filter">
             <el-option :label="fieldLabel('最新发布')" value="latest" />
             <el-option :label="fieldLabel('播放量从高到低')" value="views" />
-            <el-option :label="fieldLabel('互动量从高到低')" value="engagement" />
-            <el-option :label="fieldLabel('播放率从高到低')" value="playbackRate" />
-            <el-option :label="fieldLabel('CPM 从高到低')" value="cpm" />
+            <el-option
+              :label="fieldLabel('互动量从高到低')"
+              value="engagement"
+            />
           </el-select>
           <span class="content-count"
             >共 {{ filteredContentPosts.length }} 条内容</span
@@ -3054,6 +3202,16 @@ onBeforeUnmount(() => {
                 class="content-card-cooperation-types"
                 :value="contentCooperationType(post)"
               />
+              <el-tag
+                v-if="contentTypeTag(post)"
+                class="content-type-tag content-card-type-tag"
+                type="primary"
+                effect="plain"
+                size="small"
+                title="内容类型"
+              >
+                {{ contentTypeTag(post) }}
+              </el-tag>
               <div class="content-card-metrics">
                 <span>
                   <small>{{ contentExposureLabel(post) }}</small>
@@ -3062,14 +3220,6 @@ onBeforeUnmount(() => {
                 <span>
                   <small>互动量</small>
                   <strong>{{ formatCount(postEngagement(post)) }}</strong>
-                </span>
-                <span>
-                  <small>播放率</small>
-                  <strong>{{ contentPlaybackRateText(post) }}</strong>
-                </span>
-                <span>
-                  <small>CPM</small>
-                  <strong>{{ moneyText(contentCPM(post)) }}</strong>
                 </span>
               </div>
             </div>
@@ -3209,7 +3359,10 @@ onBeforeUnmount(() => {
               </el-select>
             </el-form-item>
           </div>
-          <el-form-item :label="fieldLabel('主页链接 / @handle / 平台账号')" required>
+          <el-form-item
+            :label="fieldLabel('主页链接 / @handle / 平台账号')"
+            required
+          >
             <el-input
               v-model="onlineSearchForm.query"
               clearable
@@ -3310,10 +3463,16 @@ onBeforeUnmount(() => {
               class="w-full!"
             />
           </el-form-item>
-          <el-form-item :label="fieldLabel('主页链接')" class="creator-form-grid__wide">
+          <el-form-item
+            :label="fieldLabel('主页链接')"
+            class="creator-form-grid__wide"
+          >
             <el-input v-model="creatorForm.platformUrl" />
           </el-form-item>
-          <el-form-item :label="fieldLabel('联系方式')" class="creator-form-grid__wide">
+          <el-form-item
+            :label="fieldLabel('联系方式')"
+            class="creator-form-grid__wide"
+          >
             <el-input v-model="creatorForm.primaryContact" />
           </el-form-item>
           <el-form-item
@@ -3925,7 +4084,11 @@ onBeforeUnmount(() => {
           </template>
 
           <el-table v-else :data="cooperations" border class="report-table">
-            <el-table-column :label="fieldLabel('资源')" min-width="220" sortable>
+            <el-table-column
+              :label="fieldLabel('资源')"
+              min-width="220"
+              sortable
+            >
               <template #default="{ row }">
                 <div class="influencer-cell">
                   <el-avatar :src="row.resourceAvatarUrl">{{
@@ -3955,7 +4118,11 @@ onBeforeUnmount(() => {
                 <span v-else>-</span>
               </template>
             </el-table-column>
-            <el-table-column :label="fieldLabel('订单价格')" width="140" sortable>
+            <el-table-column
+              :label="fieldLabel('订单价格')"
+              width="140"
+              sortable
+            >
               <template #default="{ row }">{{
                 moneyText(row.quoteAmount, row.currency)
               }}</template>
@@ -4031,43 +4198,43 @@ onBeforeUnmount(() => {
           </div>
           <dl class="info-list">
             <div>
-              <dt>{{ fieldLabel('名称') }}</dt>
+              <dt>{{ fieldLabel("名称") }}</dt>
               <dd>{{ project?.name || "-" }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('目标') }}</dt>
+              <dt>{{ fieldLabel("目标") }}</dt>
               <dd>{{ project?.campaignType || "-" }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('周期') }}</dt>
+              <dt>{{ fieldLabel("周期") }}</dt>
               <dd>{{ cycleLabel }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('市场') }}</dt>
+              <dt>{{ fieldLabel("市场") }}</dt>
               <dd>{{ project?.targetMarket || "-" }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('语言') }}</dt>
+              <dt>{{ fieldLabel("语言") }}</dt>
               <dd>{{ project?.language || "-" }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('平台') }}</dt>
+              <dt>{{ fieldLabel("平台") }}</dt>
               <dd>{{ project?.platform || "-" }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('负责人') }}</dt>
+              <dt>{{ fieldLabel("负责人") }}</dt>
               <dd>{{ project?.owner || "-" }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('状态') }}</dt>
+              <dt>{{ fieldLabel("状态") }}</dt>
               <dd>{{ activeStatusLabel }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('预算') }}</dt>
+              <dt>{{ fieldLabel("预算") }}</dt>
               <dd>{{ moneyText(projectBudget) }}</dd>
             </div>
             <div class="wide">
-              <dt>{{ fieldLabel('需求摘要') }}</dt>
+              <dt>{{ fieldLabel("需求摘要") }}</dt>
               <dd>{{ cleanDisplayText(project?.brief) || "暂无需求摘要" }}</dd>
             </div>
           </dl>
@@ -5457,6 +5624,34 @@ onBeforeUnmount(() => {
   color: #898b91;
   font-size: 12px;
 }
+.creator-cell .creator-name-line {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  color: inherit;
+}
+.creator-platform-icons {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+.creator-platform-icons :deep(.platform-icon-badge) {
+  width: 22px;
+  height: 22px;
+}
+.creator-platform-icons :deep(.platform-icon-badge img) {
+  width: 18px;
+  height: 18px;
+}
+.creator-platform-icons :deep(.platform-icon-badge--x img) {
+  width: 14px;
+  height: 14px;
+}
+.creator-platform-icons :deep(.el-tag) {
+  height: 20px;
+  padding: 0 5px;
+  font-size: 10px;
+}
 .creator-platform {
   display: inline-flex;
   gap: 7px;
@@ -5686,6 +5881,17 @@ onBeforeUnmount(() => {
 .content-card-cooperation-types {
   margin-bottom: 9px;
 }
+.content-type-tag {
+  font-weight: 600;
+  border-radius: 0;
+}
+.content-card-type-tag {
+  margin-bottom: 9px;
+  margin-left: 6px;
+}
+.content-card-type-tag:first-child {
+  margin-left: 0;
+}
 .content-post-link {
   display: block;
   max-width: 100%;
@@ -5884,6 +6090,11 @@ onBeforeUnmount(() => {
 .content-detail-cooperation-types {
   margin-top: 10px;
 }
+.content-detail-type-tag {
+  margin-top: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
 .content-detail-author {
   display: flex;
   gap: 12px;
@@ -5904,7 +6115,7 @@ onBeforeUnmount(() => {
 }
 .content-detail-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 18px;
   overflow: hidden;
   background: #fff;
@@ -6088,9 +6299,6 @@ onBeforeUnmount(() => {
   }
   .content-detail-metrics article:nth-child(2) {
     border-right: 0;
-  }
-  .content-detail-metrics article:nth-child(-n + 2) {
-    border-bottom: 1px solid #e7e9ed;
   }
   .toolbar-actions {
     width: 100%;
