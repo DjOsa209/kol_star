@@ -2029,7 +2029,7 @@ async function ensureImportProject() {
   const name = standardizedImportProjectName.value;
   importProjectId.value = null;
   if (!hasCompleteImportProjectName.value) {
-    ElMessage.warning("请完整选择一级分类、产品线并填写三级项目名称");
+    ElMessage.warning("请选择总部/区域、产品线并填写项目名称");
     return false;
   }
   const existing = projects.value.find(project => project.name === name);
@@ -2740,7 +2740,7 @@ onUnmounted(() => {
             </el-select>
           </el-form-item>
           <template v-if="importTargetMode === 'new'">
-            <el-form-item :label="fieldLabel('一级分类')" required>
+            <el-form-item :label="fieldLabel('总部/区域')" required>
               <div class="project-name-fields">
                 <el-select
                   v-model="importProjectDivision"
@@ -2776,7 +2776,7 @@ onUnmounted(() => {
                 </el-select>
               </div>
             </el-form-item>
-            <el-form-item :label="fieldLabel('二级分类')" required>
+            <el-form-item :label="fieldLabel('产品线')" required>
               <el-select
                 v-model="importProjectProductLine"
                 filterable
@@ -2793,7 +2793,7 @@ onUnmounted(() => {
                 />
               </el-select>
             </el-form-item>
-            <el-form-item :label="fieldLabel('三级分类')" required>
+            <el-form-item :label="fieldLabel('项目名称')" required>
               <el-input
                 v-model="importProjectCustomName"
                 clearable
@@ -2809,7 +2809,8 @@ onUnmounted(() => {
                 <div class="standard-project-name-preview">
                   {{ standardizedImportProjectName || "完成分类后自动生成" }}
                 </div>
-                <small>命名规则：一级分类_产品线_自定义项目名</small>
+                <small>命名规则：总部/区域_产品线_项目名称</small>
+                <small>示例：总部_公关_NOTE 60 Series_世界杯营销</small>
               </div>
             </el-form-item>
             <el-form-item :label="fieldLabel('对接人')">

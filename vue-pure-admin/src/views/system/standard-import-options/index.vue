@@ -57,7 +57,7 @@ const fieldDefinitions = [
   },
   {
     key: "projectDivision",
-    label: "项目一级分类",
+    label: "总部/区域",
     description:
       "项目导入时的组织归属。保留“区域”选项可让导入人员继续选择世界国家和地区。",
     icon: "ri:organization-chart",
@@ -66,7 +66,7 @@ const fieldDefinitions = [
   {
     key: "projectProductLine",
     label: "项目产品线",
-    description: "项目导入时的二级分类，用于统一项目名称中的产品线表述。",
+    description: "项目导入时的产品线选项，用于统一项目名称中的产品线表述。",
     icon: "ri:archive-stack-line",
     readonly: false
   }

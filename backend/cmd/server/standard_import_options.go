@@ -14,7 +14,7 @@ var standardImportFieldLabels = map[string]string{
 	"platform":           "平台",
 	"cooperationType":    "合作类型",
 	"contentType":        "内容类型",
-	"projectDivision":    "项目一级分类",
+	"projectDivision":    "总部/区域",
 	"projectProductLine": "项目产品线",
 }
 
