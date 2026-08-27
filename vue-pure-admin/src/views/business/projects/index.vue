@@ -2746,6 +2746,7 @@ onUnmounted(() => {
                   v-model="importProjectDivision"
                   filterable
                   class="import-project-select"
+                  popper-class="import-project-select-popper"
                   placeholder="选择总部职能或区域"
                   :disabled="importProjectCreating"
                   @change="importProjectCountry = ''"
@@ -2762,6 +2763,7 @@ onUnmounted(() => {
                   v-model="importProjectCountry"
                   filterable
                   class="import-project-select"
+                  popper-class="import-project-select-popper"
                   placeholder="选择国家或地区"
                   :disabled="importProjectCreating"
                 >
@@ -2779,6 +2781,7 @@ onUnmounted(() => {
                 v-model="importProjectProductLine"
                 filterable
                 class="import-project-select"
+                popper-class="import-project-select-popper"
                 placeholder="选择产品线"
                 :disabled="importProjectCreating"
               >
