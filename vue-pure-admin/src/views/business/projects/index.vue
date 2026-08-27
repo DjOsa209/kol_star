@@ -9,6 +9,7 @@ import {
   onUnmounted
 } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
@@ -44,6 +45,7 @@ import {
 defineOptions({ name: "BusinessProjects" });
 
 const router = useRouter();
+const { locale } = useI18n();
 const projects = ref<any[]>([]);
 const selectedProjectRows = ref<any[]>([]);
 const cooperations = ref<any[]>([]);
@@ -1767,15 +1769,18 @@ function numberValue(value: unknown) {
 function formatCount(value: unknown) {
   const number = numberValue(value);
   if (number <= 0) return "-";
-  return number.toLocaleString("zh-CN");
+  return number.toLocaleString(locale.value === "en" ? "en-US" : "zh-CN");
 }
 
 function moneyText(value: unknown, currency = "USD") {
   const number = numberValue(value);
   if (number <= 0) return "-";
-  return `${currency} ${number.toLocaleString("zh-CN", {
-    maximumFractionDigits: 0
-  })}`;
+  return `${currency} ${number.toLocaleString(
+    locale.value === "en" ? "en-US" : "zh-CN",
+    {
+      maximumFractionDigits: 0
+    }
+  )}`;
 }
 
 function projectStatusText(status: unknown) {
@@ -2246,8 +2251,12 @@ onUnmounted(() => {
     <div class="campaign-center">
       <header class="center-header">
         <div>
-          <h1>项目管理</h1>
-          <p>统一管理项目、合作达人/媒体、合作内容与执行数据。</p>
+          <h1>{{ fieldLabel("项目管理") }}</h1>
+          <p>
+            {{
+              fieldLabel("统一管理项目、合作达人/媒体、合作内容与执行数据。")
+            }}
+          </p>
         </div>
         <div class="center-header-actions">
           <el-tag
@@ -2259,7 +2268,8 @@ onUnmounted(() => {
             }}
           </el-tag>
           <el-button @click="downloadProjectImportTemplate">
-            <IconifyIconOnline icon="ri:download-2-line" /> 下载标准模板
+            <IconifyIconOnline icon="ri:download-2-line" />
+            {{ fieldLabel("下载标准模板") }}
           </el-button>
           <el-upload
             :key="contentUploadKey"
@@ -2298,8 +2308,12 @@ onUnmounted(() => {
       <section class="projects-workspace">
         <div class="projects-heading">
           <div>
-            <h2>全部项目</h2>
-            <p>进入项目后管理合作达人/媒体、发布内容和执行进度。</p>
+            <h2>{{ fieldLabel("全部项目") }}</h2>
+            <p>
+              {{
+                fieldLabel("进入项目后管理合作达人/媒体、发布内容和执行进度。")
+              }}
+            </p>
           </div>
           <el-button
             type="danger"
@@ -2318,7 +2332,7 @@ onUnmounted(() => {
           <el-input
             v-model="projectSearch"
             clearable
-            placeholder="搜索项目、市场或对接人"
+            :placeholder="fieldLabel('搜索项目、市场或对接人')"
             class="project-search"
           >
             <template #prefix
@@ -2429,8 +2443,10 @@ onUnmounted(() => {
                     </el-button>
                   </template>
                   <div class="project-market-popover-list" @click.stop>
-                    <strong>全部目标市场</strong>
-                    <small>按该项目市场维度出品次数降序</small>
+                    <strong>{{ fieldLabel("全部目标市场") }}</strong>
+                    <small>{{
+                      fieldLabel("按该项目市场维度出品次数降序")
+                    }}</small>
                     <div
                       v-for="(market, index) in projectMarketItems(row)"
                       :key="market.name"
@@ -2444,7 +2460,9 @@ onUnmounted(() => {
                   </div>
                 </el-popover>
               </div>
-              <span v-else class="project-empty-value">未设置</span>
+              <span v-else class="project-empty-value">{{
+                fieldLabel("未设置")
+              }}</span>
             </template>
           </el-table-column>
           <el-table-column :label="fieldLabel('项目周期')" width="210">
@@ -2482,19 +2500,22 @@ onUnmounted(() => {
             </template>
           </el-table-column>
         </el-table>
-        <el-empty v-if="!visibleProjects.length" description="没有匹配的项目" />
+        <el-empty
+          v-if="!visibleProjects.length"
+          :description="fieldLabel('没有匹配的项目')"
+        />
       </section>
 
       <el-dialog
         v-model="projectDialog"
-        :title="editingProjectId ? '编辑项目' : '创建项目'"
+        :title="fieldLabel(editingProjectId ? '编辑项目' : '创建项目')"
         width="640px"
       >
         <el-form :model="projectForm" label-width="96px">
           <el-form-item :label="fieldLabel('项目名称')"
             ><el-input
               v-model="projectForm.name"
-              placeholder="例如：Infinix NOTE 60 新品推广"
+              :placeholder="fieldLabel('例如：Infinix NOTE 60 新品推广')"
           /></el-form-item>
           <el-form-item :label="fieldLabel('对接人')"
             ><el-input v-model="projectForm.owner"
@@ -2510,7 +2531,7 @@ onUnmounted(() => {
               collapse-tags
               collapse-tags-tooltip
               :max-collapse-tags="3"
-              placeholder="搜索中文、英文或国家代码"
+              :placeholder="fieldLabel('搜索中文、英文或国家代码')"
               class="w-full!"
               ><el-option
                 v-for="country in projectCountryOptions"
@@ -2532,8 +2553,8 @@ onUnmounted(() => {
               type="daterange"
               unlink-panels
               range-separator="至"
-              start-placeholder="开始日期"
-              end-placeholder="结束日期"
+              :start-placeholder="fieldLabel('开始日期')"
+              :end-placeholder="fieldLabel('结束日期')"
               format="YYYY-MM-DD"
               value-format="YYYY-MM-DD"
               class="w-full!"
@@ -2548,11 +2569,21 @@ onUnmounted(() => {
         >
       </el-dialog>
 
-      <el-dialog v-model="projectImportDialog" title="上传项目" width="780px">
+      <el-dialog
+        v-model="projectImportDialog"
+        :title="fieldLabel('上传项目')"
+        width="780px"
+      >
         <div class="project-import-intro">
           <div>
-            <strong>从 Excel 批量创建项目</strong>
-            <p>必填：项目名称。重复的「项目名称 + 目标市场」会自动跳过。</p>
+            <strong>{{ fieldLabel("从 Excel 批量创建项目") }}</strong>
+            <p>
+              {{
+                fieldLabel(
+                  "必填：项目名称。重复的「项目名称 + 目标市场」会自动跳过。"
+                )
+              }}
+            </p>
           </div>
           <el-button link type="primary" @click="downloadProjectImportTemplate"
             >下载模板</el-button
@@ -2575,7 +2606,11 @@ onUnmounted(() => {
           class="mt-3"
           type="info"
           :closable="false"
-          :title="`文件：${projectImportFileName}，共 ${projectImportRows.length} 行，可导入 ${validProjectImportRows.length} 行，异常 ${invalidProjectImportRows.length} 行`"
+          :title="
+            locale === 'en'
+              ? `File: ${projectImportFileName}; ${projectImportRows.length} rows, ${validProjectImportRows.length} importable, ${invalidProjectImportRows.length} invalid`
+              : `文件：${projectImportFileName}，共 ${projectImportRows.length} 行，可导入 ${validProjectImportRows.length} 行，异常 ${invalidProjectImportRows.length} 行`
+          "
         />
         <el-table
           v-if="projectImportRows.length"
@@ -2642,11 +2677,13 @@ onUnmounted(() => {
         </el-table>
         <el-empty
           v-else
-          description="选择 Excel 后会在此处预览项目数据"
+          :description="fieldLabel('选择 Excel 后会在此处预览项目数据')"
           :image-size="72"
         />
         <template #footer>
-          <el-button @click="projectImportDialog = false">取消</el-button>
+          <el-button @click="projectImportDialog = false">{{
+            fieldLabel("取消")
+          }}</el-button>
           <el-button
             type="primary"
             :loading="projectImportLoading"
@@ -2659,7 +2696,7 @@ onUnmounted(() => {
 
       <el-dialog
         v-model="importDialog"
-        title="确认项目内容导入"
+        :title="fieldLabel('确认项目内容导入')"
         width="92%"
         top="5vh"
         append-to="body"
@@ -2681,7 +2718,7 @@ onUnmounted(() => {
           class="mb-3"
           type="info"
           :closable="false"
-          title="正在读取标准模板并校验数据…"
+          :title="fieldLabel('正在读取标准模板并校验数据…')"
         />
         <el-alert
           v-else-if="importParseError"
@@ -2696,9 +2733,15 @@ onUnmounted(() => {
               v-model="importTargetMode"
               @change="handleImportTargetModeChange"
             >
-              <el-radio-button value="new">新建项目并导入</el-radio-button>
-              <el-radio-button value="replace">覆盖已有项目</el-radio-button>
-              <el-radio-button value="incremental">增量追加</el-radio-button>
+              <el-radio-button value="new">{{
+                fieldLabel("新建项目并导入")
+              }}</el-radio-button>
+              <el-radio-button value="replace">{{
+                fieldLabel("覆盖已有项目")
+              }}</el-radio-button>
+              <el-radio-button value="incremental">{{
+                fieldLabel("增量追加")
+              }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item
@@ -2719,7 +2762,7 @@ onUnmounted(() => {
                 importProjectOptionsError || '暂无可选择的已有项目'
               "
               class="import-project-select"
-              placeholder="搜索并选择已有项目"
+              :placeholder="fieldLabel('搜索并选择已有项目')"
               @change="handleImportProjectChange"
               @visible-change="handleImportProjectDropdownVisible"
             >
@@ -2747,7 +2790,7 @@ onUnmounted(() => {
                   filterable
                   class="import-project-select"
                   popper-class="import-project-select-popper"
-                  placeholder="选择总部职能或区域"
+                  :placeholder="fieldLabel('选择总部职能或区域')"
                   :disabled="importProjectCreating"
                   @change="importProjectCountry = ''"
                 >
@@ -2764,7 +2807,7 @@ onUnmounted(() => {
                   filterable
                   class="import-project-select"
                   popper-class="import-project-select-popper"
-                  placeholder="选择国家或地区"
+                  :placeholder="fieldLabel('选择国家或地区')"
                   :disabled="importProjectCreating"
                 >
                   <el-option
@@ -2782,7 +2825,7 @@ onUnmounted(() => {
                 filterable
                 class="import-project-select"
                 popper-class="import-project-select-popper"
-                placeholder="选择产品线"
+                :placeholder="fieldLabel('选择产品线')"
                 :disabled="importProjectCreating"
               >
                 <el-option
@@ -2800,7 +2843,7 @@ onUnmounted(() => {
                 maxlength="64"
                 show-word-limit
                 class="import-project-select"
-                placeholder="输入项目名称，如：世界杯营销"
+                :placeholder="fieldLabel('输入项目名称，如：世界杯营销')"
                 :disabled="importProjectCreating"
               />
             </el-form-item>
@@ -2809,8 +2852,12 @@ onUnmounted(() => {
                 <div class="standard-project-name-preview">
                   {{ standardizedImportProjectName || "完成分类后自动生成" }}
                 </div>
-                <small>命名规则：总部/区域_产品线_项目名称</small>
-                <small>示例：总部_公关_NOTE 60 Series_世界杯营销</small>
+                <small>{{
+                  fieldLabel("命名规则：总部/区域_产品线_项目名称")
+                }}</small>
+                <small>{{
+                  fieldLabel("示例：总部_公关_NOTE 60 Series_世界杯营销")
+                }}</small>
               </div>
             </el-form-item>
             <el-form-item :label="fieldLabel('对接人')">
@@ -2818,7 +2865,7 @@ onUnmounted(() => {
                 v-model="importProjectOwnerDraft"
                 clearable
                 class="import-project-select"
-                placeholder="输入项目对接人"
+                :placeholder="fieldLabel('输入项目对接人')"
                 :disabled="importProjectCreating"
               />
             </el-form-item>
@@ -2828,8 +2875,8 @@ onUnmounted(() => {
                 type="daterange"
                 unlink-panels
                 range-separator="至"
-                start-placeholder="开始日期"
-                end-placeholder="结束日期"
+                :start-placeholder="fieldLabel('开始日期')"
+                :end-placeholder="fieldLabel('结束日期')"
                 format="YYYY-MM-DD"
                 value-format="YYYY-MM-DD"
                 class="import-project-select"
@@ -2845,7 +2892,11 @@ onUnmounted(() => {
           type="info"
           :closable="false"
           show-icon
-          :title="`增量导入仅展示并提交新增数据；已隐藏文件内或项目中已有的重复数据 ${duplicateImportRows.length} 条。`"
+          :title="
+            locale === 'en'
+              ? `Incremental import only shows and submits new data; ${duplicateImportRows.length} duplicate rows already in the file or project are hidden.`
+              : `增量导入仅展示并提交新增数据；已隐藏文件内或项目中已有的重复数据 ${duplicateImportRows.length} 条。`
+          "
         />
         <el-alert
           v-else-if="importTargetMode === 'replace'"
@@ -2853,7 +2904,11 @@ onUnmounted(() => {
           type="warning"
           :closable="false"
           show-icon
-          title="覆盖导入会以本次文件解析结果为准更新项目，并移除该项目中未出现在本次文件里的历史合作与项目关联；全局达人/媒体资料不会被删除。"
+          :title="
+            fieldLabel(
+              '覆盖导入会以本次文件解析结果为准更新项目，并移除该项目中未出现在本次文件里的历史合作与项目关联；全局达人/媒体资料不会被删除。'
+            )
+          "
         />
         <el-alert
           v-else
@@ -2871,7 +2926,11 @@ onUnmounted(() => {
           class="mb-3"
           type="success"
           :closable="false"
-          :title="`标准数据区已自动识别。文件：${importFileName || '-'}，共 ${importRows.length} 行，当前模式展示并导入 ${rowsForImport.length} 行，其中合作内容 ${linkedImportRows.length} 行，异常 ${invalidImportRows.length} 行，已隐藏重复 ${duplicateImportRows.length} 行`"
+          :title="
+            locale === 'en'
+              ? `The standard data area was detected automatically. File: ${importFileName || '-'}; ${importRows.length} rows total, ${rowsForImport.length} shown and imported in this mode, ${linkedImportRows.length} collaboration-content rows, ${invalidImportRows.length} invalid, and ${duplicateImportRows.length} duplicates hidden.`
+              : `标准数据区已自动识别。文件：${importFileName || '-'}，共 ${importRows.length} 行，当前模式展示并导入 ${rowsForImport.length} 行，其中合作内容 ${linkedImportRows.length} 行，异常 ${invalidImportRows.length} 行，已隐藏重复 ${duplicateImportRows.length} 行`
+          "
         />
         <el-table
           :data="visibleImportRows"
@@ -2964,7 +3023,9 @@ onUnmounted(() => {
           {{ rowsForImport.length }} 条有效数据
         </p>
         <template #footer>
-          <el-button @click="importDialog = false">取消</el-button>
+          <el-button @click="importDialog = false">{{
+            fieldLabel("取消")
+          }}</el-button>
           <el-button
             type="primary"
             :loading="importLoading || importProjectCreating"
@@ -2995,8 +3056,8 @@ onUnmounted(() => {
     <div v-if="false" class="business-page">
       <section class="page-hero">
         <div>
-          <span>项目运营工作台</span>
-          <h1>项目管理</h1>
+          <span>{{ fieldLabel("项目运营工作台") }}</span>
+          <h1>{{ fieldLabel("项目管理") }}</h1>
           <p>
             从达人邀约、议价、内容交付到发布复盘，统一掌握每个营销项目
             的执行节奏与待处理事项。
@@ -3010,17 +3071,23 @@ onUnmounted(() => {
 
       <section class="review-summary-grid">
         <div>
-          <span>总体合作资源</span>
+          <span>{{ fieldLabel("总体合作资源") }}</span>
           <strong>{{ overallReview.resourceCount }}</strong>
-          <p>已回填合作记录 {{ overallReview.cooperationCount }} 条</p>
+          <p>
+            {{ fieldLabel("已回填合作记录") }}
+            {{ overallReview.cooperationCount }} {{ fieldLabel("条") }}
+          </p>
         </div>
         <div>
-          <span>总体曝光 / 播放</span>
+          <span>{{ fieldLabel("总体曝光 / 播放") }}</span>
           <strong>{{ formatCount(overallReview.totalReach) }}</strong>
-          <p>播放 {{ formatCount(overallReview.totalViews) }}</p>
+          <p>
+            {{ fieldLabel("播放") }}
+            {{ formatCount(overallReview.totalViews) }}
+          </p>
         </div>
         <div>
-          <span>总体互动率</span>
+          <span>{{ fieldLabel("总体互动率") }}</span>
           <strong>
             {{
               ratioPercent(
@@ -3029,14 +3096,19 @@ onUnmounted(() => {
               )
             }}
           </strong>
-          <p>转赞藏评 {{ formatCount(overallReview.totalEngagements) }}</p>
+          <p>
+            {{ fieldLabel("转赞藏评") }}
+            {{ formatCount(overallReview.totalEngagements) }}
+          </p>
         </div>
         <div>
-          <span>付费 CPM</span>
+          <span>{{ fieldLabel("付费 CPM") }}</span>
           <strong>{{
             cpmText(overallReview.totalCost, overallReview.totalReach)
           }}</strong>
-          <p>成本 {{ moneyText(overallReview.totalCost) }}</p>
+          <p>
+            {{ fieldLabel("成本") }} {{ moneyText(overallReview.totalCost) }}
+          </p>
         </div>
       </section>
 
@@ -3046,11 +3118,11 @@ onUnmounted(() => {
             <section class="overview-dashboard">
               <header class="overview-header">
                 <div>
-                  <span>营销项目总览</span>
+                  <span>{{ fieldLabel("营销项目总览") }}</span>
                   <el-select
                     v-model="selectedProjectId"
                     filterable
-                    placeholder="选择营销项目"
+                    :placeholder="fieldLabel('选择营销项目')"
                   >
                     <el-option
                       v-for="project in projects"
@@ -3091,12 +3163,12 @@ onUnmounted(() => {
 
               <section class="overview-metrics">
                 <article>
-                  <span>合作资源</span>
+                  <span>{{ fieldLabel("合作资源") }}</span>
                   <strong>{{ selectedProjectReview.resourceCount }}</strong>
                   <p>{{ selectedProjectReview.cooperationCount }} 条合作记录</p>
                 </article>
                 <article>
-                  <span>预算使用</span>
+                  <span>{{ fieldLabel("预算使用") }}</span>
                   <strong>{{
                     moneyText(campaignHealth.spent, selectedProject?.currency)
                   }}</strong>
@@ -3111,12 +3183,12 @@ onUnmounted(() => {
                   </p>
                 </article>
                 <article>
-                  <span>发布完成率</span>
+                  <span>{{ fieldLabel("发布完成率") }}</span>
                   <strong>{{ campaignHealth.completionRate }}%</strong>
                   <p>{{ campaignHealth.published }} 条内容已发布</p>
                 </article>
                 <article>
-                  <span>触达 / CPM</span>
+                  <span>{{ fieldLabel("触达 / CPM") }}</span>
                   <strong>{{
                     formatCount(selectedProjectReview.totalReach)
                   }}</strong>
@@ -3149,7 +3221,7 @@ onUnmounted(() => {
                 <article class="overview-panel">
                   <div class="section-heading">
                     <div>
-                      <strong>待处理事项</strong>
+                      <strong>{{ fieldLabel("待处理事项") }}</strong>
                       <span>{{ pendingActions.length }} 项需要人工确认</span>
                     </div>
                   </div>
@@ -3176,14 +3248,19 @@ onUnmounted(() => {
                       <IconifyIconOnline icon="ri:arrow-right-s-line" />
                     </button>
                   </div>
-                  <el-empty v-else description="当前没有需要人工处理的动作" />
+                  <el-empty
+                    v-else
+                    :description="fieldLabel('当前没有需要人工处理的动作')"
+                  />
                 </article>
 
                 <article class="overview-panel">
                   <div class="section-heading">
                     <div>
-                      <strong>最近合作</strong>
-                      <span>查看关键状态，详细交付进入执行页处理</span>
+                      <strong>{{ fieldLabel("最近合作") }}</strong>
+                      <span>{{
+                        fieldLabel("查看关键状态，详细交付进入执行页处理")
+                      }}</span>
                     </div>
                     <el-button
                       link
@@ -3235,7 +3312,7 @@ onUnmounted(() => {
               <aside class="campaign-side-nav">
                 <button type="button" class="active">
                   <IconifyIconOnline icon="ri:team-line" />
-                  <span>协作执行</span>
+                  <span>{{ fieldLabel("协作执行") }}</span>
                 </button>
                 <button type="button">
                   <IconifyIconOnline icon="ri:mail-line" />
@@ -3243,7 +3320,7 @@ onUnmounted(() => {
                 </button>
                 <button type="button">
                   <IconifyIconOnline icon="ri:bar-chart-box-line" />
-                  <span>报告与结算</span>
+                  <span>{{ fieldLabel("报告与结算") }}</span>
                 </button>
                 <button type="button">
                   <IconifyIconOnline icon="ri:wallet-3-line" />
@@ -3251,7 +3328,7 @@ onUnmounted(() => {
                 </button>
                 <button type="button">
                   <IconifyIconOnline icon="ri:file-list-3-line" />
-                  <span>项目信息</span>
+                  <span>{{ fieldLabel("项目信息") }}</span>
                 </button>
               </aside>
 
@@ -3268,7 +3345,7 @@ onUnmounted(() => {
                       <el-select
                         v-model="selectedProjectId"
                         filterable
-                        placeholder="选择项目"
+                        :placeholder="fieldLabel('选择项目')"
                       >
                         <el-option
                           v-for="project in projects"
@@ -3345,7 +3422,7 @@ onUnmounted(() => {
                 <section class="collaboration-panel">
                   <div class="collaboration-heading">
                     <div>
-                      <h2>协作执行</h2>
+                      <h2>{{ fieldLabel("协作执行") }}</h2>
                       <p>
                         {{ selectedProject?.platform || "全平台" }} ·
                         {{ selectedProjectReview.cooperationCount }}
@@ -3361,19 +3438,21 @@ onUnmounted(() => {
                   <div class="assurance-strip">
                     <div>
                       <IconifyIconOnline icon="ri:user-star-line" />
-                      <strong>真实内容流量</strong>
-                      <span>真实达人内容沉淀为可复盘数据</span>
+                      <strong>{{ fieldLabel("真实内容流量") }}</strong>
+                      <span>{{
+                        fieldLabel("真实达人内容沉淀为可复盘数据")
+                      }}</span>
                     </div>
                     <div>
                       <IconifyIconOnline icon="ri:shield-check-line" />
-                      <strong>发布保障</strong>
+                      <strong>{{ fieldLabel("发布保障") }}</strong>
                       <span
                         >{{ campaignHealth.completionRate }}% 发布完成率</span
                       >
                     </div>
                     <div>
                       <IconifyIconOnline icon="ri:line-chart-line" />
-                      <strong>当前 CPM</strong>
+                      <strong>{{ fieldLabel("当前 CPM") }}</strong>
                       <span>
                         {{
                           cpmText(
@@ -3399,7 +3478,7 @@ onUnmounted(() => {
                   <section class="pending-actions-row">
                     <div class="section-heading">
                       <div>
-                        <strong>待处理事项</strong>
+                        <strong>{{ fieldLabel("待处理事项") }}</strong>
                         <span>{{ pendingActions.length }} 项需要人工确认</span>
                       </div>
                       <el-tag effect="plain"
@@ -3430,7 +3509,10 @@ onUnmounted(() => {
                         <IconifyIconOnline icon="ri:arrow-right-s-line" />
                       </button>
                     </div>
-                    <el-empty v-else description="当前没有需要人工处理的动作" />
+                    <el-empty
+                      v-else
+                      :description="fieldLabel('当前没有需要人工处理的动作')"
+                    />
                   </section>
 
                   <section class="influencer-workspace">
@@ -3438,7 +3520,9 @@ onUnmounted(() => {
                       <div class="section-heading">
                         <div>
                           <strong>Influencer</strong>
-                          <span>点击行即可在页面内查看交付详情</span>
+                          <span>{{
+                            fieldLabel("点击行即可在页面内查看交付详情")
+                          }}</span>
                         </div>
                       </div>
                       <div class="stage-filter">
@@ -3541,7 +3625,7 @@ onUnmounted(() => {
                             <span />
                             <CooperationTypeTags
                               :value="focusedCooperation.cooperationType"
-                              empty-text="未设置合作形式"
+                              :empty-text="fieldLabel('未设置合作形式')"
                             />
                             <span />
                             {{ selectedProject?.platform || "全平台" }}
@@ -3558,21 +3642,23 @@ onUnmounted(() => {
                           系统辅助评估合作质量
                         </strong>
                         <div>
-                          <span>近期活跃</span>
-                          <span>互动表现较好</span>
-                          <span>数据可信</span>
-                          <span>履约记录良好</span>
+                          <span>{{ fieldLabel("近期活跃") }}</span>
+                          <span>{{ fieldLabel("互动表现较好") }}</span>
+                          <span>{{ fieldLabel("数据可信") }}</span>
+                          <span>{{ fieldLabel("履约记录良好") }}</span>
                         </div>
                       </div>
 
                       <div class="detail-tabs">
-                        <button type="button">概览</button>
-                        <button type="button" class="active">内容交付</button>
-                        <button type="button">评价</button>
+                        <button type="button">{{ fieldLabel("概览") }}</button>
+                        <button type="button" class="active">
+                          {{ fieldLabel("内容交付") }}
+                        </button>
+                        <button type="button">{{ fieldLabel("评价") }}</button>
                       </div>
 
                       <section class="content-info-block">
-                        <h3>内容信息</h3>
+                        <h3>{{ fieldLabel("内容信息") }}</h3>
                         <div class="tracking-link">
                           <span>
                             为该资源生成的专属追踪链接，用于发布内容效果追踪。
@@ -3585,7 +3671,9 @@ onUnmounted(() => {
                           >
                             {{ focusedCooperation.deliverableLinks }}
                           </el-link>
-                          <span v-else>等待达人提交内容链接</span>
+                          <span v-else>{{
+                            fieldLabel("等待达人提交内容链接")
+                          }}</span>
                         </div>
                       </section>
 
@@ -3681,7 +3769,9 @@ onUnmounted(() => {
           </el-tab-pane>
           <el-tab-pane :label="fieldLabel('项目管理')">
             <div class="toolbar">
-              <span class="toolbar-title">营销项目需求池</span>
+              <span class="toolbar-title">{{
+                fieldLabel("营销项目需求池")
+              }}</span>
             </div>
             <el-table :data="projects" stripe class="business-table">
               <el-table-column
@@ -3754,13 +3844,13 @@ onUnmounted(() => {
             <section class="review-report">
               <div class="review-report-heading">
                 <div>
-                  <strong>项目效果复盘</strong>
+                  <strong>{{ fieldLabel("项目效果复盘") }}</strong>
                   <span
                     >逐项目展示达人/媒体、曝光、互动、CPM，最后一行为 SUM
                     总和</span
                   >
                 </div>
-                <el-tag effect="plain">自动汇总</el-tag>
+                <el-tag effect="plain">{{ fieldLabel("自动汇总") }}</el-tag>
               </div>
               <el-table
                 :data="projectReviewTableRows"
@@ -3834,8 +3924,12 @@ onUnmounted(() => {
               <div class="ai-review-title">
                 <IconifyIconOnline icon="ri:sparkling-2-line" />
                 <div>
-                  <strong>智能复盘摘要（草稿）</strong>
-                  <span>根据当前已回填数据自动生成，提交复盘前请人工确认</span>
+                  <strong>{{ fieldLabel("智能复盘摘要（草稿）") }}</strong>
+                  <span>{{
+                    fieldLabel(
+                      "根据当前已回填数据自动生成，提交复盘前请人工确认"
+                    )
+                  }}</span>
                 </div>
               </div>
               <p>{{ overallReviewInsight }}</p>
@@ -3867,17 +3961,17 @@ onUnmounted(() => {
                 </div>
                 <div class="project-review-metrics">
                   <div>
-                    <span>达人 / 媒体</span>
+                    <span>{{ fieldLabel("达人 / 媒体") }}</span>
                     <strong>{{ project.review.resourceCount }}</strong>
                   </div>
                   <div>
-                    <span>总触达</span>
+                    <span>{{ fieldLabel("总触达") }}</span>
                     <strong>{{
                       formatCount(project.review.totalReach)
                     }}</strong>
                   </div>
                   <div>
-                    <span>总互动</span>
+                    <span>{{ fieldLabel("总互动") }}</span>
                     <strong>{{
                       formatCount(project.review.totalEngagements)
                     }}</strong>
@@ -3895,11 +3989,11 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div class="project-ai-insight">
-                  <strong>智能效果摘要</strong>
+                  <strong>{{ fieldLabel("智能效果摘要") }}</strong>
                   <p>{{ buildReviewInsight(project.name, project.review) }}</p>
                 </div>
                 <div v-if="project.review.bestItem" class="best-item">
-                  <span>最高触达内容</span>
+                  <span>{{ fieldLabel("最高触达内容") }}</span>
                   <el-link
                     v-if="project.review.bestItem.deliverableLinks"
                     type="primary"
@@ -3926,7 +4020,7 @@ onUnmounted(() => {
                 :show-file-list="false"
                 :on-change="handleUploadFile"
               >
-                <el-button>上传数据表</el-button>
+                <el-button>{{ fieldLabel("上传数据表") }}</el-button>
               </el-upload>
               <el-button type="primary" @click="openCreateCooperation">
                 <IconifyIconOnline icon="ri:add-line" class="mr-1" />
@@ -4066,7 +4160,7 @@ onUnmounted(() => {
 
       <el-dialog
         v-model="campaignWizardDialog"
-        title="新建营销项目"
+        :title="fieldLabel('新建营销项目')"
         width="1080px"
         top="4vh"
         class="campaign-wizard-dialog"
@@ -4091,7 +4185,7 @@ onUnmounted(() => {
             <div v-if="wizardActiveStep === 0" class="wizard-section">
               <div class="ai-generator">
                 <div>
-                  <strong>智能生成项目基础信息</strong>
+                  <strong>{{ fieldLabel("智能生成项目基础信息") }}</strong>
                   <p>
                     输入官网 URL 后生成品牌、产品和项目初稿，再由你校准后发布。
                   </p>
@@ -4115,13 +4209,17 @@ onUnmounted(() => {
               <el-alert
                 type="info"
                 :closable="false"
-                title="以下内容由创建向导生成，请根据实际项目检查并调整。"
+                :title="
+                  fieldLabel(
+                    '以下内容由创建向导生成，请根据实际项目检查并调整。'
+                  )
+                "
               />
 
               <div class="wizard-form-card">
                 <div class="wizard-card-title">
-                  <strong>品牌与项目基础信息</strong>
-                  <span>基础信息</span>
+                  <strong>{{ fieldLabel("品牌与项目基础信息") }}</strong>
+                  <span>{{ fieldLabel("基础信息") }}</span>
                 </div>
                 <el-form label-position="top">
                   <div class="logo-upload-row">
@@ -4138,7 +4236,9 @@ onUnmounted(() => {
                     >
                       生成首字母标识
                     </el-button>
-                    <span>如需正式 Logo，可后续在项目资料中补充。</span>
+                    <span>{{
+                      fieldLabel("如需正式 Logo，可后续在项目资料中补充。")
+                    }}</span>
                   </div>
                   <div class="wizard-two-col">
                     <el-form-item :label="fieldLabel('品牌名称')">
@@ -4184,8 +4284,10 @@ onUnmounted(() => {
 
             <div v-else-if="wizardActiveStep === 1" class="wizard-section">
               <div class="wizard-card-title">
-                <strong>达人匹配设置</strong>
-                <span>控制匹配规模、成本、人群和审批策略。</span>
+                <strong>{{ fieldLabel("达人匹配设置") }}</strong>
+                <span>{{
+                  fieldLabel("控制匹配规模、成本、人群和审批策略。")
+                }}</span>
               </div>
               <el-form label-position="top">
                 <div class="wizard-two-col">
@@ -4236,15 +4338,19 @@ onUnmounted(() => {
 
                 <div class="wizard-switches">
                   <div>
-                    <strong>创意/脚本提交</strong>
-                    <span>要求达人在制作前先提交创意方向或脚本。</span>
+                    <strong>{{ fieldLabel("创意/脚本提交") }}</strong>
+                    <span>{{
+                      fieldLabel("要求达人在制作前先提交创意方向或脚本。")
+                    }}</span>
                     <el-switch
                       v-model="campaignWizardForm.idealScriptSubmission"
                     />
                   </div>
                   <div>
-                    <strong>自动审批</strong>
-                    <span>低风险达人通过关键质量检查后自动进入下一步。</span>
+                    <strong>{{ fieldLabel("自动审批") }}</strong>
+                    <span>{{
+                      fieldLabel("低风险达人通过关键质量检查后自动进入下一步。")
+                    }}</span>
                     <el-switch v-model="campaignWizardForm.automaticApproval" />
                   </div>
                 </div>
@@ -4279,8 +4385,10 @@ onUnmounted(() => {
 
             <div v-else-if="wizardActiveStep === 2" class="wizard-section">
               <div class="wizard-card-title">
-                <strong>预览样本达人并校准匹配方向</strong>
-                <span> 发布前先对样本达人给出匹配/不匹配反馈。 </span>
+                <strong>{{ fieldLabel("预览样本达人并校准匹配方向") }}</strong>
+                <span>{{
+                  fieldLabel("发布前先对样本达人给出匹配/不匹配反馈。")
+                }}</span>
               </div>
               <div class="sample-match-list">
                 <article
@@ -4302,8 +4410,14 @@ onUnmounted(() => {
                     <span>{{ item.reason }}</span>
                   </div>
                   <div class="sample-metrics">
-                    <span>报价 {{ moneyText(item.price) }}</span>
-                    <span>预计播放 {{ item.predictedViews }}</span>
+                    <span
+                      >{{ fieldLabel("报价") }}
+                      {{ moneyText(item.price) }}</span
+                    >
+                    <span
+                      >{{ fieldLabel("预计播放") }}
+                      {{ item.predictedViews }}</span
+                    >
                     <span>CPM {{ item.predictedCpm }}</span>
                   </div>
                   <div class="sample-actions">
@@ -4325,14 +4439,18 @@ onUnmounted(() => {
               <el-alert
                 type="success"
                 :closable="false"
-                :title="`已记录反馈：${wizardMatchedCount} 个匹配，${wizardRejectedCount} 个不匹配。`"
+                :title="
+                  locale === 'en'
+                    ? `Feedback recorded: ${wizardMatchedCount} matched and ${wizardRejectedCount} not matched.`
+                    : `已记录反馈：${wizardMatchedCount} 个匹配，${wizardRejectedCount} 个不匹配。`
+                "
               />
             </div>
 
             <div v-else class="wizard-section">
               <div class="wizard-card-title">
-                <strong>预算与效果预测</strong>
-                <span>确认预算、预计结果和项目周期。</span>
+                <strong>{{ fieldLabel("预算与效果预测") }}</strong>
+                <span>{{ fieldLabel("确认预算、预计结果和项目周期。") }}</span>
               </div>
               <el-form label-position="top">
                 <div class="wizard-two-col">
@@ -4373,27 +4491,27 @@ onUnmounted(() => {
               </el-form>
               <div class="forecast-grid">
                 <div>
-                  <span>预计达人</span>
+                  <span>{{ fieldLabel("预计达人") }}</span>
                   <strong>{{ wizardForecast.influencerCount }}</strong>
                 </div>
                 <div>
-                  <span>预计播放</span>
+                  <span>{{ fieldLabel("预计播放") }}</span>
                   <strong>{{
                     formatCount(wizardForecast.estimatedViews)
                   }}</strong>
                 </div>
                 <div>
-                  <span>预计点击</span>
+                  <span>{{ fieldLabel("预计点击") }}</span>
                   <strong>{{
                     formatCount(wizardForecast.estimatedClicks)
                   }}</strong>
                 </div>
                 <div>
-                  <span>预计 CPM</span>
+                  <span>{{ fieldLabel("预计 CPM") }}</span>
                   <strong>{{ moneyText(wizardForecast.cpm) }}</strong>
                 </div>
                 <div>
-                  <span>预计 CPC</span>
+                  <span>{{ fieldLabel("预计 CPC") }}</span>
                   <strong>{{ moneyText(wizardForecast.cpc) }}</strong>
                 </div>
               </div>
@@ -4430,7 +4548,9 @@ onUnmounted(() => {
                     <el-tag v-else-if="row.matched === false" type="danger"
                       >不匹配</el-tag
                     >
-                    <el-tag v-else effect="plain">待确认</el-tag>
+                    <el-tag v-else effect="plain">{{
+                      fieldLabel("待确认")
+                    }}</el-tag>
                   </template>
                 </el-table-column>
               </el-table>
@@ -4438,7 +4558,9 @@ onUnmounted(() => {
           </section>
         </div>
         <template #footer>
-          <el-button @click="campaignWizardDialog = false">保存草稿</el-button>
+          <el-button @click="campaignWizardDialog = false">{{
+            fieldLabel("保存草稿")
+          }}</el-button>
           <el-button
             :disabled="wizardActiveStep === 0"
             @click="previousCampaignWizardStep"
@@ -4465,7 +4587,7 @@ onUnmounted(() => {
 
       <el-dialog
         v-model="projectDialog"
-        :title="editingProjectId ? '编辑项目' : '创建项目'"
+        :title="fieldLabel(editingProjectId ? '编辑项目' : '创建项目')"
         width="640px"
       >
         <el-form :model="projectForm" label-width="96px">
@@ -4478,7 +4600,7 @@ onUnmounted(() => {
               multiple
               filterable
               collapse-tags
-              placeholder="搜索国家"
+              :placeholder="fieldLabel('搜索国家')"
               class="w-full!"
             >
               <el-option
@@ -4493,8 +4615,8 @@ onUnmounted(() => {
               v-model="projectCycleRange"
               type="daterange"
               range-separator="至"
-              start-placeholder="开始日期"
-              end-placeholder="结束日期"
+              :start-placeholder="fieldLabel('开始日期')"
+              :end-placeholder="fieldLabel('结束日期')"
               value-format="YYYY-MM-DD"
               class="w-full!"
             />
@@ -4519,14 +4641,20 @@ onUnmounted(() => {
           /></el-form-item>
         </el-form>
         <template #footer>
-          <el-button @click="projectDialog = false">取消</el-button>
-          <el-button type="primary" @click="submitProject">保存</el-button>
+          <el-button @click="projectDialog = false">{{
+            fieldLabel("取消")
+          }}</el-button>
+          <el-button type="primary" @click="submitProject">{{
+            fieldLabel("保存")
+          }}</el-button>
         </template>
       </el-dialog>
 
       <el-dialog
         v-model="cooperationDialog"
-        :title="editingCooperationId ? '编辑合作记录' : '新增合作记录'"
+        :title="
+          fieldLabel(editingCooperationId ? '编辑合作记录' : '新增合作记录')
+        "
         width="640px"
       >
         <el-form :model="cooperationForm" label-width="100px">

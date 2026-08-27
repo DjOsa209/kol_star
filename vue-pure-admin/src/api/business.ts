@@ -50,8 +50,14 @@ export const getResourceSyncStatus = () => {
   return http.request<Result>("get", "/business/resources/sync-status");
 };
 
-export const getResourceExtraFields = () => {
-  return http.request<Result<any[]>>("get", "/business/resources/extra-fields");
+export const getResourceExtraFields = (params?: { locale?: string }) => {
+  return http.request<Result<any[]>>(
+    "get",
+    "/business/resources/extra-fields",
+    {
+      params
+    }
+  );
 };
 
 export const getResourcePosts = (data?: object) => {
@@ -60,6 +66,18 @@ export const getResourcePosts = (data?: object) => {
 
 export const importResources = (data?: object) => {
   return http.request<Result>("post", "/business/resources/import", { data });
+};
+
+export const translateResources = (data: {
+  ids: number[];
+  targetLanguage?: string;
+}) => {
+  return http.request<Result>(
+    "post",
+    "/business/resources/translate",
+    { data },
+    { timeout: 130000 }
+  );
 };
 
 export const recommendResources = (data?: object) => {

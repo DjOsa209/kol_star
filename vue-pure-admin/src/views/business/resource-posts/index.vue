@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { getResourcePosts } from "@/api/business";
+import { useI18n } from "vue-i18n";
+import { getResourcePosts, translateResources } from "@/api/business";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import { fieldLabel } from "@/utils/fieldI18n";
 
@@ -9,6 +10,7 @@ defineOptions({ name: "BusinessResourcePosts" });
 
 const route = useRoute();
 const router = useRouter();
+const { locale } = useI18n();
 const loading = ref(false);
 const list = ref<any[]>([]);
 const total = ref(0);
@@ -38,13 +40,15 @@ function formatDateTime(value: unknown) {
   if (!value) return "-";
   const time = Number(value);
   if (!Number.isFinite(time)) return String(value);
-  return new Date(time).toLocaleString("zh-CN");
+  return new Date(time).toLocaleString(
+    locale.value === "en" ? "en-US" : "zh-CN"
+  );
 }
 
 function formatCount(value: unknown) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return "0";
-  return number.toLocaleString("zh-CN");
+  return number.toLocaleString(locale.value === "en" ? "en-US" : "zh-CN");
 }
 
 function avatarText(row: any) {
@@ -71,15 +75,32 @@ function openUrl(url: string) {
 
 async function loadData() {
   loading.value = true;
+  if (locale.value === "en" && search.resourceId > 0) {
+    await translateResources({
+      ids: [search.resourceId],
+      targetLanguage: "en"
+    });
+  }
   const res = await getResourcePosts({
     ...search,
     currentPage: currentPage.value,
-    pageSize: pageSize.value
+    pageSize: pageSize.value,
+    locale: locale.value
   });
   loading.value = false;
   if (res.code !== 0) return;
   const data = res.data || {};
-  list.value = data.list || [];
+  list.value = (data.list || []).map((item: any) => ({
+    ...item,
+    title:
+      locale.value === "en" && item.localized?.title
+        ? item.localized.title
+        : item.title,
+    description:
+      locale.value === "en" && item.localized?.description
+        ? item.localized.description
+        : item.description
+  }));
   total.value = Number(data.total || 0);
   resource.value = data.resource || {};
   creatorAvatarFailed.value = false;
@@ -136,9 +157,13 @@ onMounted(loadData);
     <section class="page-hero">
       <div>
         <span>Content Data</span>
-        <h1>作品数据</h1>
+        <h1>{{ fieldLabel("作品数据") }}</h1>
         <p>
-          查看同步下来的近期视频/帖子，核对播放、点赞、评论、分享和原始作品链接。
+          {{
+            fieldLabel(
+              "查看同步下来的近期视频/帖子，核对播放、点赞、评论、分享和原始作品链接。"
+            )
+          }}
         </p>
       </div>
     </section>
@@ -159,13 +184,19 @@ onMounted(loadData);
           <span
             >{{ resource.platform }} {{ resource.platformHandle || "" }}</span
           >
-          <span>粉丝 {{ formatCount(resource.followers) }}</span>
-          <span>上次同步 {{ formatDateTime(resource.lastSyncAt) }}</span>
+          <span
+            >{{ fieldLabel("粉丝") }}
+            {{ formatCount(resource.followers) }}</span
+          >
+          <span
+            >{{ fieldLabel("上次同步") }}
+            {{ formatDateTime(resource.lastSyncAt) }}</span
+          >
         </div>
       </div>
       <div class="stats-grid">
         <div v-for="[label, value] in statItems" :key="label">
-          <span>{{ label }}</span>
+          <span>{{ fieldLabel(label) }}</span>
           <strong>{{ formatCount(value) }}</strong>
         </div>
       </div>
@@ -180,7 +211,7 @@ onMounted(loadData);
           <el-select
             v-model="search.platform"
             clearable
-            placeholder="全部"
+            :placeholder="fieldLabel('全部')"
             class="filter-select"
           >
             <el-option label="YouTube" value="YouTube" />
@@ -192,15 +223,15 @@ onMounted(loadData);
           <el-input
             v-model="search.keyword"
             clearable
-            placeholder="标题/描述/达人"
+            :placeholder="fieldLabel('标题/描述/达人')"
           />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="searchData">
             <IconifyIconOnline icon="ri:search-line" class="mr-1" />
-            查询
+            {{ fieldLabel("查询") }}
           </el-button>
-          <el-button @click="resetFilter">重置</el-button>
+          <el-button @click="resetFilter">{{ fieldLabel("重置") }}</el-button>
         </el-form-item>
       </el-form>
     </section>
@@ -218,22 +249,36 @@ onMounted(loadData);
         <div class="post-body">
           <div class="post-title">
             <button type="button" @click="openUrl(post.postUrl)">
-              {{ post.title || "未命名作品" }}
+              {{ post.title || fieldLabel("未命名作品") }}
             </button>
             <PlatformIconBadge :platform="post.platform" />
           </div>
-          <p>{{ post.description || "暂无描述" }}</p>
+          <p>{{ post.description || fieldLabel("暂无描述") }}</p>
           <div class="post-meta">
             <span>{{ formatDateTime(post.publishedAt) }}</span>
-            <span>时长 {{ durationText(post.durationSeconds) }}</span>
+            <span
+              >{{ fieldLabel("时长") }}
+              {{ durationText(post.durationSeconds) }}</span
+            >
             <span v-if="post.mediaType">{{ post.mediaType }}</span>
           </div>
           <div class="post-stats">
-            <span>播放 {{ formatCount(post.viewCount) }}</span>
-            <span>点赞 {{ formatCount(post.likeCount) }}</span>
-            <span>评论 {{ formatCount(post.commentCount) }}</span>
-            <span>分享 {{ formatCount(post.shareCount) }}</span>
-            <span>收藏 {{ formatCount(post.saveCount) }}</span>
+            <span
+              >{{ fieldLabel("播放") }} {{ formatCount(post.viewCount) }}</span
+            >
+            <span
+              >{{ fieldLabel("点赞") }} {{ formatCount(post.likeCount) }}</span
+            >
+            <span
+              >{{ fieldLabel("评论") }}
+              {{ formatCount(post.commentCount) }}</span
+            >
+            <span
+              >{{ fieldLabel("分享") }} {{ formatCount(post.shareCount) }}</span
+            >
+            <span
+              >{{ fieldLabel("收藏") }} {{ formatCount(post.saveCount) }}</span
+            >
           </div>
           <div class="post-actions">
             <el-button
@@ -243,20 +288,23 @@ onMounted(loadData);
               @click="openUrl(post.postUrl)"
             >
               <IconifyIconOnline icon="ri:external-link-line" class="mr-1" />
-              打开作品
+              {{ fieldLabel("打开作品") }}
             </el-button>
-            <span>同步 {{ formatDateTime(post.syncedAt) }}</span>
+            <span
+              >{{ fieldLabel("同步") }}
+              {{ formatDateTime(post.syncedAt) }}</span
+            >
           </div>
         </div>
       </article>
       <el-empty
         v-if="!loading && list.length === 0"
-        description="暂无作品数据"
+        :description="fieldLabel('暂无作品数据')"
       />
     </section>
 
     <div class="table-footer">
-      <span>共 {{ total }} 条作品</span>
+      <span>{{ fieldLabel("共") }} {{ total }} {{ fieldLabel("条作品") }}</span>
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"

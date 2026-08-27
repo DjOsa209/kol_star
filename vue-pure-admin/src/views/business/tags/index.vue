@@ -77,7 +77,7 @@ async function loadData() {
 async function submit() {
   const res = await createTag(form);
   if (res.code === 0) {
-    ElMessage.success("保存成功");
+    ElMessage.success(fieldLabel("保存成功"));
     dialogVisible.value = false;
     form.name = "";
     loadData();
@@ -92,30 +92,37 @@ onMounted(loadData);
     <section class="page-header">
       <div>
         <span class="eyebrow">Tag Taxonomy</span>
-        <h1>标签体系</h1>
-        <p>按分类平铺展示资源标签，快速识别颜色、状态与运营归属。</p>
+        <h1>{{ fieldLabel("标签体系") }}</h1>
+        <p>
+          {{
+            fieldLabel("按分类平铺展示资源标签，快速识别颜色、状态与运营归属。")
+          }}
+        </p>
       </div>
       <el-button type="primary" :icon="AddLine" @click="dialogVisible = true">
-        新增标签
+        {{ fieldLabel("新增标签") }}
       </el-button>
     </section>
 
     <section class="summary-grid">
       <div class="summary-card summary-card--blue">
-        <span>标签总量</span>
+        <span>{{ fieldLabel("标签总量") }}</span>
         <strong>{{ totalCount }}</strong>
       </div>
       <div class="summary-card summary-card--green">
-        <span>启用标签</span>
+        <span>{{ fieldLabel("启用标签") }}</span>
         <strong>{{ activeCount }}</strong>
       </div>
       <div class="summary-card summary-card--slate">
-        <span>分类数量</span>
+        <span>{{ fieldLabel("分类数量") }}</span>
         <strong>{{ categoryCount }}</strong>
       </div>
     </section>
 
-    <el-empty v-if="categoryGroups.length === 0" description="暂无标签" />
+    <el-empty
+      v-if="categoryGroups.length === 0"
+      :description="fieldLabel('暂无标签')"
+    />
 
     <section v-else class="category-grid">
       <article
@@ -126,9 +133,11 @@ onMounted(loadData);
       >
         <header class="category-header">
           <div>
-            <span class="category-kicker">{{ group.items.length }} 个标签</span>
-            <h2>{{ group.category }}</h2>
-            <p>{{ group.meta.desc }}</p>
+            <span class="category-kicker"
+              >{{ group.items.length }} {{ fieldLabel("个标签") }}</span
+            >
+            <h2>{{ fieldLabel(group.category) }}</h2>
+            <p>{{ fieldLabel(group.meta.desc) }}</p>
           </div>
           <i />
         </header>
@@ -146,14 +155,18 @@ onMounted(loadData);
               class="tag-status"
               :class="{ 'is-disabled': item.status !== '启用' }"
             >
-              {{ item.status }}
+              {{ fieldLabel(item.status) }}
             </span>
           </div>
         </div>
       </article>
     </section>
 
-    <el-dialog v-model="dialogVisible" title="新增标签" width="420px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="fieldLabel('新增标签')"
+      width="420px"
+    >
       <el-form :model="form" label-width="88px">
         <el-form-item :label="fieldLabel('标签名称')"
           ><el-input v-model="form.name"
@@ -173,8 +186,12 @@ onMounted(loadData);
         /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">保存</el-button>
+        <el-button @click="dialogVisible = false">{{
+          fieldLabel("取消")
+        }}</el-button>
+        <el-button type="primary" @click="submit">{{
+          fieldLabel("保存")
+        }}</el-button>
       </template>
     </el-dialog>
   </div>

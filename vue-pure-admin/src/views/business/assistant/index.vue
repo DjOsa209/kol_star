@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { useI18n } from "vue-i18n";
 import * as XLSX from "xlsx";
 import { fieldLabel } from "@/utils/fieldI18n";
 import {
@@ -11,10 +12,14 @@ import {
   getMarketOptions,
   getProjectList,
   getResourcePosts,
-  recommendResources
+  recommendResources,
+  translateResources
 } from "@/api/business";
 
 defineOptions({ name: "BusinessAssistant" });
+
+const { locale } = useI18n();
+const isEnglish = computed(() => locale.value === "en");
 
 const loading = ref(false);
 const elapsedSeconds = ref(0);
@@ -483,7 +488,7 @@ function stepStatus(index: number) {
 }
 
 function moneyText(value: unknown) {
-  return Number(value || 0).toLocaleString("zh-CN");
+  return Number(value || 0).toLocaleString(isEnglish.value ? "en-US" : "zh-CN");
 }
 
 function resolveRecommendError(error: unknown) {
@@ -506,6 +511,12 @@ function resolveRecommendError(error: unknown) {
 
 function compactNumber(value: unknown) {
   const number = Number(value || 0);
+  if (isEnglish.value) {
+    return new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 1
+    }).format(number);
+  }
   if (number >= 100000000) return `${Math.round(number / 100000000)}亿`;
   if (number >= 10000) return `${Math.round(number / 10000)}万`;
   return number.toLocaleString("zh-CN");
@@ -519,7 +530,7 @@ function numberValue(value: unknown) {
 function formatCount(value: unknown) {
   const number = numberValue(value);
   if (number <= 0) return "-";
-  return number.toLocaleString("zh-CN");
+  return number.toLocaleString(isEnglish.value ? "en-US" : "zh-CN");
 }
 
 function percentText(value: unknown) {
@@ -543,9 +554,12 @@ function primaryReach(row: any) {
 function moneyWithCurrency(value: unknown, currency = "USD") {
   const number = numberValue(value);
   if (number <= 0) return "-";
-  return `${currency} ${number.toLocaleString("zh-CN", {
-    maximumFractionDigits: 0
-  })}`;
+  return `${currency} ${number.toLocaleString(
+    isEnglish.value ? "en-US" : "zh-CN",
+    {
+      maximumFractionDigits: 0
+    }
+  )}`;
 }
 
 function toggleMatched(item: any) {
@@ -614,17 +628,34 @@ async function openResourceProfile(item: any) {
   profileDrawerVisible.value = true;
   profileLoading.value = true;
   try {
+    if (locale.value === "en") {
+      await translateResources({
+        ids: [Number(item.id)],
+        targetLanguage: "en"
+      });
+    }
     const res = await getResourcePosts({
       resourceId: item.id,
       currentPage: 1,
-      pageSize: 12
+      pageSize: 12,
+      locale: locale.value
     });
     if (res.code === 0) {
       selectedResource.value = {
         ...item,
         ...(res.data.resource || {})
       };
-      selectedResourcePosts.value = res.data.list || [];
+      selectedResourcePosts.value = (res.data.list || []).map((post: any) => ({
+        ...post,
+        title:
+          locale.value === "en" && post.localized?.title
+            ? post.localized.title
+            : post.title,
+        description:
+          locale.value === "en" && post.localized?.description
+            ? post.localized.description
+            : post.description
+      }));
       selectedResourcePostStats.value = res.data.stats || {};
     }
   } finally {
@@ -696,17 +727,26 @@ onBeforeUnmount(stopTimer);
           <IconifyIconOnline icon="ri:sparkling-2-line" />
         </div>
         <div>
-          <h1>资源智能助手</h1>
-          <p>单次任务执行 · 全球媒体 / KOL 资源智能体</p>
+          <h1>{{ fieldLabel("资源智能助手") }}</h1>
+          <p>{{ fieldLabel("单次任务执行 · 全球媒体 / KOL 资源智能体") }}</p>
         </div>
       </div>
       <div class="status-pill" :class="{ 'is-loading': loading }">
-        {{ statusText }}
+        {{ fieldLabel(statusText) }}
       </div>
     </header>
 
     <section class="intro-panel">
-      嗨，我是你的资源智能助手。把项目需求、产品信息或策略方案给我--<strong>目标市场、预算、想要的资源类型和投放目标</strong>。我会从资源库里挑出最匹配的资源，并给你<strong>推荐排序、匹配理由和过滤逻辑</strong>。
+      {{
+        fieldLabel(
+          "嗨，我是你的资源智能助手。把项目需求、产品信息或策略方案给我--"
+        )
+      }}<strong>{{
+        fieldLabel("目标市场、预算、想要的资源类型和投放目标")
+      }}</strong
+      >。{{ fieldLabel("我会从资源库里挑出最匹配的资源，并给你")
+      }}<strong>{{ fieldLabel("推荐排序、匹配理由和过滤逻辑") }}</strong
+      >。
     </section>
 
     <section class="composer-card">
@@ -717,16 +757,17 @@ onBeforeUnmount(stopTimer);
         maxlength="1000"
         resize="none"
         show-word-limit
-        placeholder="输入市场、产品、预算、平台和投放目标..."
+        :placeholder="fieldLabel('输入市场、产品、预算、平台和投放目标...')"
       />
 
       <div class="upload-panel">
         <div>
-          <strong>产品信息 / 策略方案</strong>
-          <span
-            >支持 TXT、Markdown、CSV、Excel；PDF/Docx
-            会先作为文件上下文进入推荐。</span
-          >
+          <strong>{{ fieldLabel("产品信息 / 策略方案") }}</strong>
+          <span>{{
+            fieldLabel(
+              "支持 TXT、Markdown、CSV、Excel；PDF/Docx 会先作为文件上下文进入推荐。"
+            )
+          }}</span>
         </div>
         <el-upload
           accept=".txt,.md,.csv,.xlsx,.xls,.pdf,.doc,.docx"
@@ -736,7 +777,7 @@ onBeforeUnmount(stopTimer);
         >
           <el-button>
             <IconifyIconOnline icon="ri:attachment-2" class="mr-1" />
-            上传资料
+            {{ fieldLabel("上传资料") }}
           </el-button>
         </el-upload>
       </div>
@@ -749,7 +790,7 @@ onBeforeUnmount(stopTimer);
             <span>{{ file.summary }}</span>
           </div>
           <el-button link type="danger" @click="removeAttachment(file.uid)">
-            移除
+            {{ fieldLabel("移除") }}
           </el-button>
         </div>
       </div>
@@ -764,22 +805,22 @@ onBeforeUnmount(stopTimer);
             class="filter-select"
             @change="handleMarketChange"
           >
-            <template #prefix>市场</template>
+            <template #prefix>{{ fieldLabel("市场") }}</template>
             <el-option
               v-for="market in marketOptions"
               :key="market"
-              :label="market"
+              :label="fieldLabel(market)"
               :value="market"
             >
               <div class="market-option">
-                <span>{{ market }}</span>
+                <span>{{ fieldLabel(market) }}</span>
                 <el-button
                   link
                   type="danger"
                   @mousedown.stop
                   @click="removeMarketOption(market, $event)"
                 >
-                  删除
+                  {{ fieldLabel("删除") }}
                 </el-button>
               </div>
             </el-option>
@@ -788,13 +829,13 @@ onBeforeUnmount(stopTimer);
             v-model="form.resourceType"
             clearable
             class="filter-select"
-            placeholder="全部"
+            :placeholder="fieldLabel('全部')"
           >
-            <template #prefix>类型</template>
+            <template #prefix>{{ fieldLabel("类型") }}</template>
             <el-option
               v-for="type in typeOptions"
               :key="type"
-              :label="type"
+              :label="fieldLabel(type)"
               :value="type"
             />
           </el-select>
@@ -802,9 +843,9 @@ onBeforeUnmount(stopTimer);
             v-model="form.platform"
             clearable
             class="filter-select"
-            placeholder="全部"
+            :placeholder="fieldLabel('全部')"
           >
-            <template #prefix>平台</template>
+            <template #prefix>{{ fieldLabel("平台") }}</template>
             <el-option
               v-for="platform in platformOptions"
               :key="platform"
@@ -820,10 +861,10 @@ onBeforeUnmount(stopTimer);
             :disabled="!loading"
             @click="stopGeneration"
           >
-            停止
+            {{ fieldLabel("停止") }}
           </el-button>
           <el-button type="primary" :loading="loading" @click="generate">
-            {{ loading ? "生成中..." : "生成推荐" }}
+            {{ fieldLabel(loading ? "生成中..." : "生成推荐") }}
           </el-button>
         </div>
       </div>
@@ -859,8 +900,8 @@ onBeforeUnmount(stopTimer);
             />
           </span>
           <div>
-            <strong>{{ step.title }}</strong>
-            <p>{{ step.details }}</p>
+            <strong>{{ fieldLabel(step.title) }}</strong>
+            <p>{{ fieldLabel(step.details) }}</p>
           </div>
         </div>
       </div>
@@ -870,8 +911,10 @@ onBeforeUnmount(stopTimer);
           <IconifyIconOnline icon="ri:play-circle-line" />
         </span>
         <div>
-          <strong>等待执行</strong>
-          <p>填写需求后点击生成推荐，智能体才会开始分析步骤。</p>
+          <strong>{{ fieldLabel("等待执行") }}</strong>
+          <p>
+            {{ fieldLabel("填写需求后点击生成推荐，智能体才会开始分析步骤。") }}
+          </p>
         </div>
       </div>
 
@@ -886,19 +929,23 @@ onBeforeUnmount(stopTimer);
       type="warning"
       :closable="false"
       show-icon
-      title="以下内容由智能助手基于资源库与需求生成，请按需复核与调整。"
+      :title="
+        fieldLabel('以下内容由智能助手基于资源库与需求生成，请按需复核与调整。')
+      "
     />
 
     <section class="recommend-section">
       <div class="section-heading">
         <div>
-          <h2>AI 推荐达人</h2>
-          <span>根据需求、平台数据、历史表现与风险信息生成</span>
+          <h2>{{ fieldLabel("AI 推荐达人") }}</h2>
+          <span>{{
+            fieldLabel("根据需求、平台数据、历史表现与风险信息生成")
+          }}</span>
         </div>
         <div class="recommend-actions">
           <el-select
             v-model="selectedProjectId"
-            placeholder="选择 Campaign"
+            :placeholder="fieldLabel('选择 Campaign')"
             class="campaign-select"
           >
             <el-option
@@ -914,7 +961,9 @@ onBeforeUnmount(stopTimer);
             :disabled="matchedRecommendations.length === 0"
             @click="addMatchedToCampaign"
           >
-            加入 Campaign（{{ matchedRecommendations.length }}）
+            {{ fieldLabel("加入 Campaign") }}（{{
+              matchedRecommendations.length
+            }}）
           </el-button>
           <el-button
             v-if="hasResult"
@@ -923,12 +972,12 @@ onBeforeUnmount(stopTimer);
             :disabled="loading"
             @click="clearLastRecommendation"
           >
-            清空
+            {{ fieldLabel("清空") }}
           </el-button>
         </div>
       </div>
       <div v-if="topRecommendations.length === 0" class="empty-block">
-        暂无推荐结果
+        {{ fieldLabel("暂无推荐结果") }}
       </div>
       <div v-else class="resource-grid">
         <article
@@ -962,16 +1011,16 @@ onBeforeUnmount(stopTimer);
                 </span>
                 <span class="match-score">
                   {{ item.matchScore || item.score || 0 }}
-                  <small>/ 100 匹配</small>
+                  <small>/ 100 {{ fieldLabel("匹配") }}</small>
                 </span>
               </span>
             </button>
             <div class="card-actions">
               <el-tag :type="priorityType(item.priority)" effect="light">
-                {{ item.priority || "-" }}优先级
+                {{ fieldLabel(item.priority || "-") }}{{ fieldLabel("优先级") }}
               </el-tag>
               <el-button link type="primary" @click="openResourceProfile(item)">
-                查看详情
+                {{ fieldLabel("查看详情") }}
               </el-button>
             </div>
           </div>
@@ -979,31 +1028,34 @@ onBeforeUnmount(stopTimer);
           <div class="metric-grid">
             <div>
               <strong>{{ compactNumber(item.followers) }}</strong>
-              <span>粉丝 / 订阅</span>
+              <span>{{ fieldLabel("粉丝 / 订阅") }}</span>
             </div>
             <div>
               <strong>{{ compactNumber(item.avgViews) }}</strong>
-              <span>平均播放 / 阅读</span>
+              <span>{{ fieldLabel("平均播放 / 阅读") }}</span>
             </div>
             <div>
               <strong>{{ percentText(item.engagementRate) }}</strong>
-              <span>互动率</span>
+              <span>{{ fieldLabel("互动率") }}</span>
             </div>
             <div>
               <strong>{{ moneyWithCurrency(item.estimatedCost) }}</strong>
-              <span>预估合作价</span>
+              <span>{{ fieldLabel("预估合作价") }}</span>
             </div>
           </div>
 
           <div class="reason-box">
-            <strong>推荐理由</strong>
-            <span>{{ item.reason || "综合匹配度较高，适合进入候选池。" }}</span>
+            <strong>{{ fieldLabel("推荐理由") }}</strong>
+            <span>{{
+              item.reason || fieldLabel("综合匹配度较高，适合进入候选池。")
+            }}</span>
           </div>
           <div class="recommend-card-footer">
             <span>
-              {{ item.country || "未设置地区" }} ·
-              {{ item.language || "未设置语言" }} · 风险
-              {{ item.riskLevel || "低" }}
+              {{ item.country || fieldLabel("未设置地区") }} ·
+              {{ item.language || fieldLabel("未设置语言") }} ·
+              {{ fieldLabel("风险") }}
+              {{ fieldLabel(item.riskLevel || "低") }}
             </span>
             <button
               type="button"
@@ -1017,7 +1069,11 @@ onBeforeUnmount(stopTimer);
                     : 'ri:thumb-up-line'
                 "
               />
-              {{ matchedResourceIds[Number(item.id)] ? "已匹配" : "匹配" }}
+              {{
+                fieldLabel(
+                  matchedResourceIds[Number(item.id)] ? "已匹配" : "匹配"
+                )
+              }}
             </button>
           </div>
         </article>
@@ -1025,7 +1081,7 @@ onBeforeUnmount(stopTimer);
     </section>
 
     <section class="logic-section">
-      <h2>推荐逻辑</h2>
+      <h2>{{ fieldLabel("推荐逻辑") }}</h2>
       <p>{{ recommendationLogic }}</p>
       <div class="filter-row">
         <el-tag
@@ -1036,7 +1092,9 @@ onBeforeUnmount(stopTimer);
         >
           {{ reason }}：{{ count }}
         </el-tag>
-        <span v-if="filterItems.length === 0">无过滤记录</span>
+        <span v-if="filterItems.length === 0">{{
+          fieldLabel("无过滤记录")
+        }}</span>
       </div>
     </section>
 
@@ -1074,7 +1132,7 @@ onBeforeUnmount(stopTimer);
               <h2>{{ selectedResource.name }}</h2>
               <el-tag type="warning" effect="light">
                 {{ selectedResource.matchScore || selectedResource.score || 0 }}
-                分匹配
+                {{ fieldLabel("分匹配") }}
               </el-tag>
             </div>
             <p>
@@ -1088,8 +1146,8 @@ onBeforeUnmount(stopTimer);
             <el-button @click="toggleMatched(selectedResource)">
               {{
                 matchedResourceIds[Number(selectedResource.id)]
-                  ? "取消匹配"
-                  : "标记匹配"
+                  ? fieldLabel("取消匹配")
+                  : fieldLabel("标记匹配")
               }}
             </el-button>
             <el-button
@@ -1097,7 +1155,7 @@ onBeforeUnmount(stopTimer);
               :loading="addingToCampaign"
               @click="addResourceToCampaign(selectedResource)"
             >
-              加入 Campaign
+              {{ fieldLabel("加入 Campaign") }}
             </el-button>
           </div>
         </header>
@@ -1105,26 +1163,29 @@ onBeforeUnmount(stopTimer);
         <section class="quality-strip">
           <div>
             <IconifyIconOnline icon="ri:time-line" />
-            <span><strong>近期活跃</strong>平台数据持续更新</span>
+            <span
+              ><strong>{{ fieldLabel("近期活跃") }}</strong
+              >{{ fieldLabel("平台数据持续更新") }}</span
+            >
           </div>
           <div>
             <IconifyIconOnline icon="ri:bar-chart-grouped-line" />
             <span
-              ><strong>互动表现</strong
+              ><strong>{{ fieldLabel("互动表现") }}</strong
               >{{ percentText(selectedResource.engagementRate) }}</span
             >
           </div>
           <div>
             <IconifyIconOnline icon="ri:shield-check-line" />
             <span
-              ><strong>风险等级</strong
-              >{{ selectedResource.riskLevel || "低" }}</span
+              ><strong>{{ fieldLabel("风险等级") }}</strong
+              >{{ fieldLabel(selectedResource.riskLevel || "低") }}</span
             >
           </div>
           <div>
             <IconifyIconOnline icon="ri:star-line" />
             <span
-              ><strong>内部评分</strong
+              ><strong>{{ fieldLabel("内部评分") }}</strong
               >{{ selectedResource.score || "-" }}</span
             >
           </div>
@@ -1135,37 +1196,37 @@ onBeforeUnmount(stopTimer);
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
-                  <h3>关键指标</h3>
-                  <span>平台基础数据与过往合作表现</span>
+                  <h3>{{ fieldLabel("关键指标") }}</h3>
+                  <span>{{ fieldLabel("平台基础数据与过往合作表现") }}</span>
                 </div>
               </div>
               <div class="key-metrics">
                 <div>
-                  <span>粉丝 / 订阅</span>
+                  <span>{{ fieldLabel("粉丝 / 订阅") }}</span>
                   <strong>{{ formatCount(selectedResource.followers) }}</strong>
                 </div>
                 <div>
-                  <span>平台平均播放</span>
+                  <span>{{ fieldLabel("平台平均播放") }}</span>
                   <strong>{{ formatCount(selectedResource.avgViews) }}</strong>
                 </div>
                 <div>
-                  <span>平台互动率</span>
+                  <span>{{ fieldLabel("平台互动率") }}</span>
                   <strong>{{
                     percentText(selectedResource.engagementRate)
                   }}</strong>
                 </div>
                 <div>
-                  <span>历史合作次数</span>
+                  <span>{{ fieldLabel("历史合作次数") }}</span>
                   <strong>{{ selectedResourceCooperationStats.count }}</strong>
                 </div>
                 <div>
-                  <span>合作总触达</span>
+                  <span>{{ fieldLabel("合作总触达") }}</span>
                   <strong>{{
                     formatCount(selectedResourceCooperationStats.reach)
                   }}</strong>
                 </div>
                 <div>
-                  <span>合作内容互动率</span>
+                  <span>{{ fieldLabel("合作内容互动率") }}</span>
                   <strong>
                     {{
                       ratioPercent(
@@ -1181,15 +1242,17 @@ onBeforeUnmount(stopTimer);
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
-                  <h3>AI 匹配判断</h3>
-                  <span>为什么适合当前推广需求</span>
+                  <h3>{{ fieldLabel("AI 匹配判断") }}</h3>
+                  <span>{{ fieldLabel("为什么适合当前推广需求") }}</span>
                 </div>
               </div>
               <div class="ai-match-panel">
                 <strong>{{
-                  selectedResource.reason || "综合匹配度较高"
+                  selectedResource.reason || fieldLabel("综合匹配度较高")
                 }}</strong>
-                <p>{{ selectedResource.riskTip || "暂无明显风险" }}</p>
+                <p>
+                  {{ selectedResource.riskTip || fieldLabel("暂无明显风险") }}
+                </p>
                 <div>
                   <el-tag
                     v-for="rule in selectedResource.hitRules || []"
@@ -1208,8 +1271,8 @@ onBeforeUnmount(stopTimer);
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
-                  <h3>历史合作记录</h3>
-                  <span>报价、发布表现与团队复盘</span>
+                  <h3>{{ fieldLabel("历史合作记录") }}</h3>
+                  <span>{{ fieldLabel("报价、发布表现与团队复盘") }}</span>
                 </div>
               </div>
               <el-table
@@ -1250,7 +1313,7 @@ onBeforeUnmount(stopTimer);
               </el-table>
               <el-empty
                 v-if="selectedResourceCooperations.length === 0"
-                description="暂无历史合作记录"
+                :description="fieldLabel('暂无历史合作记录')"
               />
             </section>
           </el-tab-pane>
@@ -1259,8 +1322,10 @@ onBeforeUnmount(stopTimer);
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
-                  <h3>内容交付时间线</h3>
-                  <span>查看每次合作的制作、审核与发布状态</span>
+                  <h3>{{ fieldLabel("内容交付时间线") }}</h3>
+                  <span>{{
+                    fieldLabel("查看每次合作的制作、审核与发布状态")
+                  }}</span>
                 </div>
               </div>
               <div class="delivery-list">
@@ -1277,17 +1342,18 @@ onBeforeUnmount(stopTimer);
                       </el-tag>
                     </div>
                     <p>
-                      {{ item.cooperationType || "未设置合作形式" }} ·
-                      {{ item.deliverableStatus || "未开始" }}
+                      {{ item.cooperationType || fieldLabel("未设置合作形式") }}
+                      ·
+                      {{ item.deliverableStatus || fieldLabel("未开始") }}
                     </p>
-                    <span>{{ item.notes || "暂无交付备注" }}</span>
+                    <span>{{ item.notes || fieldLabel("暂无交付备注") }}</span>
                     <el-link
                       v-if="item.deliverableLinks"
                       :href="item.deliverableLinks"
                       type="primary"
                       target="_blank"
                     >
-                      查看交付内容
+                      {{ fieldLabel("查看交付内容") }}
                     </el-link>
                   </div>
                   <time>{{
@@ -1297,7 +1363,7 @@ onBeforeUnmount(stopTimer);
               </div>
               <el-empty
                 v-if="selectedResourceCooperations.length === 0"
-                description="暂无内容交付记录"
+                :description="fieldLabel('暂无内容交付记录')"
               />
             </section>
           </el-tab-pane>
@@ -1306,10 +1372,11 @@ onBeforeUnmount(stopTimer);
             <section class="profile-section">
               <div class="profile-section-heading">
                 <div>
-                  <h3>近期平台作品</h3>
+                  <h3>{{ fieldLabel("近期平台作品") }}</h3>
                   <span>
-                    {{ selectedResourcePostStats.postCount || 0 }} 条作品 ·
-                    平均播放
+                    {{ selectedResourcePostStats.postCount || 0 }}
+                    {{ fieldLabel("条作品") }} ·
+                    {{ fieldLabel("平均播放") }}
                     {{ formatCount(selectedResourcePostStats.avgViews) }}
                   </span>
                 </div>
@@ -1325,11 +1392,16 @@ onBeforeUnmount(stopTimer);
                     <IconifyIconOnline icon="ri:video-line" />
                   </div>
                   <div>
-                    <strong>{{ post.title || "未命名作品" }}</strong>
-                    <p>{{ post.description || "暂无描述" }}</p>
+                    <strong>{{
+                      post.title || fieldLabel("未命名作品")
+                    }}</strong>
+                    <p>{{ post.description || fieldLabel("暂无描述") }}</p>
                     <span>
-                      播放 {{ formatCount(post.viewCount) }} · 点赞
-                      {{ formatCount(post.likeCount) }} · 评论
+                      {{ fieldLabel("播放") }}
+                      {{ formatCount(post.viewCount) }} ·
+                      {{ fieldLabel("点赞") }}
+                      {{ formatCount(post.likeCount) }} ·
+                      {{ fieldLabel("评论") }}
                       {{ formatCount(post.commentCount) }}
                     </span>
                   </div>
@@ -1337,7 +1409,7 @@ onBeforeUnmount(stopTimer);
               </div>
               <el-empty
                 v-if="selectedResourcePosts.length === 0"
-                description="暂无同步作品数据"
+                :description="fieldLabel('暂无同步作品数据')"
               />
             </section>
           </el-tab-pane>

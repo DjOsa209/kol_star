@@ -90,6 +90,16 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	if err := a.attachResourceExtraFields(r.Context(), rows); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if target := normalizeTargetLanguage(str(body, "locale")); target != "" {
+		if err := a.attachLocalizedResourceText(r.Context(), rows, target); err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
 	writeOK(w, tableData{List: rows, Total: total, PageSize: pageSize, CurrentPage: currentPage})
 }
 
@@ -146,6 +156,7 @@ func (a *app) createBusinessResource(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	a.scheduleResourceTranslations([]int{int(id)})
 	writeOK(w, map[string]any{"created": true})
 }
 
@@ -204,6 +215,7 @@ func (a *app) updateBusinessResource(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	a.scheduleResourceTranslations([]int{id})
 	writeOK(w, map[string]any{"updated": true})
 }
 
@@ -254,6 +266,8 @@ func deletionIDs(body map[string]any) []int {
 
 func deleteResourceRecords(ctx context.Context, tx *sql.Tx, resourceID int) error {
 	queries := []string{
+		`delete from biz_localized_texts where entity_type = 'resource_post' and entity_id in (select id from biz_resource_platform_posts where resource_id = ?)`,
+		`delete from biz_localized_texts where entity_id = ? and entity_type in ('resource', 'resource_extra_value')`,
 		`delete from biz_campaign_deliverables where cooperation_id in (select id from biz_cooperations where resource_id = ?)`,
 		`delete from biz_campaign_influencer_reports where resource_id = ?`,
 		`delete from biz_cooperations where resource_id = ?`,
@@ -281,6 +295,12 @@ func (a *app) businessResourceExtraFields(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeDBError(w, err)
 		return
+	}
+	if target := normalizeTargetLanguage(r.URL.Query().Get("locale")); target != "" {
+		if err := a.attachLocalizedExtraFieldLabels(r.Context(), rows, target); err != nil {
+			writeDBError(w, err)
+			return
+		}
 	}
 	writeOK(w, rows)
 }
@@ -352,6 +372,12 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeDBError(w, err)
 		return
+	}
+	if target := normalizeTargetLanguage(str(body, "locale")); target != "" {
+		if err := a.attachLocalizedPostText(r.Context(), rows, target); err != nil {
+			writeDBError(w, err)
+			return
+		}
 	}
 
 	resource := map[string]any{}
@@ -505,6 +531,7 @@ func (a *app) importBusinessResources(w http.ResponseWriter, r *http.Request) {
 	imported := 0
 	created := 0
 	updated := 0
+	resourceIDs := make([]int, 0, len(rows))
 	var errors []map[string]any
 	for index, raw := range rows {
 		row, ok := raw.(map[string]any)
@@ -517,7 +544,11 @@ func (a *app) importBusinessResources(w http.ResponseWriter, r *http.Request) {
 			errors = append(errors, map[string]any{"row": intField(row, "rowNo"), "message": err.Error()})
 			continue
 		}
-		_ = resourceID
+		if err := upsertResourceExtraValues(r.Context(), tx, resourceID, row); err != nil {
+			errors = append(errors, map[string]any{"row": intField(row, "rowNo"), "message": err.Error()})
+			continue
+		}
+		resourceIDs = append(resourceIDs, int(resourceID))
 		imported++
 		if isCreated {
 			created++
@@ -538,12 +569,14 @@ func (a *app) importBusinessResources(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	a.scheduleResourceTranslations(sortedUniqueInts(resourceIDs))
 	writeOK(w, map[string]any{
-		"imported": imported,
-		"created":  created,
-		"updated":  updated,
-		"failed":   len(errors),
-		"errors":   errors,
+		"imported":          imported,
+		"created":           created,
+		"updated":           updated,
+		"failed":            len(errors),
+		"errors":            errors,
+		"translationQueued": len(resourceIDs) > 0,
 	})
 }
 

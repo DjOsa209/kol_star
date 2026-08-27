@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
+import { useI18n } from "vue-i18n";
 import { getGovernanceRules, saveGovernanceRule } from "@/api/business";
 import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "BusinessGovernance" });
+
+const { locale } = useI18n();
 
 type RuleItem = {
   ruleType: string;
@@ -473,7 +476,9 @@ function updatedText(value: unknown) {
   if (!value) return "-";
   const time = Number(value);
   if (!Number.isFinite(time)) return String(value);
-  return new Date(time).toLocaleString("zh-CN");
+  return new Date(time).toLocaleString(
+    locale.value === "en" ? "en-US" : "zh-CN"
+  );
 }
 
 function navMeta(type: string) {
@@ -488,35 +493,39 @@ onMounted(loadData);
     <section class="page-hero">
       <div>
         <span>Governance Center</span>
-        <h1>治理规则配置中心</h1>
+        <h1>{{ fieldLabel("治理规则配置中心") }}</h1>
         <p>
-          把评分、推荐、预警和数据质量规则集中配置，保存后自动生成规则版本记录。
+          {{
+            fieldLabel(
+              "把评分、推荐、预警和数据质量规则集中配置，保存后自动生成规则版本记录。"
+            )
+          }}
         </p>
       </div>
       <div class="hero-actions">
         <el-tag class="effective-tag" effect="plain" type="warning">
-          {{ effectiveMode }}
+          {{ fieldLabel(effectiveMode) }}
         </el-tag>
       </div>
     </section>
 
     <section class="overview-grid">
       <div class="metric-tile">
-        <span>启用规则</span>
+        <span>{{ fieldLabel("启用规则") }}</span>
         <strong>{{ enabledCount }}/{{ rules.length }}</strong>
       </div>
       <div class="metric-tile">
-        <span>停用规则</span>
+        <span>{{ fieldLabel("停用规则") }}</span>
         <strong>{{ disabledCount }}</strong>
       </div>
       <div class="metric-tile">
-        <span>评分权重</span>
+        <span>{{ fieldLabel("评分权重") }}</span>
         <strong :class="{ danger: scoringTotal !== 100 }">
           {{ scoringTotal }}%
         </strong>
       </div>
       <div class="metric-tile">
-        <span>推荐完整度</span>
+        <span>{{ fieldLabel("推荐完整度") }}</span>
         <strong>
           {{ completenessRule?.content.minimumCompleteness ?? "-" }}%
         </strong>
@@ -538,8 +547,10 @@ onMounted(loadData);
             class="rule-nav-icon"
           />
           <span>
-            <strong>{{ navMeta(rule.ruleType)?.title || rule.name }}</strong>
-            <small>{{ navMeta(rule.ruleType)?.desc }}</small>
+            <strong>{{
+              fieldLabel(navMeta(rule.ruleType)?.title || rule.name)
+            }}</strong>
+            <small>{{ fieldLabel(navMeta(rule.ruleType)?.desc || "") }}</small>
             <em>{{ updatedText(rule.updatedAt) }}</em>
           </span>
           <el-tag
@@ -547,7 +558,7 @@ onMounted(loadData);
             :type="rule.enabled ? 'success' : 'info'"
             effect="plain"
           >
-            {{ rule.enabled ? "启用" : "停用" }}
+            {{ fieldLabel(rule.enabled ? "启用" : "停用") }}
           </el-tag>
         </button>
       </aside>
@@ -560,14 +571,16 @@ onMounted(loadData);
               class="header-icon"
             />
             <div>
-              <strong>{{ activeNav?.title || activeRule.name }}</strong>
-              <span>{{ activeNav?.desc }}</span>
+              <strong>{{
+                fieldLabel(activeNav?.title || activeRule.name)
+              }}</strong>
+              <span>{{ fieldLabel(activeNav?.desc || "") }}</span>
             </div>
           </div>
           <el-switch
             v-model="activeRule.enabled"
-            active-text="启用"
-            inactive-text="停用"
+            :active-text="fieldLabel('启用')"
+            :inactive-text="fieldLabel('停用')"
           />
         </div>
 
@@ -577,8 +590,8 @@ onMounted(loadData);
             :key="`${label}-${value}`"
             class="summary-chip"
           >
-            <span>{{ label }}</span>
-            <strong>{{ value }}</strong>
+            <span>{{ fieldLabel(String(label)) }}</span>
+            <strong>{{ fieldLabel(String(value)) }}</strong>
           </div>
         </div>
 
@@ -597,8 +610,8 @@ onMounted(loadData);
         <el-form label-position="top" class="rule-form">
           <section class="form-section">
             <div class="section-title">
-              <strong>基础信息</strong>
-              <span>用于识别规则版本和配置含义</span>
+              <strong>{{ fieldLabel("基础信息") }}</strong>
+              <span>{{ fieldLabel("用于识别规则版本和配置含义") }}</span>
             </div>
             <el-row :gutter="14">
               <el-col :xs="24" :md="12">
@@ -622,8 +635,8 @@ onMounted(loadData);
             class="form-section"
           >
             <div class="section-title">
-              <strong>权重配置</strong>
-              <span>滑杆适合粗调，数字框适合精调</span>
+              <strong>{{ fieldLabel("权重配置") }}</strong>
+              <span>{{ fieldLabel("滑杆适合粗调，数字框适合精调") }}</span>
             </div>
             <div class="weight-toolbar">
               <el-progress
@@ -633,7 +646,9 @@ onMounted(loadData);
               <span :class="{ danger: activeScoringTotal !== 100 }">
                 合计 {{ activeScoringTotal }}%
               </span>
-              <el-button @click="normalizeScoringWeights">归一到 100</el-button>
+              <el-button @click="normalizeScoringWeights">{{
+                fieldLabel("归一到 100")
+              }}</el-button>
             </div>
             <div class="weight-grid">
               <div v-for="[key, label, desc] in scoreFields" :key="key">
@@ -662,13 +677,13 @@ onMounted(loadData);
             class="form-section"
           >
             <div class="section-title">
-              <strong>等级门槛</strong>
-              <span>D 级为低于 C 级门槛的资源</span>
+              <strong>{{ fieldLabel("等级门槛") }}</strong>
+              <span>{{ fieldLabel("D 级为低于 C 级门槛的资源") }}</span>
             </div>
             <div class="threshold-grid">
               <div v-for="level in ['S', 'A', 'B', 'C']" :key="level">
                 <strong>{{ level }}</strong>
-                <span>最低分</span>
+                <span>{{ fieldLabel("最低分") }}</span>
                 <el-input-number
                   v-model="activeRule.content[level]"
                   :min="0"
@@ -684,8 +699,10 @@ onMounted(loadData);
             class="form-section"
           >
             <div class="section-title">
-              <strong>必填字段</strong>
-              <span>可从常用字段中选择，也可以直接输入新字段</span>
+              <strong>{{ fieldLabel("必填字段") }}</strong>
+              <span>{{
+                fieldLabel("可从常用字段中选择，也可以直接输入新字段")
+              }}</span>
             </div>
             <div class="field-group-grid">
               <div
@@ -705,7 +722,7 @@ onMounted(loadData);
                   default-first-option
                   collapse-tags
                   collapse-tags-tooltip
-                  placeholder="选择或输入字段"
+                  :placeholder="fieldLabel('选择或输入字段')"
                 >
                   <el-option
                     v-for="field in defaultFieldOptions"
@@ -737,8 +754,8 @@ onMounted(loadData);
             class="form-section"
           >
             <div class="section-title">
-              <strong>维护周期</strong>
-              <span>到期后可进入待更新提醒</span>
+              <strong>{{ fieldLabel("维护周期") }}</strong>
+              <span>{{ fieldLabel("到期后可进入待更新提醒") }}</span>
             </div>
             <div class="threshold-grid">
               <div
@@ -750,7 +767,7 @@ onMounted(loadData);
                 :key="key"
               >
                 <strong>{{ label }}</strong>
-                <span>更新周期（天）</span>
+                <span>{{ fieldLabel("更新周期（天）") }}</span>
                 <el-input-number
                   v-model="activeRule.content[key]"
                   :min="1"
@@ -766,12 +783,14 @@ onMounted(loadData);
             class="form-section"
           >
             <div class="section-title">
-              <strong>来源判定规则</strong>
-              <span>资源库存来源元数据，规则负责可信等级和折算口径</span>
+              <strong>{{ fieldLabel("来源判定规则") }}</strong>
+              <span>{{
+                fieldLabel("资源库存来源元数据，规则负责可信等级和折算口径")
+              }}</span>
             </div>
             <div class="linkage-panel">
               <div class="linkage-copy">
-                <strong>与全球资源库联动</strong>
+                <strong>{{ fieldLabel("与全球资源库联动") }}</strong>
                 <span>
                   新增、导入、编辑、平台同步写入来源类型、证据、采集时间和负责人；
                   评分、推荐、预警读取来源等级后再做降权或提醒。
@@ -793,13 +812,13 @@ onMounted(loadData);
                 <el-form-item :label="fieldLabel('判定来源')">
                   <el-input
                     v-model="activeRule.content[level].source"
-                    placeholder="来源类型"
+                    :placeholder="fieldLabel('来源类型')"
                   />
                 </el-form-item>
                 <el-form-item :label="fieldLabel('证据要求')">
                   <el-input
                     v-model="activeRule.content[level].evidence"
-                    placeholder="截图、链接、同步记录等"
+                    :placeholder="fieldLabel('截图、链接、同步记录等')"
                   />
                 </el-form-item>
                 <el-form-item :label="fieldLabel('适用字段')">
@@ -811,7 +830,7 @@ onMounted(loadData);
                     default-first-option
                     collapse-tags
                     collapse-tags-tooltip
-                    placeholder="选择或输入字段"
+                    :placeholder="fieldLabel('选择或输入字段')"
                   >
                     <el-option
                       v-for="field in trustFieldOptions"
@@ -839,8 +858,10 @@ onMounted(loadData);
             class="form-section"
           >
             <div class="section-title">
-              <strong>推荐过滤</strong>
-              <span>控制候选资源进入推荐池前的硬性规则</span>
+              <strong>{{ fieldLabel("推荐过滤") }}</strong>
+              <span>{{
+                fieldLabel("控制候选资源进入推荐池前的硬性规则")
+              }}</span>
             </div>
             <el-row :gutter="14">
               <el-col :xs="24" :md="8">
@@ -878,16 +899,26 @@ onMounted(loadData);
               <el-col :xs="24" :md="12">
                 <el-form-item :label="fieldLabel('超预算策略')">
                   <el-radio-group v-model="activeRule.content.overBudgetPolicy">
-                    <el-radio-button value="filter">过滤</el-radio-button>
-                    <el-radio-button value="downgrade">降权</el-radio-button>
+                    <el-radio-button value="filter">{{
+                      fieldLabel("过滤")
+                    }}</el-radio-button>
+                    <el-radio-button value="downgrade">{{
+                      fieldLabel("降权")
+                    }}</el-radio-button>
                   </el-radio-group>
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :md="12">
                 <el-form-item :label="fieldLabel('高风险策略')">
                   <el-select v-model="activeRule.content.highRiskPolicy">
-                    <el-option :label="fieldLabel('降权或过滤')" value="downgrade_or_filter" />
-                    <el-option :label="fieldLabel('仅提示风险')" value="warn_only" />
+                    <el-option
+                      :label="fieldLabel('降权或过滤')"
+                      value="downgrade_or_filter"
+                    />
+                    <el-option
+                      :label="fieldLabel('仅提示风险')"
+                      value="warn_only"
+                    />
                     <el-option :label="fieldLabel('直接过滤')" value="filter" />
                   </el-select>
                 </el-form-item>
@@ -896,15 +927,19 @@ onMounted(loadData);
             <div class="switch-list">
               <label>
                 <span>
-                  <strong>排除黑名单资源</strong>
-                  <small>黑名单和已归档资源不进入推荐候选</small>
+                  <strong>{{ fieldLabel("排除黑名单资源") }}</strong>
+                  <small>{{
+                    fieldLabel("黑名单和已归档资源不进入推荐候选")
+                  }}</small>
                 </span>
                 <el-switch v-model="activeRule.content.excludeBlacklisted" />
               </label>
               <label>
                 <span>
-                  <strong>默认包含观察中资源</strong>
-                  <small>打开后观察中资源会进入推荐结果</small>
+                  <strong>{{ fieldLabel("默认包含观察中资源") }}</strong>
+                  <small>{{
+                    fieldLabel("打开后观察中资源会进入推荐结果")
+                  }}</small>
                 </span>
                 <el-switch
                   v-model="activeRule.content.includeWatchingByDefault"
@@ -918,8 +953,8 @@ onMounted(loadData);
             class="form-section"
           >
             <div class="section-title">
-              <strong>预警触发</strong>
-              <span>达到阈值时进入运营待处理事项</span>
+              <strong>{{ fieldLabel("预警触发") }}</strong>
+              <span>{{ fieldLabel("达到阈值时进入运营待处理事项") }}</span>
             </div>
             <el-row :gutter="14">
               <el-col :xs="24" :md="8">
@@ -956,8 +991,10 @@ onMounted(loadData);
             <div class="switch-list">
               <label>
                 <span>
-                  <strong>联系人长期未更新时预警</strong>
-                  <small>适合推动资源库联系人信息复核</small>
+                  <strong>{{ fieldLabel("联系人长期未更新时预警") }}</strong>
+                  <small>{{
+                    fieldLabel("适合推动资源库联系人信息复核")
+                  }}</small>
                 </span>
                 <el-switch v-model="activeRule.content.staleContact" />
               </label>
@@ -966,7 +1003,9 @@ onMounted(loadData);
         </el-form>
 
         <div class="action-bar">
-          <el-button @click="resetActiveRule">恢复默认</el-button>
+          <el-button @click="resetActiveRule">{{
+            fieldLabel("恢复默认")
+          }}</el-button>
           <el-button
             type="primary"
             :loading="savingType === activeRule.ruleType"
@@ -978,7 +1017,7 @@ onMounted(loadData);
       </main>
 
       <main v-else class="editor-panel empty-panel">
-        <el-empty description="暂无治理规则" />
+        <el-empty :description="fieldLabel('暂无治理规则')" />
       </main>
     </section>
   </div>

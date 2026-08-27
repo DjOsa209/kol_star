@@ -28,6 +28,42 @@ func TestImportedLinkWebsite(t *testing.T) {
 	}
 }
 
+func TestUpsertResourceExtraValuesPersistsUploadedCustomField(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`insert into biz_resource_extra_fields`).
+		WithArgs("内容调性", "内容调性", "内容调性").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`select id from biz_resource_extra_fields where field_key = \?`).
+		WithArgs("内容调性").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9))
+	mock.ExpectExec(`insert into biz_resource_extra_values`).
+		WithArgs(int64(42), int64(9), "轻松、有科技感").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := upsertResourceExtraValues(context.Background(), tx, 42, map[string]any{
+		"extra": map[string]any{"内容调性": "轻松、有科技感"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestImportedReleaseDate(t *testing.T) {
 	cases := map[string]any{
 		"2025-08-13": "2025-08-13",

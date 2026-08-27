@@ -245,6 +245,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /business/resources/sync-status", a.requireMenu("/business/resources", a.businessResourcesSyncStatus))
 	mux.HandleFunc("GET /business/resources/extra-fields", a.requireMenu("/business/resources", a.businessResourceExtraFields))
 	mux.HandleFunc("POST /business/resources/import", a.requireMenu("/business/resources", a.importBusinessResources))
+	mux.HandleFunc("POST /business/resources/translate", a.requireMenu("/business/resources", a.translateBusinessResources))
 	mux.HandleFunc("POST /business/resource-posts", a.requireMenu("/business/resource-posts", a.businessResourcePosts))
 	mux.HandleFunc("POST /business/assistant/recommend", a.requireMenu("/business/assistant", a.businessAssistantRecommend))
 	mux.HandleFunc("GET /business/project-resources/options", a.requireMenu("/business/projects", a.businessProjectResourceOptions))

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
+import { useI18n } from "vue-i18n";
 import { fieldLabel } from "@/utils/fieldI18n";
 import {
   getAIModelConfig,
@@ -9,6 +10,8 @@ import {
 } from "@/api/business";
 
 defineOptions({ name: "BusinessAIModel" });
+
+const { locale } = useI18n();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -63,7 +66,9 @@ function updatedText(value: unknown) {
   if (!value) return "-";
   const time = Number(value);
   if (!Number.isFinite(time)) return String(value);
-  return new Date(time).toLocaleString("zh-CN");
+  return new Date(time).toLocaleString(
+    locale.value === "en" ? "en-US" : "zh-CN"
+  );
 }
 
 async function loadData() {
@@ -93,7 +98,7 @@ function buildContent() {
 
 async function save() {
   if (!form.provider || !form.model) {
-    ElMessage.warning("请先配置供应商和模型");
+    ElMessage.warning(fieldLabel("请先配置供应商和模型"));
     return;
   }
   saving.value = true;
@@ -106,14 +111,14 @@ async function save() {
   saving.value = false;
   if (res.code === 0) {
     apiKeyInput.value = "";
-    ElMessage.success("AI 模型配置已保存");
+    ElMessage.success(fieldLabel("AI 模型配置已保存"));
     loadData();
   }
 }
 
 async function testModel() {
   if (!form.provider || !form.model) {
-    ElMessage.warning("请先配置供应商和模型");
+    ElMessage.warning(fieldLabel("请先配置供应商和模型"));
     return;
   }
   testing.value = true;
@@ -126,14 +131,14 @@ async function testModel() {
   if (res.code === 0) {
     testResult.value = {
       type: res.data?.realRequest ? "success" : "info",
-      text: res.data?.message || "测试通过"
+      text: res.data?.message || fieldLabel("测试通过")
     };
-    ElMessage.success("模型测试完成");
+    ElMessage.success(fieldLabel("模型测试完成"));
     return;
   }
   testResult.value = {
     type: "warning",
-    text: res.message || "模型测试失败"
+    text: res.message || fieldLabel("模型测试失败")
   };
 }
 
@@ -145,29 +150,37 @@ onMounted(loadData);
     <section class="page-hero">
       <div>
         <span>AI Integration</span>
-        <h1>AI 模型配置</h1>
-        <p>配置推荐助手使用的模型服务，并在保存前测试连接状态。</p>
+        <h1>{{ fieldLabel("AI 模型配置") }}</h1>
+        <p>
+          {{
+            fieldLabel("配置推荐助手使用的模型服务，并在保存前测试连接状态。")
+          }}
+        </p>
       </div>
       <div class="hero-status">
-        <span>{{ enabled ? "启用" : "停用" }}</span>
+        <span>{{ fieldLabel(enabled ? "启用" : "停用") }}</span>
         <el-switch v-model="enabled" />
       </div>
     </section>
 
     <section class="status-grid">
       <div v-for="[label, value] in statusItems" :key="label">
-        <span>{{ label }}</span>
-        <strong>{{ value }}</strong>
+        <span>{{ fieldLabel(label) }}</span>
+        <strong>{{ fieldLabel(value) }}</strong>
       </div>
     </section>
 
     <section v-loading="loading" class="config-panel">
       <div class="panel-header">
         <div>
-          <strong>模型接入</strong>
-          <span>保存后推荐助手会按当前配置尝试接入模型服务</span>
+          <strong>{{ fieldLabel("模型接入") }}</strong>
+          <span>{{
+            fieldLabel("保存后推荐助手会按当前配置尝试接入模型服务")
+          }}</span>
         </div>
-        <el-tag effect="plain">最近更新：{{ updatedText(updatedAt) }}</el-tag>
+        <el-tag effect="plain"
+          >{{ fieldLabel("最近更新") }}：{{ updatedText(updatedAt) }}</el-tag
+        >
       </div>
 
       <el-form label-position="top" class="config-form">
@@ -193,12 +206,12 @@ onMounted(loadData);
                 allow-create
                 filterable
                 default-first-option
-                placeholder="选择或输入供应商"
+                :placeholder="fieldLabel('选择或输入供应商')"
               >
                 <el-option
                   v-for="provider in providerOptions"
                   :key="provider"
-                  :label="provider"
+                  :label="fieldLabel(provider)"
                   :value="provider"
                 />
               </el-select>
@@ -206,7 +219,10 @@ onMounted(loadData);
           </el-col>
           <el-col :xs="24" :md="12">
             <el-form-item :label="fieldLabel('模型')">
-              <el-input v-model="form.model" placeholder="如 gpt-4.1-mini" />
+              <el-input
+                v-model="form.model"
+                :placeholder="fieldLabel('如 gpt-4.1-mini')"
+              />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
@@ -223,7 +239,7 @@ onMounted(loadData);
                 v-model="apiKeyInput"
                 type="password"
                 show-password
-                placeholder="留空则不更新"
+                :placeholder="fieldLabel('留空则不更新')"
               />
             </el-form-item>
           </el-col>
@@ -231,9 +247,11 @@ onMounted(loadData);
             <el-form-item :label="fieldLabel('API Key 状态')">
               <div class="key-status">
                 <strong>{{
-                  form.apiKeyConfigured ? "已配置" : "未配置"
+                  fieldLabel(form.apiKeyConfigured ? "已配置" : "未配置")
                 }}</strong>
-                <span v-if="form.apiKeyLast4">尾号 {{ form.apiKeyLast4 }}</span>
+                <span v-if="form.apiKeyLast4"
+                  >{{ fieldLabel("尾号") }} {{ form.apiKeyLast4 }}</span
+                >
               </div>
             </el-form-item>
           </el-col>
@@ -242,15 +260,19 @@ onMounted(loadData);
         <div class="capability-grid">
           <label>
             <span>
-              <strong>需求解析</strong>
-              <small>将用户自然语言需求解析成结构化条件</small>
+              <strong>{{ fieldLabel("需求解析") }}</strong>
+              <small>{{
+                fieldLabel("将用户自然语言需求解析成结构化条件")
+              }}</small>
             </span>
             <el-switch v-model="form.enableDemandParsing" />
           </label>
           <label>
             <span>
-              <strong>推荐解释</strong>
-              <small>生成匹配理由、风险提示和推荐摘要</small>
+              <strong>{{ fieldLabel("推荐解释") }}</strong>
+              <small>{{
+                fieldLabel("生成匹配理由、风险提示和推荐摘要")
+              }}</small>
             </span>
             <el-switch v-model="form.enableRecommendationReason" />
           </label>
@@ -282,13 +304,15 @@ onMounted(loadData);
       </el-form>
 
       <div class="action-bar">
-        <el-button :loading="loading" @click="loadData">重新加载</el-button>
+        <el-button :loading="loading" @click="loadData">{{
+          fieldLabel("重新加载")
+        }}</el-button>
         <el-button :loading="testing" @click="testModel">
           <IconifyIconOnline icon="ri:pulse-line" class="mr-1" />
-          测试模型
+          {{ fieldLabel("测试模型") }}
         </el-button>
         <el-button type="primary" :loading="saving" @click="save">
-          保存配置
+          {{ fieldLabel("保存配置") }}
         </el-button>
       </div>
     </section>

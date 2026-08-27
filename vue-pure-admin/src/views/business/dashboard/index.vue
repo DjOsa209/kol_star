@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import echarts from "@/plugins/echarts";
 import { getBusinessDashboard } from "@/api/business";
 import { fieldLabel } from "@/utils/fieldI18n";
@@ -25,6 +26,8 @@ type RankingItem = {
 };
 
 const router = useRouter();
+const { locale } = useI18n();
+const isEnglish = computed(() => locale.value === "en");
 const loading = ref(false);
 const updatedAt = ref<Date | null>(null);
 const trendChartRef = ref<HTMLElement>();
@@ -51,7 +54,9 @@ const metricCards = computed(() => [
     key: "totalPostCount",
     label: "总发布数",
     value: numberText(data.value.totalPostCount),
-    hint: `${numberText(data.value.hotPostCount)} 条百万级爆款`,
+    hint: isEnglish.value
+      ? `${numberText(data.value.hotPostCount)} million-view viral items`
+      : `${numberText(data.value.hotPostCount)} 条百万级爆款`,
     color: "#16a34a",
     path: "M2 31 L13 27 L24 29 L35 19 L46 22 L57 12 L68 17 L79 8 L90 15 L101 6"
   },
@@ -96,6 +101,35 @@ const insightCards = computed(() => {
   const engagementRate = Number(data.value.postEngagementRate || 0);
   const activeResources = Number(data.value.activeResourceTotal || 0);
   const resourceTotal = Number(data.value.resourceTotal || 0);
+  if (isEnglish.value) {
+    return [
+      {
+        title: top
+          ? `${top.name} generated the highest exposure`
+          : "No content exposure yet",
+        detail: top
+          ? `${top.platform || "Unknown platform"} accumulated ${compactNumber(top.exposure)} impressions. Consider reusing its content direction.`
+          : "Adjust the filters or sync platform content to generate top-resource insights."
+      },
+      {
+        title: `Million-view viral content share: ${rate(hotCount, postCount)}%`,
+        detail: hotCount
+          ? `${numberText(hotCount)} items reached one million impressions and can be captured in the case library.`
+          : "No content has reached one million impressions under the current filters. Review topics and publishing times."
+      },
+      {
+        title: `Overall engagement rate: ${percentText(engagementRate)}`,
+        detail:
+          engagementRate >= 0.05
+            ? "Engagement efficiency is strong. Prioritize similar resources and content themes."
+            : "Exposure is converting poorly into engagement. Improve the content hook and CTA."
+      },
+      {
+        title: `Available resource coverage: ${rate(activeResources, resourceTotal)}%`,
+        detail: `${numberText(activeResources)} resources are currently available. Prioritize outreach using the popularity ranking.`
+      }
+    ];
+  }
   return [
     {
       title: top ? `${top.name} 贡献最高曝光` : "当前暂无内容曝光",
@@ -155,13 +189,16 @@ function dateText(date: Date) {
 }
 
 function numberText(value: unknown) {
-  return Number(value || 0).toLocaleString("zh-CN", {
-    maximumFractionDigits: 0
-  });
+  return Number(value || 0).toLocaleString(
+    isEnglish.value ? "en-US" : "zh-CN",
+    {
+      maximumFractionDigits: 0
+    }
+  );
 }
 
 function compactNumber(value: unknown) {
-  return new Intl.NumberFormat("zh-CN", {
+  return new Intl.NumberFormat(isEnglish.value ? "en-US" : "zh-CN", {
     notation: "compact",
     maximumFractionDigits: 1
   }).format(Number(value || 0));
@@ -244,7 +281,7 @@ function renderTrendChart() {
       ],
       series: [
         {
-          name: "发布数",
+          name: fieldLabel("发布数"),
           type: "bar",
           yAxisIndex: 1,
           data: rows.map(item => item.postCount),
@@ -252,7 +289,7 @@ function renderTrendChart() {
           itemStyle: { borderRadius: [4, 4, 0, 0], opacity: 0.62 }
         },
         {
-          name: "曝光",
+          name: fieldLabel("曝光"),
           type: "line",
           smooth: true,
           symbol: "none",
@@ -260,7 +297,7 @@ function renderTrendChart() {
           data: rows.map(item => item.exposure)
         },
         {
-          name: "互动",
+          name: fieldLabel("互动"),
           type: "line",
           smooth: true,
           symbol: "none",
@@ -293,19 +330,23 @@ onBeforeUnmount(() => {
     <section class="dashboard-heading">
       <div>
         <h1>CreatorLoop</h1>
-        <p>创作者资源运营与合作效果洞察工作台</p>
+        <p>{{ fieldLabel("创作者资源运营与合作效果洞察工作台") }}</p>
       </div>
       <div class="heading-actions">
         <span>
-          数据更新时间：
-          {{ updatedAt ? updatedAt.toLocaleString("zh-CN") : "-" }}
+          {{ fieldLabel("数据更新时间") }}：
+          {{
+            updatedAt
+              ? updatedAt.toLocaleString(isEnglish ? "en-US" : "zh-CN")
+              : "-"
+          }}
         </span>
         <el-button circle aria-label="刷新看板" @click="loadData">
           <IconifyIconOnline icon="ri:refresh-line" />
         </el-button>
         <el-button type="success" @click="router.push('/business/resources')">
           <IconifyIconOnline icon="ri:add-line" class="mr-1" />
-          新增资源
+          {{ fieldLabel("新增资源") }}
         </el-button>
       </div>
     </section>
@@ -317,40 +358,50 @@ onBeforeUnmount(() => {
           type="daterange"
           value-format="YYYY-MM-DD"
           range-separator="-"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
+          :start-placeholder="fieldLabel('开始日期')"
+          :end-placeholder="fieldLabel('结束日期')"
           :clearable="false"
         />
-        <el-select v-model="filters.country" clearable placeholder="全部市场">
+        <el-select
+          v-model="filters.country"
+          clearable
+          :placeholder="fieldLabel('全部市场')"
+        >
           <el-option
             v-for="item in countryOptions"
             :key="item.name"
-            :label="item.name || '未填写'"
+            :label="item.name || fieldLabel('未填写')"
             :value="item.name"
           />
         </el-select>
         <el-select
           v-model="filters.resourceType"
           clearable
-          placeholder="全部资源类型"
+          :placeholder="fieldLabel('全部资源类型')"
         >
           <el-option
             v-for="item in ['KOL', '媒体', 'IP', '其他']"
             :key="item"
-            :label="item"
+            :label="fieldLabel(item)"
             :value="item"
           />
         </el-select>
-        <el-select v-model="filters.platform" clearable placeholder="全部平台">
+        <el-select
+          v-model="filters.platform"
+          clearable
+          :placeholder="fieldLabel('全部平台')"
+        >
           <el-option
             v-for="item in platformOptions"
             :key="item.name"
-            :label="item.name || '未填写'"
+            :label="item.name || fieldLabel('未填写')"
             :value="item.name"
           />
         </el-select>
-        <el-button type="success" @click="loadData">搜索</el-button>
-        <el-button @click="resetFilters">重置</el-button>
+        <el-button type="success" @click="loadData">{{
+          fieldLabel("搜索")
+        }}</el-button>
+        <el-button @click="resetFilters">{{ fieldLabel("重置") }}</el-button>
       </div>
       <button
         type="button"
@@ -358,14 +409,24 @@ onBeforeUnmount(() => {
         @click="advancedVisible = !advancedVisible"
       >
         <IconifyIconOnline
-          :icon="advancedVisible ? 'ri:arrow-down-s-fill' : 'ri:arrow-right-s-fill'"
+          :icon="
+            advancedVisible ? 'ri:arrow-down-s-fill' : 'ri:arrow-right-s-fill'
+          "
         />
-        高级筛选
+        {{ fieldLabel("高级筛选") }}
       </button>
       <div v-if="advancedVisible" class="advanced-content">
-        当前支持按市场、资源类型和平台联动筛选；更多维度可进入资源库继续筛选。
-        <el-button link type="success" @click="router.push('/business/resources')">
-          前往全球资源库
+        {{
+          fieldLabel(
+            "当前支持按市场、资源类型和平台联动筛选；更多维度可进入资源库继续筛选。"
+          )
+        }}
+        <el-button
+          link
+          type="success"
+          @click="router.push('/business/resources')"
+        >
+          {{ fieldLabel("前往全球资源库") }}
         </el-button>
       </div>
     </section>
@@ -379,7 +440,7 @@ onBeforeUnmount(() => {
       >
         <span>{{ fieldLabel(item.label) }}</span>
         <strong>{{ item.value }}</strong>
-        <small>{{ item.hint }}</small>
+        <small>{{ fieldLabel(item.hint) }}</small>
         <svg viewBox="0 0 104 40" aria-hidden="true">
           <path :d="item.path" />
         </svg>
@@ -389,17 +450,17 @@ onBeforeUnmount(() => {
     <section class="insight-panel">
       <div class="section-heading">
         <div>
-          <h2>AI 复盘摘要</h2>
-          <p>基于当前筛选数据自动生成，不是固定模板</p>
+          <h2>{{ fieldLabel("AI 复盘摘要") }}</h2>
+          <p>{{ fieldLabel("基于当前筛选数据自动生成，不是固定模板") }}</p>
         </div>
         <span class="ai-status">
           <i />
-          数据驱动洞察
+          {{ fieldLabel("数据驱动洞察") }}
         </span>
       </div>
       <div class="insight-grid">
         <article v-for="item in insightCards" :key="item.title">
-          <span>数据驱动洞察</span>
+          <span>{{ fieldLabel("数据驱动洞察") }}</span>
           <h3>{{ item.title }}</h3>
           <p>{{ item.detail }}</p>
         </article>
@@ -410,14 +471,14 @@ onBeforeUnmount(() => {
       <article class="analysis-card trend-card">
         <div class="section-heading">
           <div>
-            <h2>发布与互动趋势</h2>
-            <p>按天查看发布数、曝光和互动变化</p>
+            <h2>{{ fieldLabel("发布与互动趋势") }}</h2>
+            <p>{{ fieldLabel("按天查看发布数、曝光和互动变化") }}</p>
           </div>
-          <el-tag effect="plain">按日</el-tag>
+          <el-tag effect="plain">{{ fieldLabel("按日") }}</el-tag>
         </div>
         <el-empty
           v-if="!data.trend?.length"
-          description="当前筛选范围暂无帖子数据"
+          :description="fieldLabel('当前筛选范围暂无帖子数据')"
         />
         <div v-else ref="trendChartRef" class="trend-chart" />
       </article>
@@ -425,40 +486,40 @@ onBeforeUnmount(() => {
       <article class="analysis-card ranking-card">
         <div class="section-heading ranking-heading">
           <div>
-            <h2>热门资源排行</h2>
-            <p>按当前筛选内容表现排序</p>
+            <h2>{{ fieldLabel("热门资源排行") }}</h2>
+            <p>{{ fieldLabel("按当前筛选内容表现排序") }}</p>
           </div>
           <el-button-group>
             <el-button
               :type="rankingMode === 'exposure' ? 'success' : 'default'"
               @click="rankingMode = 'exposure'"
             >
-              按曝光
+              {{ fieldLabel("按曝光") }}
             </el-button>
             <el-button
               :type="rankingMode === 'interactions' ? 'success' : 'default'"
               @click="rankingMode = 'interactions'"
             >
-              按互动
+              {{ fieldLabel("按互动") }}
             </el-button>
             <el-button
               :type="rankingMode === 'engagementRate' ? 'success' : 'default'"
               @click="rankingMode = 'engagementRate'"
             >
-              按互动率
+              {{ fieldLabel("按互动率") }}
             </el-button>
           </el-button-group>
         </div>
         <el-empty
           v-if="!rankedResources.length"
-          description="当前筛选范围暂无排行数据"
+          :description="fieldLabel('当前筛选范围暂无排行数据')"
           :image-size="72"
         />
         <div v-else class="ranking-table">
           <div class="ranking-row ranking-row--head">
-            <span>资源</span>
-            <span>曝光</span>
-            <span>互动率</span>
+            <span>{{ fieldLabel("资源") }}</span>
+            <span>{{ fieldLabel("曝光") }}</span>
+            <span>{{ fieldLabel("互动率") }}</span>
           </div>
           <div
             v-for="(item, index) in rankedResources"
@@ -468,8 +529,8 @@ onBeforeUnmount(() => {
             <div>
               <b>{{ index + 1 }}</b>
               <span>
-                <strong>{{ item.name || "未命名资源" }}</strong>
-                <small>{{ item.platform || "未填写平台" }}</small>
+                <strong>{{ item.name || fieldLabel("未命名资源") }}</strong>
+                <small>{{ item.platform || fieldLabel("未填写平台") }}</small>
               </span>
             </div>
             <strong>{{ compactNumber(item.exposure) }}</strong>

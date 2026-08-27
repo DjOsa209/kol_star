@@ -27,7 +27,7 @@ async function loadData() {
 async function submit() {
   const res = await createBriefTemplate(form);
   if (res.code === 0) {
-    ElMessage.success("模板已保存");
+    ElMessage.success(fieldLabel("模板已保存"));
     dialogVisible.value = false;
     loadData();
   }
@@ -39,17 +39,35 @@ onMounted(loadData);
 <template>
   <div class="business-page">
     <div class="toolbar">
-      <el-button type="primary" @click="dialogVisible = true"
-        >新增模板</el-button
-      >
+      <el-button type="primary" @click="dialogVisible = true">{{
+        fieldLabel("新增模板")
+      }}</el-button>
     </div>
     <el-table :data="list" border>
-      <el-table-column prop="name" :label="fieldLabel('模板名称')" min-width="180" />
-      <el-table-column prop="platform" :label="fieldLabel('平台')" width="120" />
+      <el-table-column
+        prop="name"
+        :label="fieldLabel('模板名称')"
+        min-width="180"
+      />
+      <el-table-column
+        prop="platform"
+        :label="fieldLabel('平台')"
+        width="120"
+      />
       <el-table-column prop="market" :label="fieldLabel('市场')" width="120" />
-      <el-table-column prop="contentType" :label="fieldLabel('内容类型')" width="140" />
-      <el-table-column prop="language" :label="fieldLabel('语言')" width="100" />
-      <el-table-column prop="status" :label="fieldLabel('状态')" width="90" />
+      <el-table-column
+        prop="contentType"
+        :label="fieldLabel('内容类型')"
+        width="140"
+      />
+      <el-table-column
+        prop="language"
+        :label="fieldLabel('语言')"
+        width="100"
+      />
+      <el-table-column :label="fieldLabel('状态')" width="90">
+        <template #default="{ row }">{{ fieldLabel(row.status) }}</template>
+      </el-table-column>
       <el-table-column prop="owner" :label="fieldLabel('负责人')" width="120" />
       <el-table-column
         prop="template"
@@ -59,7 +77,11 @@ onMounted(loadData);
       />
     </el-table>
 
-    <el-dialog v-model="dialogVisible" title="新增 Brief 模板" width="720px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="fieldLabel('新增 Brief 模板')"
+      width="720px"
+    >
       <el-form :model="form" label-width="96px">
         <el-row :gutter="12">
           <el-col :span="12"
@@ -96,8 +118,12 @@ onMounted(loadData);
         </el-row>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">保存</el-button>
+        <el-button @click="dialogVisible = false">{{
+          fieldLabel("取消")
+        }}</el-button>
+        <el-button type="primary" @click="submit">{{
+          fieldLabel("保存")
+        }}</el-button>
       </template>
     </el-dialog>
   </div>

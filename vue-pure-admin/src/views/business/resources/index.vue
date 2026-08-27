@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted, onUnmounted } from "vue";
+import { computed, reactive, ref, onMounted, onUnmounted, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
@@ -15,7 +16,9 @@ import {
   importTrafficCVHTML,
   syncAllResources,
   getResourceSyncStatus,
+  getResourceExtraFields,
   importResources,
+  translateResources,
   getTagList,
   createTag,
   getCooperationList,
@@ -30,6 +33,7 @@ defineOptions({ name: "BusinessResources" });
 
 const router = useRouter();
 const route = useRoute();
+const { locale } = useI18n();
 const loading = ref(false);
 const syncingAll = ref(false);
 const showSyncCard = ref(false);
@@ -83,6 +87,9 @@ const workbookSheets = ref<any[]>([]);
 const selectedSheets = ref<string[]>([]);
 const importFileName = ref("");
 const tagOptions = ref<any[]>([]);
+const extraFieldDefinitions = ref<any[]>([]);
+const translatingPage = ref(false);
+const translationWarningShown = ref(false);
 const syncStatus = ref<any>({});
 const avatarLoadFailed = reactive<Record<string, boolean>>({});
 const avatarLoaded = reactive<Record<string, boolean>>({});
@@ -328,18 +335,25 @@ function openUrl(url: string) {
 }
 
 function marketText(row: any) {
-  const parts = [row.region, row.market || row.country || row.city]
+  const parts = [
+    localizedText(row, "region"),
+    row.market || localizedText(row, "country") || localizedText(row, "city")
+  ]
     .map(item => displayText(item, ""))
     .filter(Boolean);
   return parts.length > 0 ? Array.from(new Set(parts)).join(" - ") : "-";
 }
 
 function domainText(row: any) {
-  return displayText(row.category || row.industry);
+  return displayText(
+    row.category
+      ? localizedText(row, "category")
+      : localizedText(row, "industry")
+  );
 }
 
 function tierText(row: any) {
-  return displayText(row.tier, "待同步");
+  return enumText(row.tier, "待同步");
 }
 
 function cooperationTypeValues(row: any) {
@@ -419,6 +433,86 @@ async function loadTags() {
   }
 }
 
+async function loadExtraFieldDefinitions() {
+  const res = await getResourceExtraFields({ locale: locale.value });
+  if (res.code === 0) extraFieldDefinitions.value = res.data || [];
+}
+
+function resourceNeedsEnglish(row: any) {
+  const fields = [
+    "title",
+    "industry",
+    "category",
+    "country",
+    "region",
+    "city",
+    "language",
+    "contentTypes",
+    "notes"
+  ];
+  const hasMissingBase = fields.some(field => {
+    const source = String(row?.[field] || "");
+    return /[\u3400-\u9fff]/.test(source) && !row?.localized?.[field];
+  });
+  const hasMissingExtra = Object.entries(row?.extraFields || {}).some(
+    ([field, value]) =>
+      /[\u3400-\u9fff]/.test(String(value || "")) &&
+      !row?.localizedExtraFields?.[field]
+  );
+  return hasMissingBase || hasMissingExtra;
+}
+
+async function translateVisibleRows(params: any, rows: any[]) {
+  if (locale.value !== "en" || translatingPage.value) return;
+  const ids = rows.filter(resourceNeedsEnglish).map(row => Number(row.id));
+  if (ids.length === 0) return;
+  translatingPage.value = true;
+  try {
+    const translated = await translateResources({
+      ids,
+      targetLanguage: "en"
+    });
+    if (translated.code !== 0) {
+      if (!translationWarningShown.value) {
+        ElMessage.warning(translated.message || "English translation failed");
+        translationWarningShown.value = true;
+      }
+      return;
+    }
+    const refreshed = await getResourceList({ ...params, locale: "en" });
+    if (refreshed.code === 0) {
+      list.value = refreshed.data?.list || [];
+      if (selectedResource.value) {
+        selectedResource.value = list.value.find(
+          row => Number(row.id) === Number(selectedResource.value?.id)
+        );
+      }
+      const translatedPostResults = await Promise.all(
+        list.value.map((row: any) =>
+          getResourcePosts({
+            resourceId: row.id,
+            currentPage: 1,
+            pageSize: 2,
+            locale: "en"
+          })
+        )
+      );
+      recentPosts.value = translatedPostResults.flatMap(result =>
+        result.code === 0 && Array.isArray(result.data?.list)
+          ? result.data.list.map((post: any) => ({
+              ...post,
+              title: post.localized?.title || post.title,
+              description: post.localized?.description || post.description
+            }))
+          : []
+      );
+    }
+    await loadExtraFieldDefinitions();
+  } finally {
+    translatingPage.value = false;
+  }
+}
+
 async function ensureTagIds(names: string[]) {
   const normalizedNames = Array.from(
     new Set(names.map(name => String(name || "").trim()).filter(Boolean))
@@ -458,7 +552,8 @@ async function loadData() {
       ...(requestedResourceId ? { id: requestedResourceId } : {}),
       currentPage: currentPage.value,
       pageSize: pageSize.value,
-      sequenceSortOrder: sequenceSortOrder.value
+      sequenceSortOrder: sequenceSortOrder.value,
+      locale: locale.value
     };
     const [resourceRes, cooperationRes, projectRes] = await Promise.all([
       getResourceList(params),
@@ -471,18 +566,30 @@ async function loadData() {
         : [];
       list.value = resourceRows;
       total.value = Number(resourceRes.data?.total || 0);
+      void translateVisibleRows(params, resourceRows);
       const postResults = await Promise.all(
         resourceRows.map((row: any) =>
           getResourcePosts({
             resourceId: row.id,
             currentPage: 1,
-            pageSize: 2
+            pageSize: 2,
+            locale: locale.value
           })
         )
       );
       recentPosts.value = postResults.flatMap(result =>
         result.code === 0 && Array.isArray(result.data?.list)
-          ? result.data.list
+          ? result.data.list.map((post: any) => ({
+              ...post,
+              title:
+                locale.value === "en" && post.localized?.title
+                  ? post.localized.title
+                  : post.title,
+              description:
+                locale.value === "en" && post.localized?.description
+                  ? post.localized.description
+                  : post.description
+            }))
           : []
       );
       if (requestedResourceId) {
@@ -523,7 +630,9 @@ function formatDateTime(value: unknown) {
   if (!value) return "-";
   const time = Number(value);
   if (!Number.isFinite(time)) return String(value);
-  return new Date(time).toLocaleString("zh-CN");
+  return new Date(time).toLocaleString(
+    locale.value === "en" ? "en-US" : "zh-CN"
+  );
 }
 
 function sequenceNumber(index: number) {
@@ -542,15 +651,51 @@ function displayText(value: unknown, fallback = "-") {
   return text;
 }
 
+function enumText(value: unknown, fallback = "-") {
+  return fieldLabel(displayText(value, fallback));
+}
+
+function localizedText(row: any, field: string, fallback = "-") {
+  const value =
+    locale.value === "en" && row?.localized?.[field]
+      ? row.localized[field]
+      : row?.[field];
+  return displayText(value, fallback);
+}
+
+function localizedExtraValue(row: any, fieldKey: string) {
+  const value =
+    locale.value === "en" && row?.localizedExtraFields?.[fieldKey]
+      ? row.localizedExtraFields[fieldKey]
+      : row?.extraFields?.[fieldKey];
+  return displayText(value);
+}
+
+function extraFieldLabel(fieldKey: string) {
+  const definition = extraFieldDefinitions.value.find(
+    item => item.fieldKey === fieldKey
+  );
+  if (!definition) return fieldKey;
+  return locale.value === "en" && definition.localizedLabel
+    ? definition.localizedLabel
+    : definition.label;
+}
+
 function formatCount(value: unknown) {
   const number = Number(value || 0);
   if (!Number.isFinite(number) || number <= 0) return "-";
-  return number.toLocaleString("zh-CN");
+  return number.toLocaleString(locale.value === "en" ? "en-US" : "zh-CN");
 }
 
 function compactCount(value: unknown) {
   const number = Number(value || 0);
   if (!Number.isFinite(number) || number <= 0) return "-";
+  if (locale.value === "en") {
+    return new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 1
+    }).format(number);
+  }
   if (number >= 100000000) return `${(number / 100000000).toFixed(1)}亿`;
   if (number >= 10000) return `${(number / 10000).toFixed(1)}万`;
   return number.toLocaleString("zh-CN");
@@ -671,12 +816,17 @@ function performanceDeltaText(row: any) {
 }
 
 function locationText(row: any) {
-  return displayText(row.country || row.region || row.city);
+  if (row.country) return localizedText(row, "country");
+  if (row.region) return localizedText(row, "region");
+  return localizedText(row, "city");
 }
 
 function mediaAccountTitle(row: any) {
   return displayText(
-    row.mediaOutlet || row.platformHandle || row.title || row.platformUrl
+    row.mediaOutlet ||
+      row.platformHandle ||
+      localizedText(row, "title", "") ||
+      row.platformUrl
   );
 }
 
@@ -1144,21 +1294,36 @@ async function syncOne(row: any) {
 }
 
 const importTemplateColumns = [
-  { key: "name", label: "Name", required: true },
-  { key: "email", label: "Email", required: true },
-  { key: "mediaOutlet", label: "Media Outlet", required: false },
-  { key: "category", label: "Category", required: false },
-  { key: "tier", label: "Tier", required: false },
-  { key: "title", label: "Title", required: false },
-  { key: "base", label: "Base", required: false },
-  { key: "platform", label: "Platform", required: false },
-  { key: "followers", label: "Followers", required: false },
-  { key: "pic", label: "PIC", required: false },
-  { key: "status", label: "Status", required: false },
-  { key: "reference", label: "Reference", required: false },
-  { key: "shippingAddress", label: "Shipping Address", required: false },
-  { key: "website", label: "Website", required: false },
-  { key: "notes", label: "Notes", required: false }
+  { key: "name", label: "Name", zhLabel: "名称", required: true },
+  { key: "email", label: "Email", zhLabel: "邮箱", required: true },
+  {
+    key: "mediaOutlet",
+    label: "Media Outlet",
+    zhLabel: "媒体名称",
+    required: false
+  },
+  { key: "category", label: "Category", zhLabel: "领域", required: false },
+  { key: "tier", label: "Tier", zhLabel: "层级", required: false },
+  { key: "title", label: "Title", zhLabel: "职位", required: false },
+  { key: "base", label: "Base", zhLabel: "国家/地区", required: false },
+  { key: "platform", label: "Platform", zhLabel: "平台", required: false },
+  { key: "followers", label: "Followers", zhLabel: "粉丝数", required: false },
+  { key: "pic", label: "PIC", zhLabel: "负责人", required: false },
+  { key: "status", label: "Status", zhLabel: "状态", required: false },
+  {
+    key: "reference",
+    label: "Reference",
+    zhLabel: "数据来源",
+    required: false
+  },
+  {
+    key: "shippingAddress",
+    label: "Shipping Address",
+    zhLabel: "邮寄地址",
+    required: false
+  },
+  { key: "website", label: "Website", zhLabel: "网站", required: false },
+  { key: "notes", label: "Notes", zhLabel: "备注", required: false }
 ];
 
 function normalizeHeader(value: string) {
@@ -1183,7 +1348,9 @@ function isValidEmail(value: string) {
 }
 
 function templateHeaders() {
-  return importTemplateColumns.map(column => column.label);
+  return importTemplateColumns.map(column =>
+    locale.value === "en" ? column.label : column.zhLabel
+  );
 }
 
 function sheetHeaders(sheet: any) {
@@ -1195,20 +1362,27 @@ function sheetHeaders(sheet: any) {
 function validateSheetTemplate(sheet: any) {
   const expected = templateHeaders();
   const actual = sheetHeaders(sheet);
-  const extraValues = (sheet.rows[0] || [])
+  const extraHeaders = (sheet.rows[0] || [])
     .slice(importTemplateColumns.length)
-    .filter((value: any) => String(value || "").trim());
+    .map((value: any) => normalizeHeader(value))
+    .filter(Boolean);
   const errors: string[] = [];
-  if (actual.length !== expected.length) {
-    errors.push(`表头列数必须为 ${expected.length} 列`);
+  if (actual.length < expected.length) {
+    errors.push(`前 ${expected.length} 列必须使用标准模板字段`);
   }
-  expected.forEach((header, index) => {
-    if (actual[index] !== header) {
-      errors.push(`第 ${index + 1} 列必须是 ${header}`);
+  importTemplateColumns.forEach((column, index) => {
+    const accepted = [column.label, column.zhLabel];
+    if (!accepted.includes(actual[index])) {
+      errors.push(
+        `第 ${index + 1} 列必须是 ${column.label} 或 ${column.zhLabel}`
+      );
     }
   });
-  if (extraValues.length > 0) {
-    errors.push("存在模板外字段");
+  if (
+    new Set(extraHeaders.map(item => item.toLowerCase())).size !==
+    extraHeaders.length
+  ) {
+    errors.push("自定义字段名称不能重复");
   }
   return errors;
 }
@@ -1249,6 +1423,7 @@ function parseSelectedSheets() {
           shippingAddress: "",
           website: "",
           notes: "",
+          extra: {},
           duplicate: false,
           errors: []
         };
@@ -1256,6 +1431,16 @@ function parseSelectedSheets() {
           const value = cellText(rawRow[index]);
           normalized[column.key] =
             column.key === "email" ? extractEmail(value) : value;
+        });
+        const extraHeaders = (sheet.rows[0] || [])
+          .slice(importTemplateColumns.length)
+          .map((value: any) => normalizeHeader(value));
+        extraHeaders.forEach((header: string, extraIndex: number) => {
+          if (!header) return;
+          const value = cellText(
+            rawRow[importTemplateColumns.length + extraIndex]
+          );
+          if (value) normalized.extra[header] = value;
         });
         if (
           importTemplateColumns.every(
@@ -1355,8 +1540,15 @@ function importRowClassName({ row }: any) {
 
 onMounted(() => {
   loadTags();
+  loadExtraFieldDefinitions();
   loadData();
   loadSyncStatus(false);
+});
+
+watch(locale, () => {
+  translationWarningShown.value = false;
+  loadExtraFieldDefinitions();
+  loadData();
 });
 
 onUnmounted(() => {
@@ -1369,9 +1561,13 @@ onUnmounted(() => {
     <section class="page-hero">
       <div>
         <span>Resource Library</span>
-        <h1>全球资源库</h1>
+        <h1>{{ fieldLabel("全球资源库") }}</h1>
         <p>
-          集中维护媒体、KOL、创作者与代理商主档，沉淀评分、风险、平台数据和导入来源。
+          {{
+            fieldLabel(
+              "集中维护媒体、KOL、创作者与代理商主档，沉淀评分、风险、平台数据和导入来源。"
+            )
+          }}
         </p>
       </div>
       <div class="hero-actions">
@@ -1382,17 +1578,17 @@ onUnmounted(() => {
             @click="syncAll"
           >
             <IconifyIconOnline icon="ri:cloud-line" class="mr-1" />
-            立即同步KOL数据
+            {{ fieldLabel("立即同步KOL数据") }}
           </el-button>
           <span
-            >上一次同步：{{
+            >{{ fieldLabel("上一次同步") }}：{{
               formatDateTime(syncStatus.lastResourceSyncAt)
             }}</span
           >
         </div>
         <el-button type="primary" @click="openCreate">
           <IconifyIconOnline icon="ri:add-line" class="mr-1" />
-          新增资源
+          {{ fieldLabel("新增资源") }}
         </el-button>
         <el-button
           type="danger"
@@ -1400,7 +1596,8 @@ onUnmounted(() => {
           :disabled="selectedResourceIds.length === 0"
           @click="removeResources(selectedResourceIds)"
         >
-          删除所选{{
+          {{ fieldLabel("删除所选")
+          }}{{
             selectedResourceIds.length ? ` (${selectedResourceIds.length})` : ""
           }}
         </el-button>
@@ -1414,9 +1611,11 @@ onUnmounted(() => {
     >
       <div class="sync-card-main">
         <div>
-          <strong>平台数据同步</strong>
+          <strong>{{ fieldLabel("平台数据同步") }}</strong>
           <span>
-            上次同步：{{ formatDateTime(syncStatus.lastResourceSyncAt) }}
+            {{ fieldLabel("上次同步") }}：{{
+              formatDateTime(syncStatus.lastResourceSyncAt)
+            }}
           </span>
         </div>
         <el-tag :type="syncJobTagType" effect="plain">
@@ -1428,9 +1627,15 @@ onUnmounted(() => {
         :status="latestSyncJob.status === '失败' ? 'exception' : undefined"
       />
       <div class="sync-meta">
-        <span>成功 {{ latestSyncJob.successCount || 0 }}</span>
-        <span>失败 {{ latestSyncJob.failedCount || 0 }}</span>
-        <span>跳过 {{ latestSyncJob.skippedCount || 0 }}</span>
+        <span
+          >{{ fieldLabel("成功") }} {{ latestSyncJob.successCount || 0 }}</span
+        >
+        <span
+          >{{ fieldLabel("失败") }} {{ latestSyncJob.failedCount || 0 }}</span
+        >
+        <span
+          >{{ fieldLabel("跳过") }} {{ latestSyncJob.skippedCount || 0 }}</span
+        >
         <span v-if="latestSyncJob.currentResourceName">
           当前：{{ latestSyncJob.currentResourceName }}
         </span>
@@ -1441,19 +1646,23 @@ onUnmounted(() => {
     <el-card shadow="never" class="filter-card">
       <el-form :model="search" inline>
         <el-form-item :label="fieldLabel('名称')">
-          <el-input v-model="search.name" clearable placeholder="账号/媒体名" />
+          <el-input
+            v-model="search.name"
+            clearable
+            :placeholder="fieldLabel('账号/媒体名')"
+          />
         </el-form-item>
         <el-form-item :label="fieldLabel('资源类型')">
           <el-select
             v-model="search.resourceType"
             clearable
-            placeholder="全部类型"
+            :placeholder="fieldLabel('全部类型')"
             class="filter-select-wide"
           >
             <el-option
               v-for="item in ['KOL', '媒体', 'IP', '其他']"
               :key="item"
-              :label="item"
+              :label="fieldLabel(item)"
               :value="item"
             />
           </el-select>
@@ -1462,7 +1671,7 @@ onUnmounted(() => {
           <el-input
             v-model="search.country"
             clearable
-            placeholder="国家/地区"
+            :placeholder="fieldLabel('国家/地区')"
           />
         </el-form-item>
         <el-form-item :label="fieldLabel('平台')">
@@ -1470,7 +1679,7 @@ onUnmounted(() => {
             v-model="search.platform"
             clearable
             filterable
-            placeholder="全部"
+            :placeholder="fieldLabel('全部')"
             class="filter-select-wide"
           >
             <el-option
@@ -1486,7 +1695,7 @@ onUnmounted(() => {
             v-model="search.industry"
             clearable
             filterable
-            placeholder="全部领域"
+            :placeholder="fieldLabel('全部领域')"
             class="filter-select-wide"
           >
             <el-option
@@ -1500,7 +1709,7 @@ onUnmounted(() => {
                 '设计'
               ]"
               :key="item"
-              :label="item"
+              :label="fieldLabel(item)"
               :value="item"
             />
           </el-select>
@@ -1509,13 +1718,13 @@ onUnmounted(() => {
           <el-select
             v-model="search.tier"
             clearable
-            placeholder="全部"
+            :placeholder="fieldLabel('全部')"
             class="filter-select-wide"
           >
             <el-option
               v-for="item in ['头部', '腰部', '尾部']"
               :key="item"
-              :label="item"
+              :label="fieldLabel(item)"
               :value="item"
             />
           </el-select>
@@ -1525,7 +1734,7 @@ onUnmounted(() => {
             v-model="selectedProject"
             clearable
             filterable
-            placeholder="全部历史合作"
+            :placeholder="fieldLabel('全部历史合作')"
             class="filter-select-wide"
           >
             <el-option
@@ -1539,13 +1748,13 @@ onUnmounted(() => {
         <el-form-item>
           <el-button type="primary" @click="searchData">
             <IconifyIconOnline icon="ri:search-line" class="mr-1" />
-            查询
+            {{ fieldLabel("查询") }}
           </el-button>
           <el-button @click="openImportDialog">
             <IconifyIconOnline icon="ri:upload-cloud-2-line" class="mr-1" />
-            上传主名单
+            {{ fieldLabel("上传主名单") }}
           </el-button>
-          <el-button @click="resetSearch">重置</el-button>
+          <el-button @click="resetSearch">{{ fieldLabel("重置") }}</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -1554,7 +1763,7 @@ onUnmounted(() => {
       <template #header>
         <div class="table-card-header">
           <div>
-            <strong>资源清单</strong>
+            <strong>{{ fieldLabel("资源清单") }}</strong>
             <span
               >共
               {{ total }} 条资源，点击达人查看完整档案，编辑入口独立维护</span
@@ -1590,11 +1799,11 @@ onUnmounted(() => {
               />
             </button>
           </span>
-          <span>资源身份</span>
-          <span>基础表现</span>
-          <span>合作数据</span>
-          <span>最近平台作品</span>
-          <span>操作</span>
+          <span>{{ fieldLabel("资源身份") }}</span>
+          <span>{{ fieldLabel("基础表现") }}</span>
+          <span>{{ fieldLabel("合作数据") }}</span>
+          <span>{{ fieldLabel("最近平台作品") }}</span>
+          <span>{{ fieldLabel("操作") }}</span>
         </div>
         <article
           v-for="(row, index) in list"
@@ -1632,7 +1841,7 @@ onUnmounted(() => {
               <span>{{ mediaAccountTitle(row) }}</span>
               <p>
                 <el-tag size="small" effect="plain">{{
-                  displayText(row.resourceType)
+                  enumText(row.resourceType)
                 }}</el-tag>
                 <el-tag size="small" type="warning" effect="plain">{{
                   domainText(row)
@@ -1651,15 +1860,15 @@ onUnmounted(() => {
 
           <dl class="compact-base-metrics">
             <div>
-              <dt>{{ fieldLabel('多平台粉丝 / 访问量') }}</dt>
+              <dt>{{ fieldLabel("多平台粉丝 / 访问量") }}</dt>
               <dd>{{ compactCount(resourceAudience(row)) }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('月均播放量') }}</dt>
+              <dt>{{ fieldLabel("月均播放量") }}</dt>
               <dd>{{ compactCount(row.avgViews) }}</dd>
             </div>
             <div>
-              <dt>{{ fieldLabel('月均互动量') }}</dt>
+              <dt>{{ fieldLabel("月均互动量") }}</dt>
               <dd>{{ compactCount(avgInteractions(row)) }}</dd>
             </div>
           </dl>
@@ -1674,21 +1883,21 @@ onUnmounted(() => {
             </div>
             <dl>
               <div>
-                <dt>{{ fieldLabel('合作费用') }}</dt>
+                <dt>{{ fieldLabel("合作费用") }}</dt>
                 <dd>{{ currencyText(cooperationStats(row).totalCost) }}</dd>
               </div>
               <div>
-                <dt>{{ fieldLabel('合作曝光量') }}</dt>
+                <dt>{{ fieldLabel("合作曝光量") }}</dt>
                 <dd>{{ compactCount(cooperationStats(row).totalReach) }}</dd>
               </div>
               <div>
-                <dt>{{ fieldLabel('合作互动量') }}</dt>
+                <dt>{{ fieldLabel("合作互动量") }}</dt>
                 <dd>
                   {{ compactCount(cooperationStats(row).totalEngagements) }}
                 </dd>
               </div>
               <div>
-                <dt>{{ fieldLabel('效果分数') }}</dt>
+                <dt>{{ fieldLabel("效果分数") }}</dt>
                 <dd>{{ displayText(row.score) }}</dd>
               </div>
               <div>
@@ -1722,39 +1931,39 @@ onUnmounted(() => {
               @click="openPosts(row)"
             >
               <IconifyIconOnline icon="ri:play-list-2-line" />
-              <span>查看作品数据</span>
+              <span>{{ fieldLabel("查看作品数据") }}</span>
             </button>
           </div>
 
           <div class="compact-actions">
-            <el-button link type="primary" @click="openProfile(row)"
-              >档案</el-button
-            >
-            <el-button link type="primary" @click="openEdit(row)"
-              >编辑</el-button
-            >
+            <el-button link type="primary" @click="openProfile(row)">{{
+              fieldLabel("档案")
+            }}</el-button>
+            <el-button link type="primary" @click="openEdit(row)">{{
+              fieldLabel("编辑")
+            }}</el-button>
             <el-dropdown trigger="click">
               <el-button link>
                 <IconifyIconOnline icon="ri:more-2-fill" />
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item @click="openPosts(row)"
-                    >查看作品</el-dropdown-item
-                  >
+                  <el-dropdown-item @click="openPosts(row)">{{
+                    fieldLabel("查看作品")
+                  }}</el-dropdown-item>
                   <el-dropdown-item
                     :disabled="syncRunning || !isSyncablePlatform(row.platform)"
                     @click="syncOne(row)"
-                    >同步平台数据</el-dropdown-item
+                    >{{ fieldLabel("同步平台数据") }}</el-dropdown-item
                   >
                   <el-dropdown-item
                     v-if="isWebsitePlatform(row.platform)"
                     @click="openTrafficCVImport(row)"
-                    >导入 Traffic.cv HTML</el-dropdown-item
+                    >{{ fieldLabel("导入 Traffic.cv HTML") }}</el-dropdown-item
                   >
-                  <el-dropdown-item divided @click="remove(row)"
-                    >删除资源</el-dropdown-item
-                  >
+                  <el-dropdown-item divided @click="remove(row)">{{
+                    fieldLabel("删除资源")
+                  }}</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -1762,7 +1971,7 @@ onUnmounted(() => {
         </article>
         <el-empty
           v-if="!loading && list.length === 0"
-          description="暂无匹配资源"
+          :description="fieldLabel('暂无匹配资源')"
         />
       </section>
       <el-table
@@ -1779,42 +1988,42 @@ onUnmounted(() => {
                 <div class="detail-group__heading">
                   <i><IconifyIconOnline icon="ri:user-star-line" /></i>
                   <div>
-                    <strong>资源画像</strong>
-                    <span>身份、领域、市场与平台信息</span>
+                    <strong>{{ fieldLabel("资源画像") }}</strong>
+                    <span>{{ fieldLabel("身份、领域、市场与平台信息") }}</span>
                   </div>
                 </div>
                 <dl class="detail-grid">
                   <div>
-                    <dt>{{ fieldLabel('资源类型') }}</dt>
-                    <dd>{{ displayText(row.resourceType) }}</dd>
+                    <dt>{{ fieldLabel("资源类型") }}</dt>
+                    <dd>{{ enumText(row.resourceType) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('资源领域') }}</dt>
+                    <dt>{{ fieldLabel("资源领域") }}</dt>
                     <dd>{{ domainText(row) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('所属市场') }}</dt>
+                    <dt>{{ fieldLabel("所属市场") }}</dt>
                     <dd>{{ marketText(row) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('分级') }}</dt>
+                    <dt>{{ fieldLabel("分级") }}</dt>
                     <dd>{{ tierText(row) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('平台') }}</dt>
+                    <dt>{{ fieldLabel("平台") }}</dt>
                     <dd>{{ displayText(row.platform) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('语言') }}</dt>
+                    <dt>{{ fieldLabel("语言") }}</dt>
                     <dd>{{ displayText(row.language) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('媒体 / 账号') }}</dt>
+                    <dt>{{ fieldLabel("媒体 / 账号") }}</dt>
                     <dd>{{ mediaAccountTitle(row) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('状态') }}</dt>
-                    <dd>{{ displayText(row.status) }}</dd>
+                    <dt>{{ fieldLabel("状态") }}</dt>
+                    <dd>{{ enumText(row.status) }}</dd>
                   </div>
                 </dl>
               </section>
@@ -1823,35 +2032,35 @@ onUnmounted(() => {
                 <div class="detail-group__heading">
                   <i><IconifyIconOnline icon="ri:line-chart-line" /></i>
                   <div>
-                    <strong>规模与内容表现</strong>
-                    <span>平台规模及日常内容表现</span>
+                    <strong>{{ fieldLabel("规模与内容表现") }}</strong>
+                    <span>{{ fieldLabel("平台规模及日常内容表现") }}</span>
                   </div>
                 </div>
                 <dl class="detail-grid detail-grid--metrics">
                   <div>
-                    <dt>{{ fieldLabel('多平台粉丝 / 访问量') }}</dt>
+                    <dt>{{ fieldLabel("多平台粉丝 / 访问量") }}</dt>
                     <dd>
                       {{ formatCount(resourceAudience(row)) }}
                     </dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('月均播放量') }}</dt>
+                    <dt>{{ fieldLabel("月均播放量") }}</dt>
                     <dd>{{ formatCount(row.avgViews) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('平均互动率') }}</dt>
+                    <dt>{{ fieldLabel("平均互动率") }}</dt>
                     <dd>{{ percentText(row.engagementRate) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('累计平台播放') }}</dt>
+                    <dt>{{ fieldLabel("累计平台播放") }}</dt>
                     <dd>{{ formatCount(row.totalViews) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('已同步内容数') }}</dt>
+                    <dt>{{ fieldLabel("已同步内容数") }}</dt>
                     <dd>{{ formatCount(row.videoCount) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('合作效果分数') }}</dt>
+                    <dt>{{ fieldLabel("合作效果分数") }}</dt>
                     <dd>TBC</dd>
                   </div>
                 </dl>
@@ -1861,13 +2070,17 @@ onUnmounted(() => {
                 <div class="detail-group__heading">
                   <i><IconifyIconOnline icon="ri:briefcase-4-line" /></i>
                   <div>
-                    <strong>合作与效果</strong>
-                    <span>默认汇总全部历史合作，可从项目名称识别单独项目</span>
+                    <strong>{{ fieldLabel("合作与效果") }}</strong>
+                    <span>{{
+                      fieldLabel(
+                        "默认汇总全部历史合作，可从项目名称识别单独项目"
+                      )
+                    }}</span>
                   </div>
                 </div>
                 <dl class="detail-grid detail-grid--metrics">
                   <div>
-                    <dt>{{ fieldLabel('合作类型') }}</dt>
+                    <dt>{{ fieldLabel("合作类型") }}</dt>
                     <dd>
                       <CooperationTypeTags
                         :value="cooperationTypeValues(row)"
@@ -1876,19 +2089,19 @@ onUnmounted(() => {
                     </dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('合作项目') }}</dt>
+                    <dt>{{ fieldLabel("合作项目") }}</dt>
                     <dd>{{ cooperationProjects(row) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('合作费用') }}</dt>
+                    <dt>{{ fieldLabel("合作费用") }}</dt>
                     <dd>{{ currencyText(cooperationStats(row).totalCost) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('合作曝光量') }}</dt>
+                    <dt>{{ fieldLabel("合作曝光量") }}</dt>
                     <dd>{{ formatCount(cooperationStats(row).totalReach) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('合作互动量') }}</dt>
+                    <dt>{{ fieldLabel("合作互动量") }}</dt>
                     <dd>
                       {{ formatCount(cooperationStats(row).totalEngagements) }}
                     </dd>
@@ -1900,7 +2113,7 @@ onUnmounted(() => {
                 </dl>
                 <el-table
                   :data="cooperationsFor(row)"
-                  empty-text="暂无历史合作内容"
+                  :empty-text="fieldLabel('暂无历史合作内容')"
                   class="cooperation-table"
                 >
                   <el-table-column
@@ -1941,7 +2154,10 @@ onUnmounted(() => {
                       }}
                     </template>
                   </el-table-column>
-                  <el-table-column :label="fieldLabel('合作内容')" min-width="220">
+                  <el-table-column
+                    :label="fieldLabel('合作内容')"
+                    min-width="220"
+                  >
                     <template #default="{ row: cooperation }">
                       <el-link
                         v-if="cooperation.deliverableLinks"
@@ -1949,7 +2165,7 @@ onUnmounted(() => {
                         :href="cooperation.deliverableLinks"
                         target="_blank"
                       >
-                        查看内容链接
+                        {{ fieldLabel("查看内容链接") }}
                       </el-link>
                       <span v-else>-</span>
                     </template>
@@ -1961,21 +2177,21 @@ onUnmounted(() => {
                 <div class="detail-group__heading">
                   <i><IconifyIconOnline icon="ri:contacts-line" /></i>
                   <div>
-                    <strong>联系与管理</strong>
-                    <span>对接、来源与内部备注</span>
+                    <strong>{{ fieldLabel("联系与管理") }}</strong>
+                    <span>{{ fieldLabel("对接、来源与内部备注") }}</span>
                   </div>
                 </div>
                 <dl class="detail-grid">
                   <div>
-                    <dt>{{ fieldLabel('联系方式') }}</dt>
+                    <dt>{{ fieldLabel("联系方式") }}</dt>
                     <dd>{{ displayText(row.contact) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('对接人 / 供应商') }}</dt>
+                    <dt>{{ fieldLabel("对接人 / 供应商") }}</dt>
                     <dd>{{ displayText(row.owner) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('平台链接') }}</dt>
+                    <dt>{{ fieldLabel("平台链接") }}</dt>
                     <dd>{{ displayText(row.platformUrl) }}</dd>
                   </div>
                   <div>
@@ -1983,11 +2199,11 @@ onUnmounted(() => {
                     <dd>{{ displayText(row.website) }}</dd>
                   </div>
                   <div>
-                    <dt>{{ fieldLabel('数据来源') }}</dt>
+                    <dt>{{ fieldLabel("数据来源") }}</dt>
                     <dd>{{ displayText(row.referenceSource) }}</dd>
                   </div>
                   <div class="detail-grid__wide">
-                    <dt>{{ fieldLabel('备注') }}</dt>
+                    <dt>{{ fieldLabel("备注") }}</dt>
                     <dd>{{ displayText(row.notes) }}</dd>
                   </div>
                 </dl>
@@ -2026,7 +2242,7 @@ onUnmounted(() => {
         <el-table-column :label="fieldLabel('资源类型 / 领域')" min-width="180">
           <template #default="{ row }">
             <div class="stack-cell">
-              <strong>{{ displayText(row.resourceType) }}</strong>
+              <strong>{{ enumText(row.resourceType) }}</strong>
               <span>{{ domainText(row) }}</span>
             </div>
           </template>
@@ -2051,7 +2267,10 @@ onUnmounted(() => {
           <template #default="{ row }">
             <div class="metric-cell">
               <strong>{{ formatCount(resourceAudience(row)) }}</strong>
-              <span>本平台 {{ formatCount(row.followers) }}</span>
+              <span
+                >{{ fieldLabel("本平台") }}
+                {{ formatCount(row.followers) }}</span
+              >
             </div>
           </template>
         </el-table-column>
@@ -2059,7 +2278,10 @@ onUnmounted(() => {
           <template #default="{ row }">
             <div class="metric-cell">
               <strong>{{ formatCount(row.avgViews) }}</strong>
-              <span>互动率 {{ percentText(row.engagementRate) }}</span>
+              <span
+                >{{ fieldLabel("互动率") }}
+                {{ percentText(row.engagementRate) }}</span
+              >
             </div>
           </template>
         </el-table-column>
@@ -2078,29 +2300,33 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column :label="fieldLabel('操作')" width="230" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openProfile(row)"
-              >档案</el-button
-            >
-            <el-button link type="primary" @click="openPosts(row)"
-              >作品</el-button
-            >
+            <el-button link type="primary" @click="openProfile(row)">{{
+              fieldLabel("档案")
+            }}</el-button>
+            <el-button link type="primary" @click="openPosts(row)">{{
+              fieldLabel("作品")
+            }}</el-button>
             <el-button
               link
               type="primary"
               :loading="!!syncingResourceIds[Number(row.id || 0)]"
               :disabled="syncRunning || !isSyncablePlatform(row.platform)"
               @click="syncOne(row)"
-              >同步</el-button
+              >{{ fieldLabel("同步") }}</el-button
             >
-            <el-button link type="primary" @click="openEdit(row)"
-              >编辑</el-button
-            >
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button link type="primary" @click="openEdit(row)">{{
+              fieldLabel("编辑")
+            }}</el-button>
+            <el-button link type="danger" @click="remove(row)">{{
+              fieldLabel("删除")
+            }}</el-button>
           </template>
         </el-table-column>
       </el-table>
       <div class="table-footer">
-        <span>共 {{ total }} 条资源</span>
+        <span
+          >{{ fieldLabel("共") }} {{ total }} {{ fieldLabel("条资源") }}</span
+        >
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
@@ -2116,14 +2342,20 @@ onUnmounted(() => {
 
     <el-dialog
       v-model="syncDialogVisible"
-      title="立即同步KOL数据"
+      :title="fieldLabel('立即同步KOL数据')"
       width="480px"
     >
       <div class="sync-platform-dialog">
-        <p>选择本次需要同步的平台。抓取控制中已停用的平台仍会跳过。</p>
+        <p>
+          {{
+            fieldLabel(
+              "选择本次需要同步的平台。抓取控制中已停用的平台仍会跳过。"
+            )
+          }}
+        </p>
         <el-radio-group v-model="syncScope">
-          <el-radio value="all">全部平台</el-radio>
-          <el-radio value="selected">指定平台</el-radio>
+          <el-radio value="all">{{ fieldLabel("全部平台") }}</el-radio>
+          <el-radio value="selected">{{ fieldLabel("指定平台") }}</el-radio>
         </el-radio-group>
         <el-checkbox-group
           v-if="syncScope === 'selected'"
@@ -2140,16 +2372,18 @@ onUnmounted(() => {
         </el-checkbox-group>
       </div>
       <template #footer>
-        <el-button @click="syncDialogVisible = false">取消</el-button>
+        <el-button @click="syncDialogVisible = false">{{
+          fieldLabel("取消")
+        }}</el-button>
         <el-button type="primary" :loading="syncingAll" @click="confirmSyncAll">
-          开始同步
+          {{ fieldLabel("开始同步") }}
         </el-button>
       </template>
     </el-dialog>
 
     <el-dialog
       v-model="trafficCVImportVisible"
-      title="导入 Traffic.cv HTML"
+      :title="fieldLabel('导入 Traffic.cv HTML')"
       width="min(760px, 92vw)"
       destroy-on-close
     >
@@ -2178,7 +2412,7 @@ onUnmounted(() => {
         accept=".html,.htm,text/html"
         :on-change="loadTrafficCVHTMLFile"
       >
-        <el-button>选择 HTML 文件</el-button>
+        <el-button>{{ fieldLabel("选择 HTML 文件") }}</el-button>
       </el-upload>
       <el-input
         v-model="trafficCVHTML"
@@ -2187,15 +2421,17 @@ onUnmounted(() => {
         :rows="12"
         maxlength="5242880"
         show-word-limit
-        placeholder="粘贴 Traffic.cv 完整页面 HTML"
+        :placeholder="fieldLabel('粘贴 Traffic.cv 完整页面 HTML')"
       />
       <template #footer>
-        <el-button @click="trafficCVImportVisible = false">取消</el-button>
+        <el-button @click="trafficCVImportVisible = false">{{
+          fieldLabel("取消")
+        }}</el-button>
         <el-button
           type="primary"
           :loading="trafficCVImportLoading"
           @click="submitTrafficCVHTML"
-          >解析并回填</el-button
+          >{{ fieldLabel("解析并回填") }}</el-button
         >
       </template>
     </el-dialog>
@@ -2203,7 +2439,7 @@ onUnmounted(() => {
     <el-dialog
       v-if="false"
       v-model="dialogVisible"
-      :title="editingId ? '编辑资源' : '新增资源'"
+      :title="fieldLabel(editingId ? '编辑资源' : '新增资源')"
       width="920px"
     >
       <el-form :model="form" label-width="110px">
@@ -2254,7 +2490,7 @@ onUnmounted(() => {
                 allow-create
                 filterable
                 default-first-option
-                placeholder="选择或输入平台"
+                :placeholder="fieldLabel('选择或输入平台')"
                 class="w-full!"
                 @change="handlePlatformChange"
               >
@@ -2272,7 +2508,7 @@ onUnmounted(() => {
                       @mousedown.stop
                       @click="removePlatformOption(platform, $event)"
                     >
-                      删除
+                      {{ fieldLabel("删除") }}
                     </el-button>
                   </div>
                 </el-option>
@@ -2290,7 +2526,7 @@ onUnmounted(() => {
                 allow-create
                 filterable
                 default-first-option
-                placeholder="选择或输入资源领域"
+                :placeholder="fieldLabel('选择或输入资源领域')"
                 class="w-full!"
               >
                 <el-option
@@ -2329,7 +2565,7 @@ onUnmounted(() => {
                 default-first-option
                 collapse-tags
                 collapse-tags-tooltip
-                placeholder="选择或输入自定义标签"
+                :placeholder="fieldLabel('选择或输入自定义标签')"
                 class="w-full!"
               >
                 <el-option
@@ -2405,8 +2641,12 @@ onUnmounted(() => {
         </el-row>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">保存</el-button>
+        <el-button @click="dialogVisible = false">{{
+          fieldLabel("取消")
+        }}</el-button>
+        <el-button type="primary" @click="submit">{{
+          fieldLabel("保存")
+        }}</el-button>
       </template>
     </el-dialog>
 
@@ -2420,14 +2660,26 @@ onUnmounted(() => {
       <template #header>
         <div class="editor-header">
           <div>
-            <span>{{ editingId ? `资源 #${editingId}` : "新资源" }}</span>
-            <h2>{{ editingId ? "完整资源档案" : "新增完整资源档案" }}</h2>
+            <span>{{
+              editingId
+                ? `${fieldLabel("资源")} #${editingId}`
+                : fieldLabel("新资源")
+            }}</span>
+            <h2>
+              {{ fieldLabel(editingId ? "完整资源档案" : "新增完整资源档案") }}
+            </h2>
             <p>
-              资源主档与历史合作记录分区维护，确保全部业务字段可见、可追溯。
+              {{
+                fieldLabel(
+                  "资源主档与历史合作记录分区维护，确保全部业务字段可见、可追溯。"
+                )
+              }}
             </p>
           </div>
           <div class="editor-header__actions">
-            <el-button @click="dialogVisible = false">关闭</el-button>
+            <el-button @click="dialogVisible = false">{{
+              fieldLabel("关闭")
+            }}</el-button>
           </div>
         </div>
       </template>
@@ -2437,15 +2689,20 @@ onUnmounted(() => {
           <div class="editor-section__title">
             <i><IconifyIconOnline icon="ri:user-star-line" /></i>
             <div>
-              <strong>基础身份</strong>
-              <span
-                >同名合作方的多平台受众量自动加和，并归入头部、腰部或尾部</span
-              >
+              <strong>{{ fieldLabel("基础身份") }}</strong>
+              <span>{{
+                fieldLabel(
+                  "同名合作方的多平台受众量自动加和，并归入头部、腰部或尾部"
+                )
+              }}</span>
             </div>
           </div>
           <div class="editor-form-grid">
             <el-form-item :label="fieldLabel('名称')">
-              <el-input v-model="form.name" placeholder="资源名称" />
+              <el-input
+                v-model="form.name"
+                :placeholder="fieldLabel('资源名称')"
+              />
             </el-form-item>
             <el-form-item :label="fieldLabel('资源类型')">
               <el-select v-model="form.resourceType" class="w-full!">
@@ -2463,7 +2720,7 @@ onUnmounted(() => {
                 allow-create
                 filterable
                 class="w-full!"
-                placeholder="选择或输入资源领域"
+                :placeholder="fieldLabel('选择或输入资源领域')"
               >
                 <el-option
                   v-for="item in [
@@ -2493,7 +2750,10 @@ onUnmounted(() => {
             <el-form-item :label="fieldLabel('账号 Title')">
               <el-input v-model="form.title" />
             </el-form-item>
-            <el-form-item :label="fieldLabel('资源标签')" class="editor-form-grid__wide">
+            <el-form-item
+              :label="fieldLabel('资源标签')"
+              class="editor-form-grid__wide"
+            >
               <el-select
                 v-model="form.tagNames"
                 multiple
@@ -2501,7 +2761,7 @@ onUnmounted(() => {
                 filterable
                 collapse-tags
                 class="w-full!"
-                placeholder="选择或输入标签"
+                :placeholder="fieldLabel('选择或输入标签')"
               >
                 <el-option
                   v-for="tag in tagOptions"
@@ -2518,18 +2778,26 @@ onUnmounted(() => {
           <div class="editor-section__title">
             <i><IconifyIconOnline icon="ri:global-line" /></i>
             <div>
-              <strong>市场与平台</strong>
-              <span
-                >所属市场按“区域 - 具体市场”组合展示，例如：中东 - 沙特</span
-              >
+              <strong>{{ fieldLabel("市场与平台") }}</strong>
+              <span>{{
+                fieldLabel(
+                  "所属市场按“区域 - 具体市场”组合展示，例如：中东 - 沙特"
+                )
+              }}</span>
             </div>
           </div>
           <div class="editor-form-grid">
             <el-form-item :label="fieldLabel('区域')">
-              <el-input v-model="form.region" placeholder="例如：中东" />
+              <el-input
+                v-model="form.region"
+                :placeholder="fieldLabel('例如：中东')"
+              />
             </el-form-item>
             <el-form-item :label="fieldLabel('具体市场')">
-              <el-input v-model="form.country" placeholder="例如：沙特" />
+              <el-input
+                v-model="form.country"
+                :placeholder="fieldLabel('例如：沙特')"
+              />
             </el-form-item>
             <el-form-item :label="fieldLabel('城市')">
               <el-input v-model="form.city" />
@@ -2573,7 +2841,7 @@ onUnmounted(() => {
           <div class="editor-section__title">
             <i><IconifyIconOnline icon="ri:line-chart-line" /></i>
             <div>
-              <strong>规模表现</strong>
+              <strong>{{ fieldLabel("规模表现") }}</strong>
               <span
                 >达人填写本平台粉丝数；媒体 Website 的月访问量可由 Traffic.cv
                 自动同步，其他媒体可填写月独立访客（UMV）。系统自动计算对应层级</span
@@ -2623,7 +2891,9 @@ onUnmounted(() => {
             >
               <el-input
                 v-model="form.referenceSource"
-                placeholder="例如：Similarweb、Semrush、平台同步或业务提供"
+                :placeholder="
+                  fieldLabel('例如：Similarweb、Semrush、平台同步或业务提供')
+                "
               />
             </el-form-item>
           </div>
@@ -2634,7 +2904,7 @@ onUnmounted(() => {
             <div class="editor-section__title-group">
               <i><IconifyIconOnline icon="ri:briefcase-4-line" /></i>
               <div>
-                <strong>合作与效果</strong>
+                <strong>{{ fieldLabel("合作与效果") }}</strong>
                 <span
                   >合作字段来自历史合作记录；默认展示全部合作汇总，可在列表页按项目切换</span
                 >
@@ -2642,45 +2912,53 @@ onUnmounted(() => {
             </div>
             <el-button type="primary" plain @click="openCreateCooperation">
               <IconifyIconOnline icon="ri:add-line" class="mr-1" />
-              新增合作记录
+              {{ fieldLabel("新增合作记录") }}
             </el-button>
           </div>
           <div class="cooperation-field-summary">
             <div>
-              <span>合作类型</span><strong>{{ editorCooperationTypes }}</strong>
+              <span>{{ fieldLabel("合作类型") }}</span
+              ><strong>{{ editorCooperationTypes }}</strong>
             </div>
             <div>
-              <span>合作费用（USD）</span
+              <span>{{ fieldLabel("合作费用（USD）") }}</span
               ><strong>{{
                 currencyText(editorCooperationStats.totalCost)
               }}</strong>
             </div>
             <div>
-              <span>合作项目</span
+              <span>{{ fieldLabel("合作项目") }}</span
               ><strong>{{ editorCooperationProjects }}</strong>
             </div>
             <div>
-              <span>合作曝光量</span
+              <span>{{ fieldLabel("合作曝光量") }}</span
               ><strong>{{
                 formatCount(editorCooperationStats.totalReach)
               }}</strong>
             </div>
             <div>
-              <span>合作互动量</span
+              <span>{{ fieldLabel("合作互动量") }}</span
               ><strong>{{
                 formatCount(editorCooperationStats.totalEngagements)
               }}</strong>
             </div>
-            <div><span>合作效果分数</span><strong>TBC</strong></div>
             <div>
-              <span>CPM（付费合作）</span
+              <span>{{ fieldLabel("合作效果分数") }}</span
+              ><strong>TBC</strong>
+            </div>
+            <div>
+              <span>{{ fieldLabel("CPM（付费合作）") }}</span
               ><strong>{{ cpmText(editorCooperationStats) }}</strong>
             </div>
           </div>
           <el-alert
             type="info"
             :closable="false"
-            title="媒体合作曝光需由媒体提供特定文章访问量；KOL 合作曝光取对应平台内容总播放量。互动量汇总 Likes、Comments、Shares、Saves（当前记录按转赞藏与评论回填）。"
+            :title="
+              fieldLabel(
+                '媒体合作曝光需由媒体提供特定文章访问量；KOL 合作曝光取对应平台内容总播放量。互动量汇总 Likes、Comments、Shares、Saves（当前记录按转赞藏与评论回填）。'
+              )
+            "
           />
           <div
             v-if="cooperationEditorVisible"
@@ -2689,16 +2967,18 @@ onUnmounted(() => {
             <div class="inline-cooperation-editor__header">
               <div>
                 <strong>{{
-                  editingCooperationId ? "编辑合作记录" : "新增合作记录"
+                  fieldLabel(
+                    editingCooperationId ? "编辑合作记录" : "新增合作记录"
+                  )
                 }}</strong>
                 <span
                   >合作费用统一按 USD 维护，保存后自动更新曝光、互动与 CPM
                   汇总。</span
                 >
               </div>
-              <el-button link @click="cooperationEditorVisible = false"
-                >收起</el-button
-              >
+              <el-button link @click="cooperationEditorVisible = false">{{
+                fieldLabel("收起")
+              }}</el-button>
             </div>
             <div class="cooperation-form-grid">
               <el-form-item :label="fieldLabel('合作项目')">
@@ -2769,10 +3049,15 @@ onUnmounted(() => {
               >
                 <el-input
                   v-model="cooperationForm.deliverableLinks"
-                  placeholder="业务端提供的文章、视频或社媒内容链接"
+                  :placeholder="
+                    fieldLabel('业务端提供的文章、视频或社媒内容链接')
+                  "
                 />
               </el-form-item>
-              <el-form-item :label="fieldLabel('备注')" class="cooperation-form-grid__wide">
+              <el-form-item
+                :label="fieldLabel('备注')"
+                class="cooperation-form-grid__wide"
+              >
                 <el-input
                   v-model="cooperationForm.notes"
                   type="textarea"
@@ -2784,19 +3069,19 @@ onUnmounted(() => {
               <el-button
                 :disabled="savingCooperation"
                 @click="cooperationEditorVisible = false"
-                >取消</el-button
+                >{{ fieldLabel("取消") }}</el-button
               >
               <el-button
                 type="primary"
                 :loading="savingCooperation"
                 @click="submitCooperation"
-                >保存合作记录</el-button
+                >{{ fieldLabel("保存合作记录") }}</el-button
               >
             </div>
           </div>
           <el-table
             :data="editorCooperations"
-            empty-text="暂无历史合作记录"
+            :empty-text="fieldLabel('暂无历史合作记录')"
             class="cooperation-editor-table"
           >
             <el-table-column
@@ -2824,7 +3109,7 @@ onUnmounted(() => {
                   type="primary"
                   :href="row.deliverableLinks"
                   target="_blank"
-                  >查看业务链接</el-link
+                  >{{ fieldLabel("查看业务链接") }}</el-link
                 >
                 <span v-else>-</span>
               </template>
@@ -2842,17 +3127,24 @@ onUnmounted(() => {
                 )
               }}</template>
             </el-table-column>
-            <el-table-column :label="fieldLabel('操作')" width="140" fixed="right">
+            <el-table-column
+              :label="fieldLabel('操作')"
+              width="140"
+              fixed="right"
+            >
               <template #default="{ row }">
                 <el-button
                   link
                   type="primary"
                   :loading="!!syncingCooperationIds[Number(row.id || 0)]"
                   @click="syncCooperationPost(row)"
-                  >同步作品</el-button
+                  >{{ fieldLabel("同步作品") }}</el-button
                 >
-                <el-button link type="primary" @click="openEditCooperation(row)"
-                  >编辑</el-button
+                <el-button
+                  link
+                  type="primary"
+                  @click="openEditCooperation(row)"
+                  >{{ fieldLabel("编辑") }}</el-button
                 >
               </template>
             </el-table-column>
@@ -2863,8 +3155,8 @@ onUnmounted(() => {
           <div class="editor-section__title">
             <i><IconifyIconOnline icon="ri:contacts-line" /></i>
             <div>
-              <strong>联系与管理</strong>
-              <span>业务对接、供应商与内部备注</span>
+              <strong>{{ fieldLabel("联系与管理") }}</strong>
+              <span>{{ fieldLabel("业务对接、供应商与内部备注") }}</span>
             </div>
           </div>
           <div class="editor-form-grid">
@@ -2877,7 +3169,10 @@ onUnmounted(() => {
             <el-form-item :label="fieldLabel('状态')">
               <el-input v-model="form.status" />
             </el-form-item>
-            <el-form-item :label="fieldLabel('备注')" class="editor-form-grid__wide">
+            <el-form-item
+              :label="fieldLabel('备注')"
+              class="editor-form-grid__wide"
+            >
               <el-input v-model="form.notes" type="textarea" :rows="3" />
             </el-form-item>
           </div>
@@ -2894,8 +3189,12 @@ onUnmounted(() => {
             }}
           </span>
           <div>
-            <el-button @click="dialogVisible = false">取消</el-button>
-            <el-button type="primary" @click="submit">保存资源主档</el-button>
+            <el-button @click="dialogVisible = false">{{
+              fieldLabel("取消")
+            }}</el-button>
+            <el-button type="primary" @click="submit">{{
+              fieldLabel("保存资源主档")
+            }}</el-button>
           </div>
         </div>
       </template>
@@ -2904,7 +3203,9 @@ onUnmounted(() => {
     <el-dialog
       v-if="false"
       v-model="cooperationDialogVisible"
-      :title="editingCooperationId ? '编辑合作记录' : '新增合作记录'"
+      :title="
+        fieldLabel(editingCooperationId ? '编辑合作记录' : '新增合作记录')
+      "
       width="860px"
       append-to-body
     >
@@ -2978,10 +3279,13 @@ onUnmounted(() => {
           >
             <el-input
               v-model="cooperationForm.deliverableLinks"
-              placeholder="业务端提供的文章、视频或社媒内容链接"
+              :placeholder="fieldLabel('业务端提供的文章、视频或社媒内容链接')"
             />
           </el-form-item>
-          <el-form-item :label="fieldLabel('备注')" class="cooperation-form-grid__wide">
+          <el-form-item
+            :label="fieldLabel('备注')"
+            class="cooperation-form-grid__wide"
+          >
             <el-input
               v-model="cooperationForm.notes"
               type="textarea"
@@ -2994,20 +3298,20 @@ onUnmounted(() => {
         <el-button
           :disabled="savingCooperation"
           @click="cooperationDialogVisible = false"
-          >取消</el-button
+          >{{ fieldLabel("取消") }}</el-button
         >
         <el-button
           type="primary"
           :loading="savingCooperation"
           @click="submitCooperation"
-          >保存合作记录</el-button
+          >{{ fieldLabel("保存合作记录") }}</el-button
         >
       </template>
     </el-dialog>
 
     <el-dialog
       v-model="profileDialogVisible"
-      title="完整资源档案"
+      :title="fieldLabel('完整资源档案')"
       width="min(1200px, 94vw)"
       top="5vh"
     >
@@ -3032,7 +3336,7 @@ onUnmounted(() => {
           <div>
             <h2>{{ displayText(selectedResource.name) }}</h2>
             <p>
-              {{ displayText(selectedResource.resourceType) }} ·
+              {{ enumText(selectedResource.resourceType) }} ·
               {{ displayText(selectedResource.platform) }} ·
               {{ locationText(selectedResource) }}
             </p>
@@ -3049,27 +3353,27 @@ onUnmounted(() => {
 
         <dl class="profile-facts">
           <div>
-            <dt>{{ fieldLabel('资源类型') }}</dt>
-            <dd>{{ displayText(selectedResource.resourceType) }}</dd>
+            <dt>{{ fieldLabel("资源类型") }}</dt>
+            <dd>{{ enumText(selectedResource.resourceType) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('资源领域') }}</dt>
+            <dt>{{ fieldLabel("资源领域") }}</dt>
             <dd>{{ domainText(selectedResource) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('所属市场') }}</dt>
+            <dt>{{ fieldLabel("所属市场") }}</dt>
             <dd>{{ marketText(selectedResource) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('分级') }}</dt>
+            <dt>{{ fieldLabel("分级") }}</dt>
             <dd>{{ tierText(selectedResource) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('平台') }}</dt>
+            <dt>{{ fieldLabel("平台") }}</dt>
             <dd>{{ displayText(selectedResource.platform) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('合作类型') }}</dt>
+            <dt>{{ fieldLabel("合作类型") }}</dt>
             <dd>
               <CooperationTypeTags
                 :value="cooperationTypeValues(selectedResource)"
@@ -3078,25 +3382,25 @@ onUnmounted(() => {
             </dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('合作项目') }}</dt>
+            <dt>{{ fieldLabel("合作项目") }}</dt>
             <dd>{{ cooperationProjects(selectedResource) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('合作费用') }}</dt>
+            <dt>{{ fieldLabel("合作费用") }}</dt>
             <dd>{{ currencyText(selectedCooperationStats.totalCost) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('合作曝光量') }}</dt>
+            <dt>{{ fieldLabel("合作曝光量") }}</dt>
             <dd>{{ formatCount(selectedCooperationStats.totalReach) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('合作互动量') }}</dt>
+            <dt>{{ fieldLabel("合作互动量") }}</dt>
             <dd>
               {{ formatCount(selectedCooperationStats.totalEngagements) }}
             </dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('合作效果分数') }}</dt>
+            <dt>{{ fieldLabel("合作效果分数") }}</dt>
             <dd>TBC</dd>
           </div>
           <div>
@@ -3104,7 +3408,7 @@ onUnmounted(() => {
             <dd>{{ cooperationCpmText(selectedResource) }}</dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('联系方式') }}</dt>
+            <dt>{{ fieldLabel("联系方式") }}</dt>
             <dd>
               {{
                 displayText(
@@ -3115,7 +3419,7 @@ onUnmounted(() => {
             </dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('对接人') }}</dt>
+            <dt>{{ fieldLabel("对接人") }}</dt>
             <dd>
               {{
                 displayText(
@@ -3125,50 +3429,59 @@ onUnmounted(() => {
             </dd>
           </div>
           <div>
-            <dt>{{ fieldLabel('供应商') }}</dt>
+            <dt>{{ fieldLabel("供应商") }}</dt>
             <dd>{{ displayText(selectedLatestCooperation?.vendor) }}</dd>
           </div>
           <div class="profile-facts__wide">
-            <dt>{{ fieldLabel('备注') }}</dt>
+            <dt>{{ fieldLabel("备注") }}</dt>
             <dd>
               {{
-                displayText(
-                  selectedLatestCooperation?.notes || selectedResource.notes
-                )
+                selectedLatestCooperation?.notes
+                  ? displayText(selectedLatestCooperation.notes)
+                  : localizedText(selectedResource, "notes")
               }}
+            </dd>
+          </div>
+          <div
+            v-for="(_, fieldKey) in selectedResource.extraFields || {}"
+            :key="fieldKey"
+          >
+            <dt>{{ extraFieldLabel(String(fieldKey)) }}</dt>
+            <dd>
+              {{ localizedExtraValue(selectedResource, String(fieldKey)) }}
             </dd>
           </div>
         </dl>
 
         <div class="profile-metrics">
           <div>
-            <span>多平台粉丝 / 访问</span>
+            <span>{{ fieldLabel("多平台粉丝 / 访问") }}</span>
             <strong>{{
               formatCount(resourceAudience(selectedResource))
             }}</strong>
           </div>
           <div>
-            <span>平台均值播放 / 阅读</span>
+            <span>{{ fieldLabel("平台均值播放 / 阅读") }}</span>
             <strong>{{ formatCount(selectedResource.avgViews) }}</strong>
           </div>
           <div>
-            <span>月均互动量</span>
+            <span>{{ fieldLabel("月均互动量") }}</span>
             <strong>{{
               formatCount(avgInteractions(selectedResource))
             }}</strong>
           </div>
           <div>
-            <span>过往合作次数</span>
+            <span>{{ fieldLabel("过往合作次数") }}</span>
             <strong>{{ selectedCooperationStats.count }} 次</strong>
           </div>
           <div>
-            <span>合作内容总触达</span>
+            <span>{{ fieldLabel("合作内容总触达") }}</span>
             <strong>{{
               formatCount(selectedCooperationStats.totalReach)
             }}</strong>
           </div>
           <div>
-            <span>合作内容互动率</span>
+            <span>{{ fieldLabel("合作内容互动率") }}</span>
             <strong>
               {{
                 ratioPercent(
@@ -3179,18 +3492,20 @@ onUnmounted(() => {
             </strong>
           </div>
           <div>
-            <span>付费合作 CPM</span>
+            <span>{{ fieldLabel("付费合作 CPM") }}</span>
             <strong>{{ cooperationCpmText(selectedResource) }}</strong>
           </div>
           <div>
-            <span>合作 vs 平台均值</span>
+            <span>{{ fieldLabel("合作 vs 平台均值") }}</span>
             <strong>{{ performanceDeltaText(selectedResource) }}</strong>
           </div>
         </div>
 
         <div class="profile-section-title">
-          <strong>过往合作追踪</strong>
-          <span>合作链接、单条内容表现和项目归属会沉淀在这里</span>
+          <strong>{{ fieldLabel("过往合作追踪") }}</strong>
+          <span>{{
+            fieldLabel("合作链接、单条内容表现和项目归属会沉淀在这里")
+          }}</span>
         </div>
         <el-table
           :data="selectedCooperations"
@@ -3198,7 +3513,11 @@ onUnmounted(() => {
           height="360"
           class="business-table"
         >
-          <el-table-column prop="projectName" :label="fieldLabel('项目')" min-width="160" />
+          <el-table-column
+            prop="projectName"
+            :label="fieldLabel('项目')"
+            min-width="160"
+          />
           <el-table-column :label="fieldLabel('合作形式')" width="120">
             <template #default="{ row }">
               <CooperationTypeTags
@@ -3207,17 +3526,41 @@ onUnmounted(() => {
               />
             </template>
           </el-table-column>
-          <el-table-column prop="releaseDate" :label="fieldLabel('发布日期')" width="120" />
+          <el-table-column
+            prop="releaseDate"
+            :label="fieldLabel('发布日期')"
+            width="120"
+          />
           <el-table-column :label="fieldLabel('触达')" width="120">
             <template #default="{ row }">{{
               formatCount(primaryReach(row))
             }}</template>
           </el-table-column>
-          <el-table-column prop="views" :label="fieldLabel('播放 / 阅读')" width="120" />
-          <el-table-column prop="engagementCount" :label="fieldLabel('转赞藏')" width="110" />
-          <el-table-column prop="commentsCount" :label="fieldLabel('评论')" width="90" />
-          <el-table-column prop="owner" :label="fieldLabel('对接人')" width="120" />
-          <el-table-column prop="vendor" :label="fieldLabel('供应商')" width="120" />
+          <el-table-column
+            prop="views"
+            :label="fieldLabel('播放 / 阅读')"
+            width="120"
+          />
+          <el-table-column
+            prop="engagementCount"
+            :label="fieldLabel('转赞藏')"
+            width="110"
+          />
+          <el-table-column
+            prop="commentsCount"
+            :label="fieldLabel('评论')"
+            width="90"
+          />
+          <el-table-column
+            prop="owner"
+            :label="fieldLabel('对接人')"
+            width="120"
+          />
+          <el-table-column
+            prop="vendor"
+            :label="fieldLabel('供应商')"
+            width="120"
+          />
           <el-table-column :label="fieldLabel('互动率')" width="100">
             <template #default="{ row }">
               {{
@@ -3248,7 +3591,11 @@ onUnmounted(() => {
             min-width="180"
             show-overflow-tooltip
           />
-          <el-table-column :label="fieldLabel('操作')" width="100" fixed="right">
+          <el-table-column
+            :label="fieldLabel('操作')"
+            width="100"
+            fixed="right"
+          >
             <template #default="{ row }">
               <el-button
                 link
@@ -3265,26 +3612,30 @@ onUnmounted(() => {
 
     <el-dialog
       v-model="importDialog"
-      title="上传媒体/KOL主名单"
+      :title="fieldLabel('上传媒体/KOL主名单')"
       width="92%"
       top="5vh"
     >
       <div class="import-toolbar">
-        <el-button @click="downloadImportTemplate">下载标准模板</el-button>
+        <el-button @click="downloadImportTemplate">{{
+          fieldLabel("下载标准模板")
+        }}</el-button>
         <el-upload
           accept=".xlsx,.xls,.csv"
           :auto-upload="false"
           :show-file-list="false"
           :on-change="handleMasterListUpload"
         >
-          <el-button type="primary">选择 Excel 文件</el-button>
+          <el-button type="primary">{{
+            fieldLabel("选择 Excel 文件")
+          }}</el-button>
         </el-upload>
         <el-select
           v-model="selectedSheets"
           multiple
           collapse-tags
           collapse-tags-tooltip
-          placeholder="选择 Sheet"
+          :placeholder="fieldLabel('选择 Sheet')"
           class="sheet-select"
           @change="handleSheetChange"
         >
@@ -3301,21 +3652,33 @@ onUnmounted(() => {
         class="mt-3"
         type="warning"
         :closable="false"
-        title="上传文件必须使用标准模板，第一行表头需完全一致；Name 和 Email 为必填，去重规则为 Name + Email。"
+        :title="
+          fieldLabel(
+            '上传文件必须使用标准模板，第一行表头需完全一致；Name 和 Email 为必填，去重规则为 Name + Email。'
+          )
+        "
       />
       <el-alert
         v-if="workbookSheets.length > 0"
         class="mt-3"
         type="info"
         :closable="false"
-        :title="`文件：${importFileName}，Sheet ${selectedSheets.length}/${workbookSheets.length}，可导入 ${validImportRows.length} 行，异常 ${invalidImportRows.length} 行，疑似重复 ${duplicateImportRows.length} 行`"
+        :title="
+          locale === 'en'
+            ? `File: ${importFileName}; Sheets ${selectedSheets.length}/${workbookSheets.length}; ${validImportRows.length} importable, ${invalidImportRows.length} invalid, ${duplicateImportRows.length} possible duplicates`
+            : `文件：${importFileName}，Sheet ${selectedSheets.length}/${workbookSheets.length}，可导入 ${validImportRows.length} 行，异常 ${invalidImportRows.length} 行，疑似重复 ${duplicateImportRows.length} 行`
+        "
       />
       <el-alert
         v-if="invalidSheets.length > 0"
         class="mt-3"
         type="error"
         :closable="false"
-        :title="`模板不符：${invalidSheets.map(item => `${item.sheet}（${item.errors[0]}）`).join('；')}`"
+        :title="
+          locale === 'en'
+            ? `Template mismatch: ${invalidSheets.map(item => `${item.sheet} (${item.errors[0]})`).join('; ')}`
+            : `模板不符：${invalidSheets.map(item => `${item.sheet}（${item.errors[0]}）`).join('；')}`
+        "
       />
       <el-table
         class="mt-3"
@@ -3341,7 +3704,11 @@ onUnmounted(() => {
         <el-table-column prop="followers" label="Followers" width="110" />
         <el-table-column prop="pic" label="PIC" width="100" />
         <el-table-column prop="status" label="Status" width="110" />
-        <el-table-column :label="fieldLabel('状态')" min-width="190" fixed="right">
+        <el-table-column
+          :label="fieldLabel('状态')"
+          min-width="190"
+          fixed="right"
+        >
           <template #default="{ row }">
             <el-tag v-if="row.errors.length === 0" type="success"
               >可导入</el-tag
@@ -3356,7 +3723,9 @@ onUnmounted(() => {
         </el-table-column>
       </el-table>
       <template #footer>
-        <el-button @click="importDialog = false">取消</el-button>
+        <el-button @click="importDialog = false">{{
+          fieldLabel("取消")
+        }}</el-button>
         <el-button
           type="primary"
           :loading="importLoading"

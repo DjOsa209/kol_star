@@ -9,6 +9,7 @@ import {
   watch
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import echarts from "@/plugins/echarts";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
@@ -48,6 +49,7 @@ type PlatformMetric = "exposure" | "engagement";
 
 const route = useRoute();
 const router = useRouter();
+const { locale } = useI18n();
 const projects = ref<any[]>([]);
 const project = ref<any>(null);
 const stats = ref<any>({});
@@ -1560,7 +1562,7 @@ function formatCount(value: unknown) {
   if (number <= 0) return "-";
   if (number >= 1000000) return `${(number / 1000000).toFixed(1)}M`;
   if (number >= 1000) return `${(number / 1000).toFixed(1)}K`;
-  return number.toLocaleString("zh-CN");
+  return number.toLocaleString(locale.value === "en" ? "en-US" : "zh-CN");
 }
 
 function moneyText(
@@ -2340,7 +2342,9 @@ onBeforeUnmount(() => {
             :value="item.id"
           />
         </el-select>
-        <span class="cycle-label">创建于 {{ createdDateLabel }}</span>
+        <span class="cycle-label"
+          >{{ fieldLabel("创建于") }} {{ createdDateLabel }}</span
+        >
         <el-button circle text aria-label="编辑项目" @click="openProjectDialog">
           <IconifyIconOnline icon="ri:edit-line" />
         </el-button>
@@ -2438,7 +2442,10 @@ onBeforeUnmount(() => {
                       : "该网页暂未生成截图"
                     : "该内容暂未同步封面"
                 }}</strong>
-                <small>点击{{ contentOpenLabel(contentDetailView) }}</small>
+                <small
+                  >{{ fieldLabel("点击")
+                  }}{{ contentOpenLabel(contentDetailView) }}</small
+                >
               </span>
               <span
                 class="content-detail-play"
@@ -2479,7 +2486,7 @@ onBeforeUnmount(() => {
                     type="primary"
                     effect="plain"
                     size="small"
-                    title="内容类型"
+                    :title="fieldLabel('内容类型')"
                   >
                     {{ contentTypeTag(contentDetailView) }}
                   </el-tag>
@@ -2521,16 +2528,16 @@ onBeforeUnmount(() => {
               <small>{{ contentExposureHint(contentDetailView) }}</small>
             </article>
             <article>
-              <span>互动量</span>
+              <span>{{ fieldLabel("互动量") }}</span>
               <strong>{{
                 formatCount(postEngagement(contentDetailView))
               }}</strong>
-              <small>点赞、评论、分享与收藏</small>
+              <small>{{ fieldLabel("点赞、评论、分享与收藏") }}</small>
             </article>
           </div>
 
           <div class="content-detail-link-row">
-            <span>内容链接</span>
+            <span>{{ fieldLabel("内容链接") }}</span>
             <el-link
               :href="contentDetailView.postUrl"
               target="_blank"
@@ -2546,21 +2553,26 @@ onBeforeUnmount(() => {
         <section class="overview-section">
           <div class="overview-section-heading">
             <div>
-              <h2>内容概览</h2>
-              <p>合作方按名称去重，内容按发布链接去重统计。</p>
+              <h2>{{ fieldLabel("内容概览") }}</h2>
+              <p>
+                {{ fieldLabel("合作方按名称去重，内容按发布链接去重统计。") }}
+              </p>
             </div>
-            <span>今日新增 {{ campaignOverview.today }} 条</span>
+            <span
+              >{{ fieldLabel("今日新增") }} {{ campaignOverview.today }}
+              {{ fieldLabel("条") }}</span
+            >
           </div>
           <div class="overview-metric-grid content-overview-grid">
             <article class="overview-metric-card primary-metric-card">
-              <span>内容总数</span>
+              <span>{{ fieldLabel("内容总数") }}</span>
               <strong>{{ campaignOverview.posts }}</strong>
-              <small>当前项目已识别的全部合作内容</small>
+              <small>{{ fieldLabel("当前项目已识别的全部合作内容") }}</small>
             </article>
             <article class="overview-metric-card">
-              <span>合作达人 / 媒体总数</span>
+              <span>{{ fieldLabel("合作达人 / 媒体总数") }}</span>
               <strong>{{ campaignOverview.collaborators }}</strong>
-              <small>同名合作方仅计算一次</small>
+              <small>{{ fieldLabel("同名合作方仅计算一次") }}</small>
             </article>
           </div>
         </section>
@@ -2568,40 +2580,48 @@ onBeforeUnmount(() => {
         <section class="overview-section">
           <div class="overview-section-heading">
             <div>
-              <h2>曝光与互动</h2>
-              <p>互动量包含点赞、评论、分享与收藏，以平台同步结果为准。</p>
+              <h2>{{ fieldLabel("曝光与互动") }}</h2>
+              <p>
+                {{
+                  fieldLabel(
+                    "互动量包含点赞、评论、分享与收藏，以平台同步结果为准。"
+                  )
+                }}
+              </p>
             </div>
           </div>
           <div class="overview-metric-grid performance-overview-grid">
             <article class="overview-metric-card primary-metric-card">
-              <span>总曝光 / 播放量</span>
+              <span>{{ fieldLabel("总曝光 / 播放量") }}</span>
               <strong>{{ formatCount(campaignOverview.views) }}</strong>
-              <small>所有合作内容累计数据</small>
+              <small>{{ fieldLabel("所有合作内容累计数据") }}</small>
             </article>
             <article class="overview-metric-card">
-              <span>总互动量</span>
+              <span>{{ fieldLabel("总互动量") }}</span>
               <strong>{{ formatCount(campaignOverview.engagements) }}</strong>
-              <small>点赞 + 评论 + 分享 + 收藏</small>
+              <small>{{ fieldLabel("点赞 + 评论 + 分享 + 收藏") }}</small>
             </article>
             <article class="overview-metric-card">
-              <span>平均互动率</span>
+              <span>{{ fieldLabel("平均互动率") }}</span>
               <strong>{{ campaignOverview.engagementRate }}</strong>
-              <small>总互动量 / 总曝光量</small>
+              <small>{{ fieldLabel("总互动量 / 总曝光量") }}</small>
             </article>
             <article class="overview-metric-card">
-              <span>付费 KOL 成本</span>
+              <span>{{ fieldLabel("付费 KOL 成本") }}</span>
               <strong>{{ moneyText(campaignOverview.paidCost) }}</strong>
-              <small>仅统计有实际合作费用的非媒体资源</small>
+              <small>{{
+                fieldLabel("仅统计有实际合作费用的非媒体资源")
+              }}</small>
             </article>
             <article class="overview-metric-card">
               <span>CPM</span>
               <strong>{{ moneyText(campaignOverview.cpm) }}</strong>
-              <small>付费成本 / 曝光 × 1000</small>
+              <small>{{ fieldLabel("付费成本 / 曝光 × 1000") }}</small>
             </article>
             <article class="overview-metric-card">
               <span>CPE</span>
               <strong>{{ moneyText(campaignOverview.cpe) }}</strong>
-              <small>付费成本 / 互动量</small>
+              <small>{{ fieldLabel("付费成本 / 互动量") }}</small>
             </article>
           </div>
         </section>
@@ -2609,8 +2629,12 @@ onBeforeUnmount(() => {
         <section class="overview-section platform-overview-section">
           <div class="overview-section-heading">
             <div>
-              <h2>平台表现</h2>
-              <p>悬停图表可查看对应平台的内容、曝光、互动及占比。</p>
+              <h2>{{ fieldLabel("平台表现") }}</h2>
+              <p>
+                {{
+                  fieldLabel("悬停图表可查看对应平台的内容、曝光、互动及占比。")
+                }}
+              </p>
             </div>
             <span>{{ platformPerformance.length }} 个平台</span>
           </div>
@@ -2618,8 +2642,8 @@ onBeforeUnmount(() => {
             <article class="platform-chart-card">
               <header>
                 <div>
-                  <h3>平台内容分布</h3>
-                  <p>各平台发布内容数量及占比</p>
+                  <h3>{{ fieldLabel("平台内容分布") }}</h3>
+                  <p>{{ fieldLabel("各平台发布内容数量及占比") }}</p>
                 </div>
               </header>
               <div class="platform-chart-body">
@@ -2648,7 +2672,7 @@ onBeforeUnmount(() => {
                   </div>
                   <el-empty
                     v-if="!platformPerformance.length"
-                    description="暂无平台内容"
+                    :description="fieldLabel('暂无平台内容')"
                     :image-size="52"
                   />
                 </div>
@@ -2658,8 +2682,8 @@ onBeforeUnmount(() => {
             <article class="platform-chart-card">
               <header>
                 <div>
-                  <h3>各平台效果占比</h3>
-                  <p>切换查看曝光量或互动量构成</p>
+                  <h3>{{ fieldLabel("各平台效果占比") }}</h3>
+                  <p>{{ fieldLabel("切换查看曝光量或互动量构成") }}</p>
                 </div>
                 <div class="platform-metric-switch" aria-label="平台效果指标">
                   <button
@@ -2721,7 +2745,7 @@ onBeforeUnmount(() => {
                   </div>
                   <el-empty
                     v-if="!platformPerformance.length"
-                    description="暂无平台效果数据"
+                    :description="fieldLabel('暂无平台效果数据')"
                     :image-size="52"
                   />
                 </div>
@@ -2736,7 +2760,7 @@ onBeforeUnmount(() => {
           <el-input
             v-model="creatorSearch"
             clearable
-            placeholder="搜索达人或媒体名称"
+            :placeholder="fieldLabel('搜索达人或媒体名称')"
             class="search-field"
           >
             <template #prefix
@@ -2780,8 +2804,14 @@ onBeforeUnmount(() => {
 
         <div class="creator-part-heading">
           <div>
-            <h2>达人</h2>
-            <p>粉丝量采用达人账号数据，曝光与互动仅统计当前项目合作内容。</p>
+            <h2>{{ fieldLabel("达人") }}</h2>
+            <p>
+              {{
+                fieldLabel(
+                  "粉丝量采用达人账号数据，曝光与互动仅统计当前项目合作内容。"
+                )
+              }}
+            </p>
           </div>
           <span>{{ influencerRows.length }} 位达人</span>
         </div>
@@ -2807,7 +2837,7 @@ onBeforeUnmount(() => {
                       />
                     </span>
                   </span>
-                  <span>查看资源档案</span>
+                  <span>{{ fieldLabel("查看资源档案") }}</span>
                 </div>
               </button>
             </template>
@@ -2872,7 +2902,11 @@ onBeforeUnmount(() => {
             :sort-method="sortByCPM"
           >
             <template #default="{ row }">
-              <span :title="'项目内该达人全部平台总成本 / 总播放量 × 1000'">
+              <span
+                :title="
+                  fieldLabel('项目内该达人全部平台总成本 / 总播放量 × 1000')
+                "
+              >
                 {{ moneyText(projectCPM(row)) }}
               </span>
             </template>
@@ -2911,10 +2945,12 @@ onBeforeUnmount(() => {
                   <PlatformIconBadge
                     :platform="latestProjectPost(row).platform"
                   />
-                  <small>查看内容</small>
+                  <small>{{ fieldLabel("查看内容") }}</small>
                 </span>
               </button>
-              <span v-else class="latest-content-empty">暂无内容</span>
+              <span v-else class="latest-content-empty">{{
+                fieldLabel("暂无内容")
+              }}</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -2941,7 +2977,7 @@ onBeforeUnmount(() => {
 
         <div class="creator-part-heading media-part-heading">
           <div>
-            <h2>媒体</h2>
+            <h2>{{ fieldLabel("媒体") }}</h2>
             <p>
               Website 媒体量级采用 Traffic.cv
               月访问量；其他媒体采用月独立访客（UMV）。
@@ -2971,7 +3007,7 @@ onBeforeUnmount(() => {
                       />
                     </span>
                   </span>
-                  <span>查看资源档案</span>
+                  <span>{{ fieldLabel("查看资源档案") }}</span>
                 </div>
               </button>
             </template>
@@ -3033,7 +3069,11 @@ onBeforeUnmount(() => {
             :sort-method="sortByCPM"
           >
             <template #default="{ row }">
-              <span :title="'项目内该媒体全部平台总成本 / 总播放量 × 1000'">
+              <span
+                :title="
+                  fieldLabel('项目内该媒体全部平台总成本 / 总播放量 × 1000')
+                "
+              >
                 {{ moneyText(projectCPM(row)) }}
               </span>
             </template>
@@ -3074,7 +3114,9 @@ onBeforeUnmount(() => {
                   /><small>查看内容</small></span
                 >
               </button>
-              <span v-else class="latest-content-empty">暂无内容</span>
+              <span v-else class="latest-content-empty">{{
+                fieldLabel("暂无内容")
+              }}</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -3105,7 +3147,7 @@ onBeforeUnmount(() => {
           <el-input
             v-model="contentSearch"
             clearable
-            placeholder="搜索达人或内容关键词"
+            :placeholder="fieldLabel('搜索达人或内容关键词')"
             class="search-field"
           >
             <template #prefix
@@ -3135,7 +3177,7 @@ onBeforeUnmount(() => {
         </div>
         <el-empty
           v-if="!filteredContentPosts.length"
-          description="暂未同步到可展示的内容"
+          :description="fieldLabel('暂未同步到可展示的内容')"
         />
         <div v-else class="content-grid">
           <article
@@ -3207,7 +3249,9 @@ onBeforeUnmount(() => {
               <div v-else class="content-cover empty-cover">
                 <PlatformIconBadge :platform="post.platform" />
               </div>
-              <span v-if="isViralContent(post)" class="viral-badge">爆 🔥</span>
+              <span v-if="isViralContent(post)" class="viral-badge"
+                >{{ fieldLabel("爆") }} 🔥</span
+              >
             </div>
             <div class="content-info">
               <CooperationTypeTags
@@ -3221,7 +3265,7 @@ onBeforeUnmount(() => {
                 type="primary"
                 effect="plain"
                 size="small"
-                title="内容类型"
+                :title="fieldLabel('内容类型')"
               >
                 {{ contentTypeTag(post) }}
               </el-tag>
@@ -3231,7 +3275,7 @@ onBeforeUnmount(() => {
                   <strong>{{ formatCount(postExposure(post)) }}</strong>
                 </span>
                 <span>
-                  <small>互动量</small>
+                  <small>{{ fieldLabel("互动量") }}</small>
                   <strong>{{ formatCount(postEngagement(post)) }}</strong>
                 </span>
               </div>
@@ -3244,7 +3288,7 @@ onBeforeUnmount(() => {
 
   <el-dialog
     v-model="contentEditing"
-    title="编辑内容"
+    :title="fieldLabel('编辑内容')"
     width="520px"
     destroy-on-close
     @closed="resetContentEdit"
@@ -3282,7 +3326,7 @@ onBeforeUnmount(() => {
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="cancelContentEdit">取消</el-button>
+      <el-button @click="cancelContentEdit">{{ fieldLabel("取消") }}</el-button>
       <el-button
         type="primary"
         :loading="contentSaving"
@@ -3308,7 +3352,7 @@ onBeforeUnmount(() => {
             filterable
             :filter-method="filterCreatorOptions"
             :loading="creatorOptionsLoading"
-            placeholder="搜索达人、媒体或平台"
+            :placeholder="fieldLabel('搜索达人、媒体或平台')"
             class="w-full!"
             @change="handleCreatorOptionChange"
           >
@@ -3326,7 +3370,7 @@ onBeforeUnmount(() => {
             >
               <div class="online-search-option-content">
                 <IconifyIconOnline icon="ri:global-line" />
-                <span>未找到目标？全网搜索</span>
+                <span>{{ fieldLabel("未找到目标？全网搜索") }}</span>
                 <small>{{ creatorLibraryKeyword.trim() }}</small>
               </div>
             </el-option>
@@ -3335,8 +3379,8 @@ onBeforeUnmount(() => {
         <section v-if="onlineSearchExpanded" class="online-search-panel">
           <header>
             <div>
-              <strong>从指定平台查询</strong>
-              <span>查询成功后会同步进入全球资源库</span>
+              <strong>{{ fieldLabel("从指定平台查询") }}</strong>
+              <span>{{ fieldLabel("查询成功后会同步进入全球资源库") }}</span>
             </div>
             <IconifyIconOnline icon="ri:global-line" />
           </header>
@@ -3379,7 +3423,7 @@ onBeforeUnmount(() => {
             <el-input
               v-model="onlineSearchForm.query"
               clearable
-              placeholder="例如 @username 或完整主页链接"
+              :placeholder="fieldLabel('例如 @username 或完整主页链接')"
               @keyup.enter="runOnlineCreatorSearch"
             >
               <template #append>
@@ -3412,12 +3456,18 @@ onBeforeUnmount(() => {
                 }}
               </span>
             </div>
-            <el-tag type="success" effect="light">已选中</el-tag>
+            <el-tag type="success" effect="light">{{
+              fieldLabel("已选中")
+            }}</el-tag>
           </div>
         </section>
         <el-alert
           v-if="!creatorOptionsLoading && creatorOptions.length === 0"
-          title="全球资源库暂无可添加账号，可在上方输入账号后选择“全网搜索”。"
+          :title="
+            fieldLabel(
+              '全球资源库暂无可添加账号，可在上方输入账号后选择“全网搜索”。'
+            )
+          "
           type="info"
           :closable="false"
           show-icon
@@ -3425,7 +3475,7 @@ onBeforeUnmount(() => {
       </template>
       <template v-else>
         <el-alert
-          title="修改会同步更新全球资源库中的该达人/媒体资料。"
+          :title="fieldLabel('修改会同步更新全球资源库中的该达人/媒体资料。')"
           type="info"
           :closable="false"
           show-icon
@@ -3501,7 +3551,9 @@ onBeforeUnmount(() => {
       </template>
     </el-form>
     <template #footer>
-      <el-button @click="creatorDialog = false">取消</el-button>
+      <el-button @click="creatorDialog = false">{{
+        fieldLabel("取消")
+      }}</el-button>
       <el-button
         type="primary"
         :loading="submitting"
@@ -3525,7 +3577,7 @@ onBeforeUnmount(() => {
           <el-select
             :model-value="selectedProjectId"
             filterable
-            placeholder="选择营销项目"
+            :placeholder="fieldLabel('选择营销项目')"
             @change="handleProjectChange"
           >
             <el-option
@@ -3573,7 +3625,7 @@ onBeforeUnmount(() => {
           <IconifyIconOnline :icon="item.icon" />
           <span>{{ fieldLabel(item.label) }}</span>
         </button>
-        <div class="nav-fold">收起 &laquo;</div>
+        <div class="nav-fold">{{ fieldLabel("收起") }} &laquo;</div>
       </aside>
 
       <main class="detail-main">
@@ -3606,29 +3658,31 @@ onBeforeUnmount(() => {
           <section class="collaboration-panel">
             <div class="collaboration-heading">
               <div>
-                <h2>协作执行</h2>
+                <h2>{{ fieldLabel("协作执行") }}</h2>
                 <p>
                   {{ project?.platform || "全平台" }} ·
                   {{ stats.cooperationCount || 0 }} 条合作执行记录
                 </p>
               </div>
-              <el-tag effect="plain">全部 {{ cooperations.length }}</el-tag>
+              <el-tag effect="plain"
+                >{{ fieldLabel("全部") }} {{ cooperations.length }}</el-tag
+              >
             </div>
 
             <div class="assurance-strip">
               <div>
                 <IconifyIconOnline icon="ri:user-star-line" />
-                <strong>真实内容流量</strong>
-                <span>真实达人内容沉淀为可复盘数据</span>
+                <strong>{{ fieldLabel("真实内容流量") }}</strong>
+                <span>{{ fieldLabel("真实达人内容沉淀为可复盘数据") }}</span>
               </div>
               <div>
                 <IconifyIconOnline icon="ri:shield-check-line" />
-                <strong>发布保障</strong>
+                <strong>{{ fieldLabel("发布保障") }}</strong>
                 <span>{{ stats.completionRate || 0 }}% 发布完成率</span>
               </div>
               <div>
                 <IconifyIconOnline icon="ri:line-chart-line" />
-                <strong>当前 CPM</strong>
+                <strong>{{ fieldLabel("当前 CPM") }}</strong>
                 <span
                   >{{
                     moneyText(cpmValue(stats.totalCost, stats.totalReach))
@@ -3639,7 +3693,7 @@ onBeforeUnmount(() => {
             </div>
 
             <section class="tip-bar">
-              <strong>提示</strong>
+              <strong>{{ fieldLabel("提示") }}</strong>
               <span
                 >建议优先处理待确认报价、内容审核和发布链接回收，避免项目节点堆积。</span
               >
@@ -3648,7 +3702,7 @@ onBeforeUnmount(() => {
             <section class="pending-section">
               <div class="section-heading">
                 <div>
-                  <strong>待处理事项</strong>
+                  <strong>{{ fieldLabel("待处理事项") }}</strong>
                   <span>{{ pendingActions.length }} 项需要人工确认</span>
                 </div>
               </div>
@@ -3673,15 +3727,18 @@ onBeforeUnmount(() => {
                   <IconifyIconOnline icon="ri:arrow-right-s-line" />
                 </button>
               </div>
-              <el-empty v-else description="当前没有需要人工处理的动作" />
+              <el-empty
+                v-else
+                :description="fieldLabel('当前没有需要人工处理的动作')"
+              />
             </section>
 
             <section class="workspace-grid">
               <div class="table-panel">
                 <div class="section-heading">
                   <div>
-                    <strong>合作资源</strong>
-                    <span>点击行即可查看内容交付详情</span>
+                    <strong>{{ fieldLabel("合作资源") }}</strong>
+                    <span>{{ fieldLabel("点击行即可查看内容交付详情") }}</span>
                   </div>
                 </div>
                 <div class="stage-filter">
@@ -3780,7 +3837,7 @@ onBeforeUnmount(() => {
                       <span />
                       <CooperationTypeTags
                         :value="focusedCooperation.cooperationType"
-                        empty-text="未设置合作形式"
+                        :empty-text="fieldLabel('未设置合作形式')"
                       />
                     </p>
                   </div>
@@ -3800,10 +3857,10 @@ onBeforeUnmount(() => {
                     系统根据活跃度、互动率、履约记录和数据真实性辅助评估合作质量
                   </strong>
                   <div>
-                    <span>近期活跃</span>
-                    <span>互动表现较好</span>
-                    <span>数据可信</span>
-                    <span>履约记录良好</span>
+                    <span>{{ fieldLabel("近期活跃") }}</span>
+                    <span>{{ fieldLabel("互动表现较好") }}</span>
+                    <span>{{ fieldLabel("数据可信") }}</span>
+                    <span>{{ fieldLabel("履约记录良好") }}</span>
                   </div>
                 </div>
 
@@ -3811,8 +3868,14 @@ onBeforeUnmount(() => {
                   v-if="cooperationStage(focusedCooperation) === 'published'"
                   class="success-banner"
                 >
-                  <strong>合作已完成</strong>
-                  <p>如发现内容质量、异常播放或互动问题，可提交异常反馈。</p>
+                  <strong>{{ fieldLabel("合作已完成") }}</strong>
+                  <p>
+                    {{
+                      fieldLabel(
+                        "如发现内容质量、异常播放或互动问题，可提交异常反馈。"
+                      )
+                    }}
+                  </p>
                   <el-button link type="primary" @click="openInfluencerReport"
                     >提交异常反馈</el-button
                   >
@@ -3844,25 +3907,25 @@ onBeforeUnmount(() => {
 
                 <section v-if="detailTab === 'overview'" class="overview-grid">
                   <div>
-                    <span>粉丝数</span
+                    <span>{{ fieldLabel("粉丝数") }}</span
                     ><strong>{{
                       formatCount(focusedCooperation.followers)
                     }}</strong>
                   </div>
                   <div>
-                    <span>互动率</span
+                    <span>{{ fieldLabel("互动率") }}</span
                     ><strong>{{
                       ratioPercent(focusedCooperation.engagementRate, 1)
                     }}</strong>
                   </div>
                   <div>
-                    <span>播放/曝光</span
+                    <span>{{ fieldLabel("播放/曝光") }}</span
                     ><strong>{{
                       formatCount(primaryReach(focusedCooperation))
                     }}</strong>
                   </div>
                   <div>
-                    <span>点击</span
+                    <span>{{ fieldLabel("点击") }}</span
                     ><strong>{{
                       formatCount(focusedCooperation.clicks)
                     }}</strong>
@@ -3871,7 +3934,7 @@ onBeforeUnmount(() => {
 
                 <template v-if="detailTab === 'content'">
                   <section class="content-block">
-                    <h3>内容信息</h3>
+                    <h3>{{ fieldLabel("内容信息") }}</h3>
                     <div class="tracking-link">
                       <span
                         >为该资源生成的专属追踪链接，用于发布内容中追踪点击和效果。</span
@@ -3951,9 +4014,9 @@ onBeforeUnmount(() => {
                 </template>
 
                 <section v-if="detailTab === 'reviews'" class="content-block">
-                  <h3>评价</h3>
+                  <h3>{{ fieldLabel("评价") }}</h3>
                   <div class="tracking-link">
-                    <span>团队评分</span>
+                    <span>{{ fieldLabel("团队评分") }}</span>
                     <strong>{{ focusedCooperation.teamRating || "-" }}</strong>
                     <p>{{ focusedCooperation.notes || "暂无备注" }}</p>
                   </div>
@@ -3968,7 +4031,7 @@ onBeforeUnmount(() => {
           class="section-card report-panel"
         >
           <div class="section-headline">
-            <h2>效果报告</h2>
+            <h2>{{ fieldLabel("效果报告") }}</h2>
             <div class="headline-actions">
               <el-segmented
                 v-model="reportScope"
@@ -4037,16 +4100,16 @@ onBeforeUnmount(() => {
 
             <div class="forecast-table">
               <div />
-              <strong>播放</strong>
-              <strong>点击</strong>
+              <strong>{{ fieldLabel("播放") }}</strong>
+              <strong>{{ fieldLabel("点击") }}</strong>
               <strong>CPM</strong>
               <strong>CPC</strong>
-              <span>预测</span>
+              <span>{{ fieldLabel("预测") }}</span>
               <b>{{ formatCount(visibleReportSummary.forecastViews) }}</b>
               <b>{{ formatCount(visibleReportSummary.forecastClicks) }}</b>
               <b>{{ moneyText(visibleReportSummary.forecastCPM) }}</b>
               <b>{{ moneyText(visibleReportSummary.forecastCPC) }}</b>
-              <span>实际</span>
+              <span>{{ fieldLabel("实际") }}</span>
               <b>{{ formatCount(visibleReportSummary.actualViews) }}</b>
               <b>{{ formatCount(visibleReportSummary.actualClicks) }}</b>
               <b>{{ moneyText(visibleReportSummary.actualCPM) }}</b>
@@ -4085,7 +4148,7 @@ onBeforeUnmount(() => {
                 </button>
               </div>
               <div class="view-by">
-                <span>查看维度</span>
+                <span>{{ fieldLabel("查看维度") }}</span>
                 <el-select v-model="reportViewBy">
                   <el-option :label="fieldLabel('受众')" value="audience" />
                   <el-option :label="fieldLabel('平台')" value="platform" />
@@ -4166,7 +4229,7 @@ onBeforeUnmount(() => {
           class="section-card budget-panel"
         >
           <div class="section-headline">
-            <h2>预算</h2>
+            <h2>{{ fieldLabel("预算") }}</h2>
             <div class="headline-actions">
               <el-date-picker
                 :model-value="[project?.cycleStartDate, project?.cycleEndDate]"
@@ -4181,12 +4244,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="budget-card">
             <div>
-              <h3>达人营销预算</h3>
-              <span>已发生费用</span>
+              <h3>{{ fieldLabel("达人营销预算") }}</h3>
+              <span>{{ fieldLabel("已发生费用") }}</span>
               <strong>{{ moneyText(costToDate) }}</strong>
             </div>
             <div>
-              <span>总预算</span>
+              <span>{{ fieldLabel("总预算") }}</span>
               <strong>{{ moneyText(projectBudget) }}</strong>
               <el-button circle text @click="openBudgetDialog"
                 ><IconifyIconOnline icon="ri:edit-line"
@@ -4203,7 +4266,7 @@ onBeforeUnmount(() => {
           class="section-card info-panel"
         >
           <div class="section-headline">
-            <h2>项目信息</h2>
+            <h2>{{ fieldLabel("项目信息") }}</h2>
             <el-button @click="openProjectDialog">
               <IconifyIconOnline icon="ri:edit-line" />
               编辑项目
@@ -4255,7 +4318,11 @@ onBeforeUnmount(() => {
       </main>
     </div>
 
-    <el-dialog v-model="projectDialog" title="编辑项目" width="680px">
+    <el-dialog
+      v-model="projectDialog"
+      :title="fieldLabel('编辑项目')"
+      width="680px"
+    >
       <el-form :model="projectForm" label-width="120px">
         <el-form-item :label="fieldLabel('项目名称')"
           ><el-input v-model="projectForm.name"
@@ -4268,7 +4335,7 @@ onBeforeUnmount(() => {
             collapse-tags
             collapse-tags-tooltip
             :max-collapse-tags="3"
-            placeholder="搜索中文、英文或国家代码"
+            :placeholder="fieldLabel('搜索中文、英文或国家代码')"
             class="w-full!"
           >
             <el-option
@@ -4297,8 +4364,8 @@ onBeforeUnmount(() => {
             type="daterange"
             unlink-panels
             range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
+            :start-placeholder="fieldLabel('开始日期')"
+            :end-placeholder="fieldLabel('结束日期')"
             format="YYYY-MM-DD"
             value-format="YYYY-MM-DD"
             class="w-full!"
@@ -4318,22 +4385,36 @@ onBeforeUnmount(() => {
         /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="projectDialog = false">取消</el-button>
+        <el-button @click="projectDialog = false">{{
+          fieldLabel("取消")
+        }}</el-button>
         <el-button type="primary" :loading="submitting" @click="submitProject"
           >保存</el-button
         >
       </template>
     </el-dialog>
 
-    <el-dialog v-model="budgetDialog" title="编辑预算" width="420px">
+    <el-dialog
+      v-model="budgetDialog"
+      :title="fieldLabel('编辑预算')"
+      width="420px"
+    >
       <el-input-number v-model="budgetForm.budget" :min="0" class="w-full!" />
       <template #footer>
-        <el-button @click="budgetDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitBudget">保存</el-button>
+        <el-button @click="budgetDialog = false">{{
+          fieldLabel("取消")
+        }}</el-button>
+        <el-button type="primary" @click="submitBudget">{{
+          fieldLabel("保存")
+        }}</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="renewDialog" title="续期项目" width="480px">
+    <el-dialog
+      v-model="renewDialog"
+      :title="fieldLabel('续期项目')"
+      width="480px"
+    >
       <el-form :model="renewForm" label-width="96px">
         <el-form-item :label="fieldLabel('开始日期')"
           ><el-date-picker
@@ -4349,12 +4430,20 @@ onBeforeUnmount(() => {
         /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="renewDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitRenew">续期</el-button>
+        <el-button @click="renewDialog = false">{{
+          fieldLabel("取消")
+        }}</el-button>
+        <el-button type="primary" @click="submitRenew">{{
+          fieldLabel("续期")
+        }}</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="reportDialog" title="提交异常反馈" width="520px">
+    <el-dialog
+      v-model="reportDialog"
+      :title="fieldLabel('提交异常反馈')"
+      width="520px"
+    >
       <el-form :model="influencerReportForm" label-width="96px">
         <el-form-item :label="fieldLabel('原因')"
           ><el-input v-model="influencerReportForm.reason"
@@ -4367,7 +4456,9 @@ onBeforeUnmount(() => {
         /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="reportDialog = false">取消</el-button>
+        <el-button @click="reportDialog = false">{{
+          fieldLabel("取消")
+        }}</el-button>
         <el-button type="primary" @click="submitInfluencerReport"
           >提交</el-button
         >
