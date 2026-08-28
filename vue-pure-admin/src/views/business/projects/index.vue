@@ -2251,13 +2251,8 @@ onMounted(() => {
           >
             <template #default="{ row }">
               <div class="project-name-cell">
-                <span class="project-icon"
-                  ><IconifyIconOnline icon="ri:folder-user-line"
-                /></span>
-                <div>
-                  <strong>{{ row.name }}</strong
-                  ><small>{{ projectCreatedDate(row) }}</small>
-                </div>
+                <strong>{{ row.name }}</strong>
+                <small>{{ projectCreatedDate(row) }}</small>
               </div>
             </template>
           </el-table-column>
@@ -6559,27 +6554,10 @@ onMounted(() => {
   border-top: 1px solid #e5e6e9;
 }
 .project-name-cell {
-  display: flex;
-  gap: 11px;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-}
-.project-icon {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  color: #e79b26;
-  background: #fffaf0;
-  border: 1px solid #f0e5ca;
-  border-radius: 9px;
-}
-.project-name-cell > div {
   display: grid;
   min-width: 0;
   gap: 4px;
+  justify-items: center;
 }
 .project-name-cell strong {
   overflow: hidden;
