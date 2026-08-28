@@ -4160,22 +4160,31 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 	backgroundSyncStarted := false
 	var backgroundSyncJobID int64
 	if shouldStartImportedProjectSync(len(importedResourceIDs)) {
+		uploaderUserID, _ := a.currentUserID(r)
+		uploaderName := ""
+		if uploaderUserID > 0 {
+			_ = a.DB().QueryRowContext(r.Context(),
+				`select coalesce(nullif(nickname, ''), username) from sys_users where id = ? limit 1`,
+				uploaderUserID,
+			).Scan(&uploaderName)
+		}
 		result, jobErr := a.DB().ExecContext(context.Background(),
 			`insert into biz_platform_sync_jobs
-			  (job_type, status, total_count, started_at, current_resource_name, message)
-			 values ('project_import_sync', '运行中', 3, now(), '账号资料', ?)`,
+			  (job_type, status, total_count, started_at, current_resource_name, message, created_by, created_by_name)
+			 values ('project_import_sync', '运行中', 3, now(), '账号资料', ?, ?, ?)`,
 			fmt.Sprintf("准备同步导入数据：账号 %d 个", len(importedResourceIDs)),
+			uploaderUserID,
+			uploaderName,
 		)
 		if jobErr != nil {
 			log.Printf("create import batch %s sync job failed: %v", batchID, jobErr)
 		} else if jobID, idErr := result.LastInsertId(); idErr != nil {
 			log.Printf("read import batch %s sync job id failed: %v", batchID, idErr)
 		} else {
-			userID, _ := a.currentUserID(r)
 			notification := projectImportNotification{
 				ProjectID:           projectID,
 				ProjectName:         projectName,
-				UserID:              userID,
+				UserID:              uploaderUserID,
 				BatchID:             batchID,
 				Imported:            imported,
 				ImportedContent:     importedContent,

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -179,16 +178,9 @@ func (a *app) previewProjectExcelImport(w http.ResponseWriter, r *http.Request) 
 		sheets = append(sheets, map[string]any{"name": name, "rows": rows})
 	}
 	writeOK(w, map[string]any{
-		"fileName":    fileName,
-		"projectName": projectNameFromUploadFileName(fileName),
-		"sheets":      sheets,
+		"fileName": fileName,
+		"sheets":   sheets,
 	})
-}
-
-func projectNameFromUploadFileName(fileName string) string {
-	base := filepath.Base(strings.TrimSpace(fileName))
-	extension := filepath.Ext(base)
-	return strings.TrimSpace(strings.TrimSuffix(base, extension))
 }
 
 func (a *app) downloadProjectExcelImportTemplate(w http.ResponseWriter, r *http.Request) {

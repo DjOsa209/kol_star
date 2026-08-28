@@ -140,6 +140,15 @@ export const getSystemLogsDetail = (data?: object) => {
   return http.request<Result>("post", "/system-logs-detail", { data });
 };
 
+/** 获取系统监控-项目导入后台同步记录 */
+export const getProjectImportSyncJobs = (data?: object) => {
+  return http.request<ResultTable>(
+    "post",
+    "/monitor/project-import-sync-jobs",
+    { data }
+  );
+};
+
 /** 获取角色管理-权限-菜单权限 */
 export const getRoleMenu = (data?: object) => {
   return http.request<Result>("post", "/role-menu", { data });

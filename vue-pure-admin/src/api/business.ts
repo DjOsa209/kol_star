@@ -202,14 +202,6 @@ export const getProjectImportNotificationStatus = () => {
   >("get", "/business/projects/import-notification-status");
 };
 
-export const getCooperationImportSyncStatus = (jobId?: number) => {
-  return http.request<Result<any>>(
-    "get",
-    "/business/cooperations/import-sync-status",
-    { params: jobId ? { jobId } : undefined }
-  );
-};
-
 export const updateProject = (data?: object) => {
   return http.request<Result>("post", "/business/projects/update", { data });
 };

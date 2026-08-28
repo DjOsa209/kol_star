@@ -357,21 +357,6 @@ func TestDuplicateImportStillStartsMatchedResourceSync(t *testing.T) {
 	}
 }
 
-func TestProjectNameFromUploadFileName(t *testing.T) {
-	for _, test := range []struct {
-		fileName string
-		want     string
-	}{
-		{fileName: "Infinix NOTE 60 Series Master Media List.xlsx", want: "Infinix NOTE 60 Series Master Media List"},
-		{fileName: "campaign.v2.csv", want: "campaign.v2"},
-		{fileName: "/tmp/project.xls", want: "project"},
-	} {
-		if got := projectNameFromUploadFileName(test.fileName); got != test.want {
-			t.Fatalf("projectNameFromUploadFileName(%q) = %q, want %q", test.fileName, got, test.want)
-		}
-	}
-}
-
 func TestExcelNumberValueAcceptsFormattedCurrency(t *testing.T) {
 	for input, want := range map[string]float64{
 		"$2,500.00": 2500,

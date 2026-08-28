@@ -151,7 +151,8 @@ insert ignore into sys_menus (id, parent_id, menu_type, title, path, name, compo
 (1101, 1100, 0, 'menus.pureOnlineUser', '/monitor/online-user', 'OnlineUser', 'monitor/online/index', null, 'ri:user-voice-line', '', 1),
 (1102, 1100, 0, 'menus.pureLoginLog', '/monitor/login-logs', 'LoginLog', 'monitor/logs/login/index', null, 'ri:window-line', '', 1),
 (1103, 1100, 0, 'menus.pureOperationLog', '/monitor/operation-logs', 'OperationLog', 'monitor/logs/operation/index', null, 'ri:history-fill', '', 1),
-(1104, 1100, 0, 'menus.pureSystemLog', '/monitor/system-logs', 'SystemLog', 'monitor/logs/system/index', null, 'ri:file-search-line', '', 1);
+(1104, 1100, 0, 'menus.pureSystemLog', '/monitor/system-logs', 'SystemLog', 'monitor/logs/system/index', null, 'ri:file-search-line', '', 1),
+(1105, 1100, 0, '导入同步监控', '/monitor/import-sync', 'ProjectImportSyncMonitor', 'monitor/import-sync/index', null, 'ri:upload-cloud-2-line', '', 1);
 
 insert ignore into sys_role_menus (role_id, menu_id)
 select 1, id from sys_menus;
@@ -506,6 +507,7 @@ insert into sys_menus (id, parent_id, menu_type, title, path, name, component, `
 (1102, 1100, 0, 'menus.pureLoginLog', '/monitor/login-logs', 'LoginLog', 'monitor/logs/login/index', null, 'ri:window-line', '', 1),
 (1103, 1100, 0, 'menus.pureOperationLog', '/monitor/operation-logs', 'OperationLog', 'monitor/logs/operation/index', null, 'ri:history-fill', '', 1),
 (1104, 1100, 0, 'menus.pureSystemLog', '/monitor/system-logs', 'SystemLog', 'monitor/logs/system/index', null, 'ri:file-search-line', '', 1),
+(1105, 1100, 0, '导入同步监控', '/monitor/import-sync', 'ProjectImportSyncMonitor', 'monitor/import-sync/index', null, 'ri:upload-cloud-2-line', '', 1),
 (100101, 1001, 3, '新增用户', '', '', '', 1, '', 'system:user:add', 0),
 (100102, 1001, 3, '修改用户', '', '', '', 2, '', 'system:user:edit', 0),
 (100103, 1001, 3, '删除用户', '', '', '', 3, '', 'system:user:delete', 0),
@@ -889,12 +891,15 @@ create table if not exists biz_platform_sync_jobs (
   current_resource_id bigint null,
   current_resource_name varchar(128) not null default '',
   message text null,
+  created_by bigint null,
+  created_by_name varchar(128) not null default '',
   started_at datetime null,
   finished_at datetime null,
   created_at datetime not null default current_timestamp,
   updated_at datetime not null default current_timestamp on update current_timestamp,
   index idx_biz_platform_sync_jobs_status (status, created_at),
-  index idx_biz_platform_sync_jobs_created (created_at)
+  index idx_biz_platform_sync_jobs_created (created_at),
+  index idx_biz_platform_sync_jobs_created_by (created_by, created_at)
 );
 
 insert into sys_menus

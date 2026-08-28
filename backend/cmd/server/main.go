@@ -235,6 +235,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /operation-logs", a.requireMenu("/monitor/operation-logs", a.operationLogs))
 	mux.HandleFunc("POST /system-logs", a.requireMenu("/monitor/system-logs", a.systemLogs))
 	mux.HandleFunc("POST /system-logs-detail", a.requireMenu("/monitor/system-logs", a.systemLogDetail))
+	mux.HandleFunc("POST /monitor/project-import-sync-jobs", a.requireMenu("/monitor/import-sync", a.projectImportSyncJobs))
 	mux.HandleFunc("POST /business/resources", a.requireMenu("/business/resources", a.businessResources))
 	mux.HandleFunc("POST /business/resources/create", a.requireMenu("/business/resources", a.createBusinessResource))
 	mux.HandleFunc("POST /business/resources/update", a.requireMenu("/business/resources", a.updateBusinessResource))

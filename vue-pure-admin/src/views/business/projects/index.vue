@@ -1,13 +1,5 @@
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  reactive,
-  ref,
-  shallowRef,
-  onMounted,
-  onUnmounted
-} from "vue";
+import { computed, nextTick, reactive, ref, shallowRef, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -28,7 +20,6 @@ import {
   previewProjectExcelImport,
   downloadProjectExcelImportTemplate,
   getProjectImportNotificationStatus,
-  getCooperationImportSyncStatus,
   downloadProjectData,
   updateProject,
   deleteProject,
@@ -82,8 +73,6 @@ const importNotificationStatus = ref({
   applicationEnabled: false,
   webhookEnabled: false
 });
-const latestImportSyncJob = ref<any>(null);
-let importSyncPollTimer: number | undefined;
 const importWorkbookSheets = shallowRef<{ name: string; rows: any[] }[]>([]);
 const importRows = shallowRef<any[]>([]);
 const importFileName = ref("");
@@ -145,21 +134,6 @@ const hasCompleteImportProjectName = computed(
     Boolean(importProjectProductLine.value) &&
     Boolean(normalizedImportProjectCustomName.value)
 );
-const latestImportSyncProgress = computed(() => {
-  const job = latestImportSyncJob.value;
-  const total = Number(job?.totalCount || 0);
-  const completed =
-    Number(job?.successCount || 0) + Number(job?.failedCount || 0);
-  return total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
-});
-const latestImportSyncAlertType = computed(() => {
-  const status = String(latestImportSyncJob.value?.status || "");
-  if (status === "运行中") return "info";
-  if (status === "成功") return "success";
-  if (status === "部分失败") return "warning";
-  return "error";
-});
-
 const defaultMarketOptions = [
   "美国",
   "英国",
@@ -1525,39 +1499,6 @@ async function loadImportNotificationStatus() {
   }
 }
 
-async function pollImportSyncStatus(jobId: number) {
-  if (importSyncPollTimer) window.clearTimeout(importSyncPollTimer);
-  try {
-    const res = await getCooperationImportSyncStatus(jobId);
-    if (res.code !== 0) return;
-    latestImportSyncJob.value = res.data || null;
-    if (res.data?.status === "运行中") {
-      importSyncPollTimer = window.setTimeout(
-        () => pollImportSyncStatus(jobId),
-        2000
-      );
-    }
-  } catch {
-    importSyncPollTimer = window.setTimeout(
-      () => pollImportSyncStatus(jobId),
-      4000
-    );
-  }
-}
-
-async function loadLatestImportSyncStatus() {
-  try {
-    const res = await getCooperationImportSyncStatus();
-    if (res.code !== 0 || !res.data) return;
-    latestImportSyncJob.value = res.data;
-    if (res.data.status === "运行中") {
-      pollImportSyncStatus(Number(res.data.id));
-    }
-  } catch {
-    // The project list remains usable when no import-sync history is available.
-  }
-}
-
 async function exportProjectData(row: any) {
   if (!row?.id || exportingProjectIds[row.id]) return;
   exportingProjectIds[row.id] = true;
@@ -1589,7 +1530,7 @@ function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
   importProjectDivision.value = "";
   importProjectCountry.value = "";
   importProjectProductLine.value = "";
-  importProjectCustomName.value = projectNameFromFileName(fileName);
+  importProjectCustomName.value = "";
   importProjectOwnerDraft.value = "";
   importProjectCycleRange.value = [];
   importFileName.value = fileName;
@@ -1599,13 +1540,6 @@ function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
   }));
   refreshImportRows();
   importDialog.value = true;
-}
-
-function projectNameFromFileName(fileName: string) {
-  return String(fileName || "")
-    .trim()
-    .replace(/\.(xlsx|xls|csv)$/i, "")
-    .trim();
 }
 
 async function handleProjectImportFile(file: any) {
@@ -2138,9 +2072,7 @@ async function handleUploadFile(file: any) {
     importProjectDivision.value = "";
     importProjectCountry.value = "";
     importProjectProductLine.value = "";
-    importProjectCustomName.value =
-      String(res.data?.projectName || "").trim() ||
-      projectNameFromFileName(rawFile.name);
+    importProjectCustomName.value = "";
     importFileName.value = res.data?.fileName || rawFile.name;
     importWorkbookSheets.value = Array.isArray(res.data?.sheets)
       ? res.data.sheets
@@ -2191,19 +2123,6 @@ async function submitImport() {
     ElMessage.success(
       `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，移除旧内容 ${res.data.removedContent || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条${backgroundText}`
     );
-    const syncJobId = Number(res.data.backgroundSyncJobId || 0);
-    if (syncJobId > 0) {
-      latestImportSyncJob.value = {
-        id: syncJobId,
-        status: "运行中",
-        totalCount: 3,
-        successCount: 0,
-        failedCount: 0,
-        currentResourceName: "账号资料",
-        message: "后台同步任务已启动，正在读取进度…"
-      };
-      pollImportSyncStatus(syncJobId);
-    }
     if (res.data.failed) {
       const failures = (res.data.errors || [])
         .slice(0, 3)
@@ -2238,11 +2157,6 @@ onMounted(() => {
   loadProjectNameOptions();
   loadData();
   loadImportNotificationStatus();
-  loadLatestImportSyncStatus();
-});
-
-onUnmounted(() => {
-  if (importSyncPollTimer) window.clearTimeout(importSyncPollTimer);
 });
 </script>
 
@@ -2286,25 +2200,6 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <el-alert
-        v-if="latestImportSyncJob"
-        class="import-sync-status"
-        :type="latestImportSyncAlertType"
-        :closable="false"
-        show-icon
-      >
-        <template #title>
-          导入后台同步 #{{ latestImportSyncJob.id }}：{{
-            latestImportSyncJob.status
-          }}
-          <span v-if="latestImportSyncJob.status === '运行中'">
-            · {{ latestImportSyncJob.currentResourceName || "处理中" }} ·
-            {{ latestImportSyncProgress }}%
-          </span>
-        </template>
-        <pre>{{ latestImportSyncJob.message || "暂无日志" }}</pre>
-      </el-alert>
-
       <section class="projects-workspace">
         <div class="projects-heading">
           <div>
@@ -2347,8 +2242,13 @@ onUnmounted(() => {
           @row-click="row => openCampaignDetail(row.id)"
           @selection-change="rows => (selectedProjectRows = rows)"
         >
-          <el-table-column type="selection" width="54" />
-          <el-table-column :label="fieldLabel('项目')" min-width="270" sortable>
+          <el-table-column type="selection" width="54" align="center" />
+          <el-table-column
+            :label="fieldLabel('项目')"
+            min-width="270"
+            align="center"
+            sortable
+          >
             <template #default="{ row }">
               <div class="project-name-cell">
                 <span class="project-icon"
@@ -2384,7 +2284,7 @@ onUnmounted(() => {
           <el-table-column
             :label="fieldLabel('曝光 / 播放')"
             width="150"
-            align="right"
+            align="center"
             sortable
           >
             <template #default="{ row }">{{
@@ -2394,7 +2294,7 @@ onUnmounted(() => {
           <el-table-column
             :label="fieldLabel('互动率')"
             width="120"
-            align="right"
+            align="center"
           >
             <template #default="{ row }">{{
               ratioPercent(
@@ -2403,12 +2303,19 @@ onUnmounted(() => {
               )
             }}</template>
           </el-table-column>
-          <el-table-column :label="fieldLabel('对接人')" width="130"
+          <el-table-column
+            :label="fieldLabel('对接人')"
+            width="130"
+            align="center"
             ><template #default="{ row }">{{
               row.owner || "未指定"
             }}</template></el-table-column
           >
-          <el-table-column :label="fieldLabel('目标市场')" min-width="310">
+          <el-table-column
+            :label="fieldLabel('目标市场')"
+            min-width="310"
+            align="center"
+          >
             <template #default="{ row }">
               <div
                 v-if="projectMarketItems(row).length"
@@ -2465,7 +2372,11 @@ onUnmounted(() => {
               }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="fieldLabel('项目周期')" width="210">
+          <el-table-column
+            :label="fieldLabel('项目周期')"
+            width="210"
+            align="center"
+          >
             <template #default="{ row }">
               <span class="project-cycle-value">{{
                 projectCycleText(row)
@@ -2476,7 +2387,7 @@ onUnmounted(() => {
             :label="fieldLabel('操作')"
             width="240"
             fixed="right"
-            align="right"
+            align="center"
           >
             <template #default="{ row }">
               <el-button
@@ -6355,18 +6266,6 @@ onUnmounted(() => {
   width: min(100%, 420px);
 }
 
-.import-sync-status {
-  margin-bottom: 16px;
-}
-
-.import-sync-status pre {
-  margin: 6px 0 0;
-  overflow-wrap: anywhere;
-  font: inherit;
-  line-height: 1.65;
-  white-space: pre-wrap;
-}
-
 .project-name-fields {
   display: grid;
   gap: 10px;
@@ -6663,6 +6562,7 @@ onUnmounted(() => {
   display: flex;
   gap: 11px;
   align-items: center;
+  justify-content: center;
   min-width: 0;
 }
 .project-icon {
