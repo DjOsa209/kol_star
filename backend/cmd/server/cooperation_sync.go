@@ -65,6 +65,7 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		FinalLink:        finalLink,
 		DeliverableLinks: deliverableLinks,
 	}
+	previewWarning := ""
 	post, found, err := a.findStoredPlatformPost(ctx, resourceID, link)
 	if err != nil {
 		return cooperationPostSyncResult{}, err
@@ -82,10 +83,7 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 			normalizedRemoteImageURL(post.CoverRemoteURL),
 			normalizedRemoteImageURL(post.CoverURL),
 		) == "" && !projectContentPlatformUsesPageScreenshot(link.Platform) {
-			result.Message = "API 未返回作品封面 URL"
-			return a.finishCooperationPostSyncResult(
-				ctx, cooperationID, resourceID, allowAPI, result,
-			)
+			previewWarning = "API 未返回作品封面 URL，其他作品数据已正常同步"
 		}
 		found = true
 		source = "API"
@@ -107,10 +105,11 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	} else if err := a.applyPlatformPostMetricsToCooperation(ctx, cooperationID, post); err != nil {
 		return cooperationPostSyncResult{}, err
 	}
-	previewWarning := ""
 	if projectContentPlatformUsesPageScreenshot(link.Platform) {
 		localCoverURL, warning := captureWebsiteScreenshot(ctx, resourceID, cooperationID, link.URL)
-		previewWarning = warning
+		if warning != "" {
+			previewWarning = firstNonEmpty(previewWarning, warning)
+		}
 		if localCoverURL != "" {
 			if err := storeCooperationPageScreenshot(
 				ctx,
@@ -531,6 +530,9 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 				if segment == "video" && index+1 < len(segments) {
 					return cooperationPostLink{Platform: "TikTok", PostID: segments[index+1], URL: candidate}, nil
 				}
+			}
+			if host == "vt.tiktok.com" || host == "vm.tiktok.com" || (len(segments) > 0 && strings.EqualFold(segments[0], "t")) {
+				return cooperationPostLink{Platform: "TikTok", URL: candidate}, nil
 			}
 		case strings.HasSuffix(host, "instagram.com"):
 			for index, segment := range segments {
@@ -956,6 +958,9 @@ func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, 
 	case "YouTube":
 		return a.fetchYouTubePostByID(ctx, resourceID, link.PostID)
 	case "TikTok":
+		if strings.TrimSpace(link.PostID) == "" {
+			return a.fetchTikTokPostByShareURL(ctx, resourceID, link.URL)
+		}
 		return a.fetchTikTokPostByID(ctx, resourceID, link.PostID)
 	case "Instagram":
 		return a.fetchInstagramPostByURL(ctx, resourceID, link.URL)
@@ -970,6 +975,31 @@ func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, 
 	default:
 		return platformPost{}, fmt.Errorf("平台 %s 暂不支持按单条链接实时抓取", link.Platform)
 	}
+}
+
+func (a *app) fetchTikTokPostByShareURL(ctx context.Context, resourceID int, postURL string) (platformPost, error) {
+	apiKey := strings.TrimSpace(tikHubAPIKey(a.effectivePlatformAPIConfig(ctx)))
+	if apiKey == "" {
+		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
+	}
+	data, err := tikhubGETWithTransientRetry(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
+		"/tiktok/app/v3/fetch_one_video_by_share_url", url.Values{"share_url": []string{postURL}})
+	if err != nil {
+		return platformPost{}, err
+	}
+	item := findSinglePlatformItem(data)
+	posts := normalizeTikHubTikTokPosts(map[string]any{"items": []any{item}}, "")
+	if len(posts) == 0 {
+		return platformPost{}, fmt.Errorf("TikHub 未返回 TikTok 作品数据")
+	}
+	post := posts[0]
+	if post.PostURL == "" {
+		post.PostURL = postURL
+	}
+	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "TikTok", post); err != nil {
+		return platformPost{}, err
+	}
+	return post, nil
 }
 
 func (a *app) fetchTikTokPostByID(ctx context.Context, resourceID int, postID string) (platformPost, error) {

@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+)
 
 func TestXiaohongshuUserIdentifier(t *testing.T) {
 	tests := []struct {
@@ -91,6 +98,41 @@ func TestNormalizeTikHubXiaohongshuPosts(t *testing.T) {
 	}
 }
 
+func TestNormalizeTikHubXiaohongshuNestedNoteCard(t *testing.T) {
+	data := map[string]any{
+		"data": map[string]any{
+			"items": []any{
+				map[string]any{
+					"id": "nested-note-123",
+					"note_card": map[string]any{
+						"display_title": "Nested note",
+						"type":          "normal",
+						"cover": map[string]any{
+							"url_default": "https://example.com/nested-cover.jpg",
+						},
+						"interact_info": map[string]any{
+							"liked_count":     "120",
+							"comment_count":   "8",
+							"collected_count": "35",
+						},
+					},
+				},
+			},
+		},
+	}
+	posts := normalizeTikHubXiaohongshuPosts(data)
+	if len(posts) != 1 {
+		t.Fatalf("posts = %#v", posts)
+	}
+	post := posts[0]
+	if post.PlatformPostID != "nested-note-123" || post.CoverURL != "https://example.com/nested-cover.jpg" {
+		t.Fatalf("unexpected nested post: %#v", post)
+	}
+	if post.LikeCount != 120 || post.CommentCount != 8 || post.SaveCount != 35 {
+		t.Fatalf("unexpected nested metrics: %#v", post)
+	}
+}
+
 func TestXiaohongshuNextCursorAndServiceError(t *testing.T) {
 	data := map[string]any{
 		"data": map[string]any{
@@ -108,5 +150,51 @@ func TestXiaohongshuNextCursorAndServiceError(t *testing.T) {
 	}
 	if got := xiaohongshuServiceError(map[string]any{"data": map[string]any{"nickname": "正常用户"}}); got != "" {
 		t.Fatalf("unexpected service error: %q", got)
+	}
+}
+
+func TestFetchXiaohongshuPostDetailFallsBackToShareText(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("note_id") != "" {
+			_, _ = w.Write([]byte(`{"code":200,"data":{"msg":"服务异常，请稍后再试"}}`))
+			return
+		}
+		if r.URL.Query().Get("share_text") == "" {
+			http.Error(w, "share_text fallback was not sent", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"code": 200,
+			"data": {
+				"items": [{
+					"id": "fallback-note",
+					"note_card": {
+						"display_title": "Fallback note",
+						"type": "normal",
+						"cover": {"url_default": "https://example.com/fallback.jpg"}
+					}
+				}]
+			}
+		}`))
+	}))
+	defer server.Close()
+	t.Setenv("TIKHUB_API_BASE_URL", server.URL)
+
+	post, err := fetchXiaohongshuPostDetail(
+		context.Background(), server.Client(), "test-key",
+		url.Values{"note_id": []string{"bad-note-id"}},
+		"bad-note-id", "https://xhslink.com/o/example",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	if post.PlatformPostID != "fallback-note" || !strings.Contains(post.CoverURL, "fallback.jpg") {
+		t.Fatalf("unexpected fallback post: %#v", post)
 	}
 }

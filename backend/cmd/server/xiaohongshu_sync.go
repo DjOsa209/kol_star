@@ -64,7 +64,7 @@ func (a *app) syncXiaohongshuResource(ctx context.Context, id int) (map[string]a
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	profileData, err := tikhubGET(ctx, client, apiKey,
+	profileData, err := tikhubGETWithTransientRetry(ctx, client, apiKey,
 		"/xiaohongshu/app_v2/get_user_info", xiaohongshuAPIParams(userID, profileURL))
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (a *app) fetchXiaohongshuUserPosts(
 			params[key] = append([]string(nil), values...)
 		}
 		params.Set("cursor", cursor)
-		data, err := tikhubGET(ctx, client, apiKey,
+		data, err := tikhubGETWithTransientRetry(ctx, client, apiKey,
 			"/xiaohongshu/app_v2/get_user_posted_notes", params)
 		if err != nil {
 			return nil, err
@@ -244,7 +244,8 @@ func xiaohongshuInteractionCount(row map[string]any, labels ...string) int64 {
 func normalizeTikHubXiaohongshuPosts(data map[string]any) []platformPost {
 	seen := map[string]bool{}
 	posts := make([]platformPost, 0)
-	for _, candidate := range collectNestedMaps(data) {
+	for _, rawCandidate := range collectNestedMaps(data) {
+		candidate := xiaohongshuNoteCandidate(rawCandidate)
 		id := firstNonEmpty(
 			anyString(candidate["note_id"]), anyString(candidate["noteId"]),
 			anyString(candidate["id"]), anyString(candidate["item_id"]),
@@ -301,10 +302,25 @@ func normalizeTikHubXiaohongshuPosts(data map[string]any) []platformPost {
 				candidate["collected_count"], candidate["collect_count"], candidate["favorite_count"], candidate["save_count"],
 				nestedInt64(candidate, "interact_info", "collected_count"), nestedInt64(candidate, "interactInfo", "collectedCount"),
 			),
-			Raw: candidate,
+			Raw: rawCandidate,
 		})
 	}
 	return posts
+}
+
+func xiaohongshuNoteCandidate(candidate map[string]any) map[string]any {
+	noteCard := firstMapAt(candidate, "note_card", "noteCard", "note_info", "noteInfo")
+	if len(noteCard) == 0 {
+		return candidate
+	}
+	merged := make(map[string]any, len(candidate)+len(noteCard))
+	for key, value := range candidate {
+		merged[key] = value
+	}
+	for key, value := range noteCard {
+		merged[key] = value
+	}
+	return merged
 }
 
 func xiaohongshuImageURL(value any) string {
@@ -319,7 +335,11 @@ func xiaohongshuImageURL(value any) string {
 			}
 		}
 	case map[string]any:
-		for _, key := range []string{"url_default", "urlDefault", "url_pre", "urlPre", "info_list", "image_list"} {
+		for _, key := range []string{
+			"url_default", "urlDefault", "url_pre", "urlPre", "image_url", "imageUrl",
+			"url_size_large", "url_size_middle", "url_size_small", "master_url",
+			"info_list", "infoList", "image_list", "imageList",
+		} {
 			if image := xiaohongshuImageURL(typed[key]); image != "" {
 				return image
 			}
@@ -349,24 +369,94 @@ func (a *app) fetchXiaohongshuPostByURL(ctx context.Context, resourceID int, pos
 	} else {
 		params.Set("share_text", strings.TrimSpace(postURL))
 	}
-	data, err := tikhubGET(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
-		"/xiaohongshu/app_v2/get_image_note_detail", params)
+	client := &http.Client{Timeout: 45 * time.Second}
+	post, err := fetchXiaohongshuPostDetail(ctx, client, apiKey, params, postID, postURL)
 	if err != nil {
 		return platformPost{}, err
 	}
-	if serviceErr := xiaohongshuServiceError(data); serviceErr != "" {
-		return platformPost{}, fmt.Errorf("小红书笔记获取失败：%s", serviceErr)
-	}
-	posts := normalizeTikHubXiaohongshuPosts(data)
-	if len(posts) == 0 {
-		return platformPost{}, fmt.Errorf("TikHub 未返回小红书笔记数据")
-	}
-	post := posts[0]
-	if post.PostURL == "" {
+	if post.PostURL == "" || strings.TrimSpace(postID) == "" {
 		post.PostURL = postURL
 	}
 	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "小红书", post); err != nil {
 		return platformPost{}, err
 	}
 	return post, nil
+}
+
+func fetchXiaohongshuPostDetail(
+	ctx context.Context,
+	client *http.Client,
+	apiKey string,
+	primaryParams url.Values,
+	postID string,
+	postURL string,
+) (platformPost, error) {
+	attempts := []url.Values{primaryParams}
+	if strings.TrimSpace(postID) != "" && strings.TrimSpace(postURL) != "" {
+		attempts = append(attempts, url.Values{"share_text": []string{strings.TrimSpace(postURL)}})
+	}
+	var lastErr error
+	for _, params := range attempts {
+		data, err := tikhubGETWithTransientRetry(ctx, client, apiKey,
+			"/xiaohongshu/app_v2/get_image_note_detail", params)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if serviceErr := xiaohongshuServiceError(data); serviceErr != "" {
+			lastErr = fmt.Errorf("小红书笔记获取失败：%s", serviceErr)
+			continue
+		}
+		posts := normalizeTikHubXiaohongshuPosts(data)
+		if len(posts) == 0 {
+			lastErr = fmt.Errorf("TikHub 未返回小红书笔记数据")
+			continue
+		}
+		post := posts[0]
+		if post.MediaType == "VIDEO" && normalizedRemoteImageURL(post.CoverURL) == "" {
+			videoData, videoErr := tikhubGETWithTransientRetry(ctx, client, apiKey,
+				"/xiaohongshu/app_v2/get_video_note_detail", params)
+			if videoErr == nil && xiaohongshuServiceError(videoData) == "" {
+				if videoPosts := normalizeTikHubXiaohongshuPosts(videoData); len(videoPosts) > 0 {
+					post = mergePlatformPosts([]platformPost{post}, videoPosts)[0]
+				}
+			}
+		}
+		return post, nil
+	}
+	if lastErr != nil {
+		return platformPost{}, lastErr
+	}
+	return platformPost{}, fmt.Errorf("TikHub 未返回小红书笔记数据")
+}
+
+func tikhubGETWithTransientRetry(
+	ctx context.Context,
+	client *http.Client,
+	apiKey string,
+	endpoint string,
+	params url.Values,
+) (map[string]any, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		data, err := tikhubGET(ctx, client, apiKey, endpoint, params)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		message := strings.ToLower(err.Error())
+		if !strings.Contains(message, "请求失败，请重试") &&
+			!strings.Contains(message, "please retry") &&
+			!strings.Contains(message, "try again") {
+			return nil, err
+		}
+		if attempt < 2 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 250 * time.Millisecond):
+			}
+		}
+	}
+	return nil, lastErr
 }

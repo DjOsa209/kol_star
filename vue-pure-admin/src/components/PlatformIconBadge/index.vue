@@ -14,6 +14,9 @@ const icon = computed(() => {
   if (["instagram", "ins", "ig"].includes(normalized)) {
     return "/api/uploads/images/ins.png";
   }
+  if (["小红书", "xiaohongshu", "xhs", "rednote"].includes(normalized)) {
+    return "/api/uploads/images/xiaohongshu.png";
+  }
   if (["x", "twitter", "x.com"].includes(normalized)) {
     return "/api/uploads/images/x.png";
   }
