@@ -11,6 +11,7 @@ import (
 
 func TestNormalizeEditableContentPlatform(t *testing.T) {
 	tests := map[string]string{
+		"RedNote":  "小红书",
 		"tiktok":   "TikTok",
 		"INS":      "Instagram",
 		"twitter":  "X",

@@ -298,18 +298,22 @@ func (a *app) projectCooperationRows(ctx context.Context, projectID int) ([]map[
 }
 
 var editableContentPlatforms = map[string]string{
-	"youtube":   "YouTube",
-	"tiktok":    "TikTok",
-	"instagram": "Instagram",
-	"ins":       "Instagram",
-	"x":         "X",
-	"twitter":   "X",
-	"facebook":  "Facebook",
-	"fb":        "Facebook",
-	"linkedin":  "LinkedIn",
-	"reddit":    "Reddit",
-	"website":   "Website",
-	"网站":        "Website",
+	"小红书":         "小红书",
+	"xiaohongshu": "小红书",
+	"xhs":         "小红书",
+	"rednote":     "小红书",
+	"youtube":     "YouTube",
+	"tiktok":      "TikTok",
+	"instagram":   "Instagram",
+	"ins":         "Instagram",
+	"x":           "X",
+	"twitter":     "X",
+	"facebook":    "Facebook",
+	"fb":          "Facebook",
+	"linkedin":    "LinkedIn",
+	"reddit":      "Reddit",
+	"website":     "Website",
+	"网站":          "Website",
 }
 
 func normalizeEditableContentPlatform(value string) string {

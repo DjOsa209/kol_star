@@ -13,6 +13,7 @@ func TestNormalizeOnlineProjectResourceSeed(t *testing.T) {
 	}{
 		{name: "instagram URL", platform: "Instagram", query: "https://www.instagram.com/openai/", wantPlatform: "Instagram", wantHandle: "openai"},
 		{name: "tiktok handle", platform: "TikTok", query: "@openai", wantPlatform: "TikTok", wantHandle: "openai"},
+		{name: "xiaohongshu profile", platform: "RedNote", query: "https://www.xiaohongshu.com/user/profile/61b46d790000000010008153", wantPlatform: "小红书", wantPlatformID: "61b46d790000000010008153"},
 		{name: "youtube ID", platform: "YouTube", query: "UC_x5XG1OV2P6uZZ5FSM9Ttw", wantPlatform: "YouTube", wantPlatformID: "UC_x5XG1OV2P6uZZ5FSM9Ttw"},
 		{name: "x URL", platform: "X", query: "https://x.com/openai", wantPlatform: "X", wantHandle: "openai"},
 		{name: "twitter handle", platform: "Twitter", query: "@OpenAI", wantPlatform: "X", wantHandle: "OpenAI"},

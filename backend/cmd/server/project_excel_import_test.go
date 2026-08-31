@@ -228,6 +228,68 @@ func TestDownloadedStandardTemplateCanBeUploadedWithoutHeaderMismatch(t *testing
 	}
 }
 
+func TestBuildEnglishStandardProjectImportTemplateMatchesReferenceAndReimports(t *testing.T) {
+	book, err := buildStandardProjectImportTemplateWithOptionsAndLanguage(defaultStandardProjectImportOptions, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer book.Close()
+	const sheet = "Standard Template"
+
+	for cell, expected := range map[string]string{
+		"B3": "Media Name\nCreator Name",
+		"E3": "Technology\nLifestyle\nBusiness\nDesign\nGaming\nPhotography\nSports\nEntertainment\nAutomotive\nFinance\nEducation\nMass Media",
+		"M4": "Enter the actual USD amount in digits only. Do not include currency symbols.",
+		"T4": "Auto-calculated. CPM = Cost / Views × 1000. Leave blank.",
+	} {
+		if actual, _ := book.GetCellValue(sheet, cell); actual != expected {
+			t.Fatalf("%s = %q, want %q", cell, actual, expected)
+		}
+	}
+	validations, err := book.GetDataValidations(sheet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEnglishCategory := false
+	for _, validation := range validations {
+		if validation.Sqref == "E5:E2000" && strings.Contains(validation.Formula1, "Technology") {
+			foundEnglishCategory = true
+		}
+	}
+	if !foundEnglishCategory {
+		t.Fatal("English template category drop-down must contain translated options")
+	}
+
+	for cell, value := range map[string]string{
+		"B5": "Example Media",
+		"C5": "https://example.com",
+		"D5": "Media",
+		"E5": "Technology",
+		"F5": "United States",
+		"I5": "Website",
+		"J5": "Paid Collaboration",
+		"L5": "Branded Content",
+	} {
+		if err := book.SetCellValue(sheet, cell, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := parseExcelContentSheetWithOptions(book, sheet, defaultStandardProjectImportOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("parsed rows = %d, want 1: %#v", len(rows), rows)
+	}
+	row := rows[0]
+	if len(row["errors"].([]string)) != 0 {
+		t.Fatalf("English template values must pass validation: %#v", row)
+	}
+	if row["resourceType"] != "媒体" || row["category"] != "科技" || row["cooperationType"] != "付费合作" || row["contentType"] != "商业/品牌类" {
+		t.Fatalf("English options were not normalized to canonical values: %#v", row)
+	}
+}
+
 func TestBuildStandardProjectExportWorkbookMatchesImportContract(t *testing.T) {
 	book, err := buildStandardProjectExportWorkbook(defaultStandardProjectImportOptions, []map[string]any{
 		{
@@ -325,6 +387,9 @@ func TestNormalizeImportedProfileLogic(t *testing.T) {
 	}
 	if got := normalizeImportedPlatform("Website", profile); got != "Instagram" {
 		t.Fatalf("platform = %q, want Instagram", got)
+	}
+	if got := normalizeImportedPlatform("RedNote", "https://xhslink.com/m/3ZSCJZAMz0a"); got != "小红书" {
+		t.Fatalf("platform = %q, want 小红书", got)
 	}
 	if got := importedProfilePlaceholderName(profile); got != "example" {
 		t.Fatalf("placeholder = %q, want example", got)

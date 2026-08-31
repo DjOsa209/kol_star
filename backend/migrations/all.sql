@@ -1823,3 +1823,23 @@ create table if not exists biz_localized_texts (
   unique key uk_biz_localized_text (entity_type, entity_id, field_key, target_language),
   index idx_biz_localized_text_lookup (entity_type, entity_id, target_language)
 );
+
+-- ============================================================
+-- Source: migrations/037_tikhub_xiaohongshu.sql
+-- ============================================================
+
+use kol_admin;
+
+insert ignore into biz_platform_sync_settings
+  (platform, enabled, sync_profile, sync_posts, post_limit)
+values
+  ('小红书', 1, 1, 1, 20);
+
+insert into biz_standard_import_options
+  (field_key, value, status, source, sort_order)
+values
+  ('platform', '小红书', '启用', '系统预置', 45)
+on duplicate key update
+  status = '启用',
+  source = '系统预置',
+  sort_order = values(sort_order);

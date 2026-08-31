@@ -181,11 +181,11 @@ export const previewProjectExcelImport = (file: File) => {
   );
 };
 
-export const downloadProjectExcelImportTemplate = () => {
+export const downloadProjectExcelImportTemplate = (lang?: string) => {
   return http.request<Blob>(
     "get",
     "/business/projects/import-template",
-    { responseType: "blob" },
+    { params: lang ? { lang } : undefined, responseType: "blob" },
     {
       beforeResponseCallback: response => response.data
     } as any

@@ -101,6 +101,7 @@ const contentEditForm = reactive({
   postUrl: ""
 });
 const editableContentPlatformOptions = [
+  "小红书",
   "TikTok",
   "YouTube",
   "Instagram",
@@ -1635,6 +1636,8 @@ function normalizePlatformName(value: unknown) {
   if (/tik\s?tok/.test(normalized)) return "TikTok";
   if (/you\s?tube/.test(normalized)) return "YouTube";
   if (/instagram|\big\b/.test(normalized)) return "Instagram";
+  if (/小红书|xiaohongshu|red\s?note|\bxhs\b/.test(normalized))
+    return "小红书";
   if (/facebook|\bfb\b/.test(normalized)) return "Facebook";
   if (/twitter|^x$/.test(normalized)) return "X";
   if (/linkedin/.test(normalized)) return "LinkedIn";
@@ -1646,6 +1649,7 @@ function normalizePlatformName(value: unknown) {
 
 function platformColor(platform: string) {
   const colors: Record<string, string> = {
+    小红书: "#ff2442",
     TikTok: "#111827",
     YouTube: "#ef4444",
     Instagram: "#c026d3",
@@ -3387,6 +3391,7 @@ onBeforeUnmount(() => {
           <div class="online-search-grid">
             <el-form-item :label="fieldLabel('平台')" required>
               <el-select v-model="onlineSearchForm.platform" class="w-full!">
+                <el-option label="小红书 / RedNote" value="小红书" />
                 <el-option label="Instagram" value="Instagram" />
                 <el-option label="TikTok" value="TikTok" />
                 <el-option label="YouTube" value="YouTube" />

@@ -6,6 +6,7 @@ import { i18n } from "@/plugins/i18n";
  * without duplicating page-specific locale keys.
  */
 const englishFieldLabels: Record<string, string> = {
+  小红书: "RedNote",
   "TikHub 接入说明": "TikHub Integration Guide",
   "Token 状态": "Token Status",
   "YouTube 代理地址（可选）": "YouTube Proxy URL (Optional)",

@@ -44,6 +44,7 @@ const trafficCVImportRow = ref<any | null>(null);
 const trafficCVHTML = ref("");
 const syncScope = ref<"all" | "selected">("all");
 const selectedSyncPlatforms = ref<string[]>([
+  "小红书",
   "YouTube",
   "Instagram",
   "TikTok",
@@ -53,6 +54,7 @@ const selectedSyncPlatforms = ref<string[]>([
   "Website"
 ]);
 const syncPlatformOptions = [
+  "小红书",
   "YouTube",
   "Instagram",
   "TikTok",
@@ -115,6 +117,7 @@ const resourceSelectionIndeterminate = computed(
     )
 );
 const defaultPlatformOptions = [
+  "小红书",
   "YouTube",
   "TikTok",
   "Instagram",
@@ -2815,6 +2818,7 @@ onUnmounted(() => {
               >
                 <el-option
                   v-for="platform in [
+                    "小红书",
                     'Website',
                     'X',
                     'YouTube',

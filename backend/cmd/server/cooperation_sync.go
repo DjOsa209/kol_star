@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 )
@@ -233,7 +232,7 @@ func (a *app) populateCooperationPostSyncResult(
 
 func cooperationPlatformSupportsSinglePostFetch(platform string) bool {
 	switch platform {
-	case "YouTube", "TikTok", "Instagram", "X":
+	case "YouTube", "TikTok", "Instagram", "X", "LinkedIn", "Reddit", "小红书":
 		return true
 	default:
 		return false
@@ -542,6 +541,18 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 					}
 				}
 			}
+		case strings.HasSuffix(host, "xiaohongshu.com"):
+			for index, segment := range segments {
+				switch strings.ToLower(segment) {
+				case "explore", "item":
+					if index+1 < len(segments) && strings.TrimSpace(segments[index+1]) != "" {
+						return cooperationPostLink{Platform: "小红书", PostID: segments[index+1], URL: candidate}, nil
+					}
+				}
+			}
+			return cooperationPostLink{Platform: "小红书", URL: candidate}, nil
+		case host == "xhslink.com" || host == "xhslink.cn":
+			return cooperationPostLink{Platform: "小红书", URL: candidate}, nil
 		case (host == "x.com" || host == "twitter.com" || host == "mobile.twitter.com") && len(segments) >= 3:
 			if strings.EqualFold(segments[1], "status") {
 				return cooperationPostLink{Platform: "X", PostID: segments[2], URL: candidate}, nil
@@ -551,8 +562,13 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 				return cooperationPostLink{Platform: "LinkedIn", URL: candidate}, nil
 			}
 		case strings.HasSuffix(host, "reddit.com"):
-			if slices.Contains(segments, "comments") {
-				return cooperationPostLink{Platform: "Reddit", URL: candidate}, nil
+			for index, segment := range segments {
+				if strings.EqualFold(segment, "comments") && index+1 < len(segments) {
+					postID := strings.TrimPrefix(strings.TrimSpace(segments[index+1]), "t3_")
+					if postID != "" {
+						return cooperationPostLink{Platform: "Reddit", PostID: "t3_" + postID, URL: candidate}, nil
+					}
+				}
 			}
 		case strings.HasSuffix(host, "facebook.com"):
 			return cooperationPostLink{Platform: "Facebook", URL: candidate}, nil
@@ -848,6 +864,26 @@ func cooperationResourceIdentityFromPost(
 		} else if identity.PlatformUserID != "" {
 			identity.PlatformURL = "https://www.youtube.com/channel/" + identity.PlatformUserID
 		}
+	case "小红书":
+		identity.PlatformUserID = firstNonEmpty(
+			anyString(author["user_id"]),
+			anyString(author["userId"]),
+			anyString(author["userid"]),
+			anyString(author["id"]),
+		)
+		identity.PlatformHandle = firstNonEmpty(
+			anyString(author["red_id"]),
+			anyString(author["redId"]),
+			anyString(author["xhs_id"]),
+		)
+		identity.AvatarURL = firstNonEmpty(
+			imageURL(author["avatar"]),
+			imageURL(author["image"]),
+			imageURL(author["images"]),
+		)
+		if identity.PlatformUserID != "" {
+			identity.PlatformURL = "https://www.xiaohongshu.com/user/profile/" + identity.PlatformUserID
+		}
 	}
 	return identity
 }
@@ -890,6 +926,14 @@ func cooperationPostAuthor(raw map[string]any, platform string) map[string]any {
 			) != "" {
 				return candidate
 			}
+		case "小红书":
+			if firstNonEmpty(
+				anyString(candidate["user_id"]),
+				anyString(candidate["userId"]),
+				anyString(candidate["red_id"]),
+			) != "" {
+				return candidate
+			}
 		}
 	}
 	return map[string]any{}
@@ -917,6 +961,12 @@ func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, 
 		return a.fetchInstagramPostByURL(ctx, resourceID, link.URL)
 	case "X":
 		return a.fetchXPostByURL(ctx, resourceID, link.PostID, link.URL)
+	case "小红书":
+		return a.fetchXiaohongshuPostByURL(ctx, resourceID, link.PostID, link.URL)
+	case "LinkedIn":
+		return a.fetchLinkedInPostByURL(ctx, resourceID, link.URL)
+	case "Reddit":
+		return a.fetchRedditPostByID(ctx, resourceID, link.PostID)
 	default:
 		return platformPost{}, fmt.Errorf("平台 %s 暂不支持按单条链接实时抓取", link.Platform)
 	}

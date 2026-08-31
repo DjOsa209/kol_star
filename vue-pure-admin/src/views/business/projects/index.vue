@@ -181,7 +181,14 @@ const productTypeOptions = [
   "AI 工具",
   "游戏"
 ];
-const platformOptions = ["TikTok", "YouTube", "Instagram", "Facebook", "X"];
+const platformOptions = [
+  "小红书",
+  "TikTok",
+  "YouTube",
+  "Instagram",
+  "Facebook",
+  "X"
+];
 const influencerSettingGroups = [
   {
     title: "表现与活跃度",
@@ -1479,11 +1486,16 @@ function parseProjectImportSheet(
 }
 
 async function downloadProjectImportTemplate() {
-  const blob = await downloadProjectExcelImportTemplate();
+  const isEnglish = locale.value === "en";
+  const blob = await downloadProjectExcelImportTemplate(
+    isEnglish ? "en" : "zh-CN"
+  );
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "XMP_Standard_Project_Import.xlsx";
+  link.download = isEnglish
+    ? "XMP_Standard_Project_Import_EN.xlsx"
+    : "XMP_Standard_Project_Import.xlsx";
   link.click();
   URL.revokeObjectURL(url);
 }

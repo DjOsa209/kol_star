@@ -62,7 +62,7 @@ var standardProjectImportScopes = []string{
 	"国家\n市场\n地区\n区域",
 	"系统自动回填：\nKOL：粉丝数、订阅数；\n媒体：月独立访客（UMV）",
 	"系统自动回填：\n头部\n腰部\n尾部",
-	"网站\n播客\n电视\n报刊\nYouTube\nTikTok\nInstagram\nFacebook\nX\nLinkedIn\nReddit",
+	"网站\n播客\n电视\n报刊\n小红书\nYouTube\nTikTok\nInstagram\nFacebook\nX\nLinkedIn\nReddit",
 	"付费合作\n产品置换\n联盟合作\n活动合作\n采访合作",
 	"文章链接\n视频链接\n帖子链接\n内容链接\n发布链接",
 	"生活记录类\n娱乐搞笑类\n兴趣圈层类\n消费种草类\n商业/品牌类\n新闻资讯类\n动画/创意类\n短剧类",
@@ -99,6 +99,82 @@ var standardProjectImportRules = []string{
 	"无需填写。系统按 CPM = Cost / views × 1000 自动计算。",
 }
 
+var standardProjectImportScopesEnglish = []string{
+	"填写范畴",
+	"Media Name\nCreator Name",
+	"Media Website URL\nCreator Account URL",
+	"KOL\nMedia\nArtist",
+	"Technology\nLifestyle\nBusiness\nDesign\nGaming\nPhotography\nSports\nEntertainment\nAutomotive\nFinance\nEducation\nMass Media",
+	"Country\nMarket\nRegion\nArea",
+	"Automatically populated by the system:\nKOL: Followers / Subscribers;\nMedia: Monthly Unique Visitors (UMV)",
+	"Automatically populated by the system:\nTop Tier\nMid Tier\nLong Tail",
+	"Website\nPodcast\nTV\nNewspaper / Magazine\nRedNote\nYouTube\nTikTok\nInstagram\nFacebook\nX\nLinkedIn\nReddit",
+	"Paid Collaboration\nProduct Exchange\nAffiliate Collaboration\nEvent Collaboration\nInterview Collaboration",
+	"Article URL\nVideo URL\nPost URL\nContent URL\nPublication URL",
+	"Lifestyle/Vlog\nEntertainment / Comedy\nNiche Interest/Passion Community\nHaul & Review\nBranded Content\nNews & Current Affairs\nAnimation / Creative\nShort Drama",
+	"For paid collaborations: enter the actual amount paid.\nFor seeding or collaborations with no cost: enter /",
+	"The system automatically populates views, impressions, or readership from contentUrl",
+	"The system automatically populates total engagements (likes, comments, shares, saves) from contentUrl",
+	"Email / WhatsApp / Telegram",
+	"In-house Project Owner",
+	"Project Supplier",
+	"",
+	"",
+}
+
+var standardProjectImportRulesEnglish = []string{
+	"填写规范",
+	"Please enter the name of the partner you are collaborating with.",
+	"1. Enter the corresponding URL for each partner:\n- For media partners, enter the official website link.\n- For KOLs, enter the corresponding platform homepage link.\n2. Use one URL per partner/resource and enter the full HTTPS link.",
+	"Select from preset categories only. Custom input is not allowed.",
+	"Select from preset categories only. Custom input is not allowed.",
+	"Use full standard country names only. No abbreviations.",
+	"Auto-filled. Leave blank. The system fetches the latest data from the partner's homepage.",
+	"Auto-categorized by audienceSize: >1M = Top Tier; 100K–1M = Mid Tier; <100K = Long Tail. Leave blank.",
+	"Select from preset categories only. Custom input is not allowed.",
+	"Select from preset categories only. Custom input is not allowed.",
+	"Use one URL per content item and enter the full HTTPS link.",
+	"Lifestyle/Vlog: Daily Vlog / Travel Vlog / Office Life\nEntertainment / Comedy: Comedy Skit / Prank / Challenge Content\nNiche Interest/Passion Community: Gadget Review / Let's Play / Fashion / Music / Dance\nHaul & Review: Haul / Unboxing / Year-end Favorites\nBranded Content: Brand Story / Brand Event Recap\nNews & Current Affairs: Trending Topics / Social Issues / Tech Frontiers / Local News\nAnimation / Creative: Original Animation / Visual Concept\nShort Drama: Romance / Family / Mystery Drama",
+	"Enter the actual USD amount in digits only. Do not include currency symbols.",
+	"Auto-parsed from contentUrl. Leave blank. Unsupported platforms remain empty and generate a sync alert.",
+	"Auto-parsed from contentUrl. Leave blank. Unsupported platforms remain empty and generate a sync alert.",
+	"Editable field. Free text is allowed.",
+	"Editable field. Free text is allowed.",
+	"Editable field. Free text is allowed.",
+	"Free text — notes on media/KOL collaboration, cooperation level, etc.",
+	"Auto-calculated. CPM = Cost / Views × 1000. Leave blank.",
+}
+
+var standardImportEnglishOptionLabels = map[string]map[string]string{
+	"resourceType": {
+		"KOL": "KOL", "媒体": "Media", "艺术家": "Artist",
+	},
+	"category": {
+		"科技": "Technology", "生活方式": "Lifestyle", "商业": "Business", "设计": "Design",
+		"游戏": "Gaming", "摄影": "Photography", "体育": "Sports", "娱乐": "Entertainment",
+		"汽车": "Automotive", "财经": "Finance", "教育": "Education", "大众媒体": "Mass Media",
+	},
+	"collaboratorTier": {
+		"头部": "Top Tier", "腰部": "Mid Tier", "尾部": "Long Tail",
+	},
+	"platform": {
+		"Website": "Website", "播客": "Podcast", "电视": "TV", "报刊": "Newspaper / Magazine",
+		"小红书":     "RedNote",
+		"YouTube": "YouTube", "TikTok": "TikTok", "Instagram": "Instagram", "Facebook": "Facebook",
+		"X": "X", "LinkedIn": "LinkedIn", "Reddit": "Reddit",
+	},
+	"cooperationType": {
+		"付费合作": "Paid Collaboration", "产品置换": "Product Exchange", "联盟合作": "Affiliate Collaboration",
+		"活动合作": "Event Collaboration", "采访合作": "Interview Collaboration",
+	},
+	"contentType": {
+		"生活记录类": "Lifestyle/Vlog", "娱乐搞笑类": "Entertainment / Comedy",
+		"兴趣圈层类": "Niche Interest/Passion Community", "消费种草类": "Haul & Review",
+		"商业/品牌类": "Branded Content", "新闻资讯类": "News & Current Affairs",
+		"动画/创意类": "Animation / Creative", "短剧类": "Short Drama",
+	},
+}
+
 var excelNumericFields = map[string]bool{
 	"followerNumber":  true,
 	"views":           true,
@@ -111,7 +187,7 @@ var defaultStandardProjectImportOptions = map[string][]string{
 	"resourceType":       {"KOL", "媒体", "艺术家"},
 	"category":           {"科技", "生活方式", "商业", "设计", "游戏", "摄影", "体育", "娱乐", "汽车", "财经", "教育", "大众媒体"},
 	"collaboratorTier":   {"头部", "腰部", "尾部"},
-	"platform":           {"Website", "播客", "电视", "报刊", "YouTube", "TikTok", "Instagram", "Facebook", "X", "LinkedIn", "Reddit"},
+	"platform":           {"Website", "播客", "电视", "报刊", "小红书", "YouTube", "TikTok", "Instagram", "Facebook", "X", "LinkedIn", "Reddit"},
 	"cooperationType":    {"付费合作", "产品置换", "联盟合作", "活动合作", "采访合作"},
 	"contentType":        {"生活记录类", "娱乐搞笑类", "兴趣圈层类", "消费种草类", "商业/品牌类", "新闻资讯类", "动画/创意类", "短剧类"},
 	"projectDivision":    {"总部_公关", "总部_整合营销", "总部_创意", "总部_达人中台", "区域"},
@@ -189,7 +265,8 @@ func (a *app) downloadProjectExcelImportTemplate(w http.ResponseWriter, r *http.
 		writeDBError(w, err)
 		return
 	}
-	book, err := buildStandardProjectImportTemplateWithOptions(options)
+	english := strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.URL.Query().Get("lang"))), "en")
+	book, err := buildStandardProjectImportTemplateWithOptionsAndLanguage(options, english)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, 10006, "标准模板生成失败")
 		return
@@ -201,7 +278,11 @@ func (a *app) downloadProjectExcelImportTemplate(w http.ResponseWriter, r *http.
 		return
 	}
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", `attachment; filename="XMP_Standard_Project_Import.xlsx"`)
+	fileName := "XMP_Standard_Project_Import.xlsx"
+	if english {
+		fileName = "XMP_Standard_Project_Import_EN.xlsx"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buffer.Bytes())
 }
@@ -211,26 +292,41 @@ func buildStandardProjectImportTemplate() (*excelize.File, error) {
 }
 
 func buildStandardProjectImportTemplateWithOptions(options map[string][]string) (*excelize.File, error) {
+	return buildStandardProjectImportTemplateWithOptionsAndLanguage(options, false)
+}
+
+func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string][]string, english bool) (*excelize.File, error) {
 	book := excelize.NewFile()
 	sheet := "标准模板"
+	if english {
+		sheet = "Standard Template"
+	}
 	defaultSheet := book.GetSheetName(0)
 	if err := book.SetSheetName(defaultSheet, sheet); err != nil {
 		return nil, err
 	}
 	headerRow := make([]any, len(standardProjectImportHeaders))
 	labelRow := make([]any, len(standardProjectImportLabels))
-	scopeRow := make([]any, len(standardProjectImportScopes))
-	ruleRow := make([]any, len(standardProjectImportRules))
+	scopes := standardProjectImportScopes
+	rules := standardProjectImportRules
+	templateOptions := options
+	if english {
+		scopes = standardProjectImportScopesEnglish
+		rules = standardProjectImportRulesEnglish
+		templateOptions = localizedStandardImportOptions(options, true)
+	}
+	scopeRow := make([]any, len(scopes))
+	ruleRow := make([]any, len(rules))
 	for index := range standardProjectImportHeaders {
 		headerRow[index] = standardProjectImportHeaders[index]
 		if standardProjectImportLabels[index] != "" {
 			labelRow[index] = standardProjectImportLabels[index]
 		}
-		if standardProjectImportScopes[index] != "" {
-			scopeRow[index] = standardProjectImportScopes[index]
+		if scopes[index] != "" {
+			scopeRow[index] = scopes[index]
 		}
-		if standardProjectImportRules[index] != "" {
-			ruleRow[index] = standardProjectImportRules[index]
+		if rules[index] != "" {
+			ruleRow[index] = rules[index]
 		}
 	}
 	if err := book.SetSheetRow(sheet, "A1", &headerRow); err != nil {
@@ -337,10 +433,14 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 	} {
 		validation := excelize.NewDataValidation(true)
 		validation.Sqref = definition.column + "5:" + definition.column + "2000"
-		if err := validation.SetDropList(options[definition.field]); err != nil {
+		if err := validation.SetDropList(templateOptions[definition.field]); err != nil {
 			return nil, err
 		}
-		validation.SetError(excelize.DataValidationErrorStyleStop, "非标准选项", "请从平台预设选项中选择")
+		if english {
+			validation.SetError(excelize.DataValidationErrorStyleStop, "Non-standard option", "Select a preset option")
+		} else {
+			validation.SetError(excelize.DataValidationErrorStyleStop, "非标准选项", "请从平台预设选项中选择")
+		}
 		if err := book.AddDataValidation(sheet, validation); err != nil {
 			return nil, err
 		}
@@ -400,6 +500,22 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 		return nil, err
 	}
 	return book, nil
+}
+
+func localizedStandardImportOptions(options map[string][]string, english bool) map[string][]string {
+	localized := cloneStandardImportOptions(options)
+	if !english {
+		return localized
+	}
+	for field, values := range localized {
+		labels := standardImportEnglishOptionLabels[field]
+		for index, value := range values {
+			if label := labels[value]; label != "" {
+				localized[field][index] = label
+			}
+		}
+	}
+	return localized
 }
 
 func buildStandardProjectExportWorkbook(options map[string][]string, rows []map[string]any) (*excelize.File, error) {
@@ -627,8 +743,12 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 		} else {
 			row["influencer"] = profileURL
 		}
+		standardOptionFields := []string{"resourceType", "category", "platform", "cooperationType", "contentType"}
+		for _, field := range standardOptionFields {
+			row[field] = canonicalStandardImportOption(options, field, excelCellString(row[field]))
+		}
 		row["platform"] = normalizeImportedPlatform(excelCellString(row["platform"]), excelCellString(row["influencer"]))
-		for _, field := range []string{"resourceType", "category", "platform", "cooperationType", "contentType"} {
+		for _, field := range standardOptionFields {
 			value := excelCellString(row[field])
 			if value != "" && !standardImportOptionAllowed(options, field, value) {
 				errors = append(errors, fmt.Sprintf("%s 必须使用平台预设选项", headerForImportField(field)))
@@ -692,6 +812,25 @@ func standardImportOptionAllowed(options map[string][]string, field, value strin
 		}
 	}
 	return false
+}
+
+func canonicalStandardImportOption(options map[string][]string, field, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, option := range options[field] {
+		if strings.EqualFold(strings.TrimSpace(option), value) {
+			return option
+		}
+	}
+	labels := standardImportEnglishOptionLabels[field]
+	for _, option := range options[field] {
+		if label := labels[option]; label != "" && strings.EqualFold(label, value) {
+			return option
+		}
+	}
+	return value
 }
 
 func headerForImportField(field string) string {
@@ -979,6 +1118,8 @@ func platformFromLink(link string) string {
 		return "TikTok"
 	case strings.Contains(link, "instagram"):
 		return "Instagram"
+	case strings.Contains(link, "xiaohongshu.com") || strings.Contains(link, "xhslink.com") || strings.Contains(link, "xhslink.cn"):
+		return "小红书"
 	case strings.Contains(link, "x.com/") || strings.Contains(link, "twitter.com/"):
 		return "X"
 	case strings.Contains(link, "facebook.com/") || strings.Contains(link, "fb.com/"):
@@ -1001,6 +1142,8 @@ func normalizeImportedPlatform(value, profileURL string) string {
 		declared = "TikTok"
 	case "instagram", "ins":
 		declared = "Instagram"
+	case "小红书", "xiaohongshu", "xhs", "rednote", "red note":
+		declared = "小红书"
 	case "facebook", "fb":
 		declared = "Facebook"
 	case "twitter", "x":

@@ -208,6 +208,59 @@ func (a *app) syncFacebookResource(context.Context, int) (map[string]any, error)
 	return nil, fmt.Errorf("TikHub 当前公开接口未提供 Facebook 账号及帖子数据，暂无法通过 TikHub 同步")
 }
 
+func (a *app) fetchLinkedInPostByURL(ctx context.Context, resourceID int, postURL string) (platformPost, error) {
+	apiKey := strings.TrimSpace(tikHubAPIKey(a.effectivePlatformAPIConfig(ctx)))
+	if apiKey == "" {
+		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
+	}
+	data, err := tikhubGET(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
+		"/linkedin/web_v2/get_post_detail", url.Values{"url": []string{postURL}})
+	if err != nil {
+		return platformPost{}, err
+	}
+	posts := normalizeTikHubLinkedInPosts(data)
+	if len(posts) == 0 {
+		return platformPost{}, fmt.Errorf("TikHub 未返回 LinkedIn 帖子数据")
+	}
+	post := posts[0]
+	if post.PostURL == "" {
+		post.PostURL = postURL
+	}
+	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "LinkedIn", post); err != nil {
+		return platformPost{}, err
+	}
+	return post, nil
+}
+
+func (a *app) fetchRedditPostByID(ctx context.Context, resourceID int, postID string) (platformPost, error) {
+	apiKey := strings.TrimSpace(tikHubAPIKey(a.effectivePlatformAPIConfig(ctx)))
+	if apiKey == "" {
+		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
+	}
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return platformPost{}, fmt.Errorf("Reddit 链接中缺少帖子 ID")
+	}
+	if !strings.HasPrefix(postID, "t3_") {
+		postID = "t3_" + postID
+	}
+	params := url.Values{"post_id": []string{postID}, "need_format": []string{"true"}}
+	data, err := tikhubGET(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
+		"/reddit/app/fetch_post_details", params)
+	if err != nil {
+		return platformPost{}, err
+	}
+	posts := normalizeTikHubRedditPosts(data)
+	if len(posts) == 0 {
+		return platformPost{}, fmt.Errorf("TikHub 未返回 Reddit 帖子数据")
+	}
+	post := posts[0]
+	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "Reddit", post); err != nil {
+		return platformPost{}, err
+	}
+	return post, nil
+}
+
 func (a *app) extendedSocialResource(ctx context.Context, id int) (syncResourceRow, error) {
 	var resource syncResourceRow
 	err := a.DB().QueryRowContext(ctx,

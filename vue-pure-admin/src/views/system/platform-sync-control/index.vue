@@ -13,6 +13,7 @@ const syncing = ref(false);
 const syncDialogVisible = ref(false);
 const syncScope = ref<"all" | "selected">("all");
 const selectedSyncPlatforms = ref<string[]>([
+  "小红书",
   "YouTube",
   "Instagram",
   "TikTok",
@@ -22,6 +23,7 @@ const selectedSyncPlatforms = ref<string[]>([
   "Website"
 ]);
 const syncPlatformOptions = [
+  "小红书",
   "YouTube",
   "Instagram",
   "TikTok",
@@ -373,7 +375,7 @@ onUnmounted(stopPolling);
           <el-col :xs="24" :md="12">
             <el-form-item :label="fieldLabel('TikHub 接入说明')">
               <el-input
-                model-value="TikTok、Instagram、X、LinkedIn 与 Reddit 抓取共用该 Key"
+                model-value="小红书、TikTok、Instagram、X、LinkedIn 与 Reddit 抓取共用该 Key"
                 disabled
               />
             </el-form-item>

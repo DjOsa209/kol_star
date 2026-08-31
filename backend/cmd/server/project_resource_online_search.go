@@ -95,7 +95,7 @@ func (a *app) searchOnlineProjectResource(w http.ResponseWriter, r *http.Request
 func normalizeOnlineProjectResourceSeed(platformValue, queryValue, resourceTypeValue string) (onlineProjectResourceSeed, error) {
 	platform := platformDisplayName(platformValue)
 	if platform == "" {
-		return onlineProjectResourceSeed{}, fmt.Errorf("请选择 Instagram、TikTok、YouTube、X、Facebook、LinkedIn、Reddit 或 Website")
+		return onlineProjectResourceSeed{}, fmt.Errorf("请选择小红书、Instagram、TikTok、YouTube、X、Facebook、LinkedIn、Reddit 或 Website")
 	}
 	query := strings.TrimSpace(queryValue)
 	if query == "" {
@@ -130,6 +130,14 @@ func normalizeOnlineProjectResourceSeed(platformValue, queryValue, resourceTypeV
 		if username != "" {
 			seed.PlatformURL = "https://www.tiktok.com/@" + username
 		}
+	case "小红书":
+		userID, profileURL := xiaohongshuUserIdentifier(query)
+		if userID == "" && profileURL == "" {
+			return onlineProjectResourceSeed{}, fmt.Errorf("请输入有效的小红书用户 ID 或主页/分享链接")
+		}
+		seed.Name = firstNonEmpty(userID, "小红书账号")
+		seed.PlatformUserID = userID
+		seed.PlatformURL = profileURL
 	case "YouTube":
 		seed.Name = strings.TrimSpace(strings.TrimPrefix(query, "@"))
 		if paramName, identifier, err := youtubeChannelIdentifier(query, query); err == nil {

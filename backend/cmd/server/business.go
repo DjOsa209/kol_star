@@ -1678,7 +1678,7 @@ func (a *app) fetchTikTokPosts(ctx context.Context, client *http.Client, apiKey 
 	params := url.Values{}
 	params.Set("secUid", secUID)
 	params.Set("cursor", "0")
-	params.Set("count", "20")
+	params.Set("count", "15")
 	params.Set("coverFormat", "2")
 	params.Set("post_item_list_request_type", "0")
 	data, err := tikhubGET(ctx, client, apiKey, "/tiktok/web/fetch_user_post", params)

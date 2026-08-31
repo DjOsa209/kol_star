@@ -24,6 +24,10 @@ func TestParseCooperationPostLink(t *testing.T) {
 		{name: "youtube shorts", value: "https://youtube.com/shorts/51dNGqLoM00", platform: "YouTube", postID: "51dNGqLoM00"},
 		{name: "tiktok", value: "https://www.tiktok.com/@creator/video/7350810998023949599", platform: "TikTok", postID: "7350810998023949599"},
 		{name: "instagram", value: "https://www.instagram.com/reel/DPwhVB-jo9k/", platform: "Instagram", postID: "DPwhVB-jo9k"},
+		{name: "xiaohongshu", value: "https://www.xiaohongshu.com/explore/68a123456789abcdef012345", platform: "小红书", postID: "68a123456789abcdef012345"},
+		{name: "xiaohongshu short link", value: "https://xhslink.com/m/3ZSCJZAMz0a", platform: "小红书"},
+		{name: "linkedin post", value: "https://www.linkedin.com/posts/example_activity-123", platform: "LinkedIn"},
+		{name: "reddit post", value: "https://www.reddit.com/r/golang/comments/abc123/example/", platform: "Reddit", postID: "t3_abc123"},
 		{name: "finds url in text", value: "发布链接：https://www.instagram.com/p/DPwhVB-jo9k/ 备注", platform: "Instagram", postID: "DPwhVB-jo9k"},
 	}
 	for _, test := range tests {
