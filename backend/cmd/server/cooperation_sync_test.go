@@ -243,6 +243,23 @@ func TestPostIdentityCannotOverwriteDifferentResourceAccount(t *testing.T) {
 	}
 }
 
+func TestCooperationPostSyncResultIncludesCurrentMetrics(t *testing.T) {
+	result := cooperationPostSyncResult{}
+	applyCooperationPostMetricsToResult(&result, platformPost{
+		ViewCount:    0,
+		LikeCount:    239,
+		CommentCount: 5,
+		ShareCount:   31,
+		SaveCount:    97,
+	})
+	if result.LikeCount != 239 || result.CommentCount != 5 || result.ShareCount != 31 || result.SaveCount != 97 {
+		t.Fatalf("unexpected metric fields: %#v", result)
+	}
+	if result.EngagementCount != 372 {
+		t.Fatalf("engagement count = %d, want 372", result.EngagementCount)
+	}
+}
+
 func TestPopulateCooperationPostSyncResultReturnsFetchedCoverFields(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

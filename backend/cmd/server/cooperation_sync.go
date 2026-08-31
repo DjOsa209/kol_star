@@ -32,6 +32,12 @@ type cooperationPostSyncResult struct {
 	ContentCoverLocalURL    string `json:"contentCoverLocalUrl"`
 	ContentCoverRemoteURL   string `json:"contentCoverRemoteUrl"`
 	PreviousFieldsCleared   bool   `json:"previousFieldsCleared"`
+	ViewCount               int64  `json:"viewCount"`
+	LikeCount               int64  `json:"likeCount"`
+	CommentCount            int64  `json:"commentCount"`
+	ShareCount              int64  `json:"shareCount"`
+	SaveCount               int64  `json:"saveCount"`
+	EngagementCount         int64  `json:"engagementCount"`
 	Message                 string `json:"message,omitempty"`
 	PreviewWarning          string `json:"previewWarning,omitempty"`
 }
@@ -105,6 +111,7 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	} else if err := a.applyPlatformPostMetricsToCooperation(ctx, cooperationID, post); err != nil {
 		return cooperationPostSyncResult{}, err
 	}
+	applyCooperationPostMetricsToResult(&result, post)
 	if projectContentPlatformUsesPageScreenshot(link.Platform) {
 		localCoverURL, warning := captureWebsiteScreenshot(ctx, resourceID, cooperationID, link.URL)
 		if warning != "" {
@@ -136,6 +143,18 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	return a.finishCooperationPostSyncResult(
 		ctx, cooperationID, resourceID, allowAPI, result,
 	)
+}
+
+func applyCooperationPostMetricsToResult(result *cooperationPostSyncResult, post platformPost) {
+	if result == nil {
+		return
+	}
+	result.ViewCount = post.ViewCount
+	result.LikeCount = post.LikeCount
+	result.CommentCount = post.CommentCount
+	result.ShareCount = post.ShareCount
+	result.SaveCount = post.SaveCount
+	result.EngagementCount = post.LikeCount + post.CommentCount + post.ShareCount + post.SaveCount
 }
 
 func (a *app) finishCooperationPostSyncResult(

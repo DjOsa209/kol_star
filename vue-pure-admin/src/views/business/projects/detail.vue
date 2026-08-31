@@ -962,6 +962,42 @@ function clearContentSyncFields(post: any, cooperation: any) {
   });
 }
 
+function applyContentSyncMetrics(post: any, cooperation: any, result: any) {
+  const cooperationId = Number(cooperation?.id || 0);
+  const likeCount = numberValue(result?.likeCount);
+  const commentCount = numberValue(result?.commentCount);
+  const shareCount = numberValue(result?.shareCount);
+  const saveCount = numberValue(result?.saveCount);
+  const cooperationMetrics = {
+    views: numberValue(result?.viewCount),
+    engagementCount: likeCount + shareCount + saveCount,
+    commentsCount: commentCount
+  };
+  cooperations.value
+    .filter(item => Number(item.id) === cooperationId)
+    .forEach(item => Object.assign(item, cooperationMetrics));
+
+  const syncedPostId = String(result?.postId || "").trim();
+  const postURL = normalizedContentUrl(post?.postUrl);
+  contentPosts.value
+    .filter(item => {
+      if (Number(item.resourceId) !== Number(post?.resourceId)) return false;
+      if (syncedPostId && String(item.platformPostId || "") === syncedPostId)
+        return true;
+      return postURL && normalizedContentUrl(item.postUrl) === postURL;
+    })
+    .forEach(item => {
+      Object.assign(item, {
+        viewCount: numberValue(result?.viewCount),
+        engagementCount: 0,
+        likeCount,
+        commentCount,
+        shareCount,
+        saveCount
+      });
+    });
+}
+
 async function syncContentFromCard(post: any) {
   if (!project.value) return;
   const cooperation = contentCooperation(post);
@@ -993,6 +1029,7 @@ async function syncContentFromCard(post: any) {
       return;
     }
     await loadDetail();
+    applyContentSyncMetrics(post, cooperation, res.data);
     if (res.data?.previewWarning) {
       ElMessage.warning(res.data.previewWarning);
     } else {
