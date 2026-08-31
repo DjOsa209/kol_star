@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, shallowRef, onMounted } from "vue";
+import {
+  computed,
+  nextTick,
+  reactive,
+  ref,
+  shallowRef,
+  onMounted,
+  watch
+} from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -84,6 +92,8 @@ const syncingCooperationIds = reactive<Record<number, boolean>>({});
 const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
+const projectCurrentPage = ref(1);
+const projectPageSize = ref(10);
 const projectStatusOptions = ["未开始", "进行中", "已结束"] as const;
 
 const fallbackProjectDivisionOptions = [
@@ -678,6 +688,29 @@ const visibleProjects = computed(() => {
       .some(value => String(value).toLowerCase().includes(keyword));
   });
 });
+
+const pagedProjects = computed(() => {
+  const start = (projectCurrentPage.value - 1) * projectPageSize.value;
+  return visibleProjects.value.slice(start, start + projectPageSize.value);
+});
+
+watch(projectSearch, () => {
+  projectCurrentPage.value = 1;
+});
+
+watch(projectPageSize, () => {
+  projectCurrentPage.value = 1;
+});
+
+watch(
+  () => visibleProjects.value.length,
+  total => {
+    const lastPage = Math.max(1, Math.ceil(total / projectPageSize.value));
+    if (projectCurrentPage.value > lastPage) {
+      projectCurrentPage.value = lastPage;
+    }
+  }
+);
 
 type ProjectMarketItem = {
   name: string;
@@ -2246,10 +2279,10 @@ onMounted(() => {
               ><IconifyIconOnline icon="ri:search-line"
             /></template>
           </el-input>
-          <span>{{ visibleProjects.length }} 个项目</span>
+          <span>共 {{ visibleProjects.length }} 个项目</span>
         </div>
         <el-table
-          :data="visibleProjects"
+          :data="pagedProjects"
           class="projects-table"
           @row-click="row => openCampaignDetail(row.id)"
           @selection-change="rows => (selectedProjectRows = rows)"
@@ -2422,6 +2455,21 @@ onMounted(() => {
           v-if="!visibleProjects.length"
           :description="fieldLabel('没有匹配的项目')"
         />
+        <div v-else class="project-pagination-footer">
+          <span>
+            第 {{ projectCurrentPage }} / {{
+              Math.ceil(visibleProjects.length / projectPageSize)
+            }} 页
+          </span>
+          <el-pagination
+            v-model:current-page="projectCurrentPage"
+            v-model:page-size="projectPageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="visibleProjects.length"
+            layout="sizes, prev, pager, next, jumper"
+            background
+          />
+        </div>
       </section>
 
       <el-dialog
@@ -6565,6 +6613,14 @@ onMounted(() => {
   width: 100%;
   border-top: 1px solid #e5e6e9;
 }
+.project-pagination-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 0 4px;
+  color: #85878d;
+  font-size: 13px;
+}
 .project-name-cell {
   display: grid;
   min-width: 0;
@@ -6714,6 +6770,11 @@ onMounted(() => {
   }
   .project-search {
     width: 100%;
+  }
+  .project-pagination-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
   }
   .project-import-intro {
     align-items: flex-start;
