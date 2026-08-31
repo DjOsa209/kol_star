@@ -357,7 +357,13 @@ function contentTitleFromUrl(value: unknown) {
 
 const projectContentPosts = computed(() => {
   const seenLinks = new Set<string>();
-  const posts = contentPosts.value
+  const posts = [...contentPosts.value]
+    .sort((left, right) => {
+      const leftSynced = String(left.platformPostId || "").trim() ? 1 : 0;
+      const rightSynced = String(right.platformPostId || "").trim() ? 1 : 0;
+      if (leftSynced !== rightSynced) return rightSynced - leftSynced;
+      return numberValue(right.id) - numberValue(left.id);
+    })
     .filter(post => {
       const link = String(post.postUrl || "")
         .trim()

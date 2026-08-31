@@ -855,14 +855,35 @@ func (a *app) applyPlatformPostMetricsToCooperation(ctx context.Context, coopera
 	if post.PublishedAt != nil {
 		releaseDate = post.PublishedAt.Format("2006-01-02")
 	}
+	expectedEngagement := post.LikeCount + post.ShareCount + post.SaveCount
 	_, err := a.DB().ExecContext(ctx,
 		`update biz_cooperations set
 		  views = ?, engagement_count = ?, comments_count = ?,
 		  release_date = coalesce(?, release_date)
 		 where id = ?`,
-		post.ViewCount, post.LikeCount+post.ShareCount+post.SaveCount, post.CommentCount, releaseDate, cooperationID,
+		post.ViewCount, expectedEngagement, post.CommentCount, releaseDate, cooperationID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	var storedViews int64
+	var storedEngagement int64
+	var storedComments int64
+	if err := a.DB().QueryRowContext(ctx,
+		`select views, engagement_count, comments_count
+		   from biz_cooperations where id = ? limit 1`,
+		cooperationID,
+	).Scan(&storedViews, &storedEngagement, &storedComments); err != nil {
+		return fmt.Errorf("合作作品指标写入后校验失败：%w", err)
+	}
+	if storedViews != post.ViewCount || storedEngagement != expectedEngagement || storedComments != post.CommentCount {
+		return fmt.Errorf(
+			"合作作品指标写入后不一致：期望播放=%d、互动=%d、评论=%d，实际播放=%d、互动=%d、评论=%d",
+			post.ViewCount, expectedEngagement, post.CommentCount,
+			storedViews, storedEngagement, storedComments,
+		)
+	}
+	return nil
 }
 
 func cooperationResourceIdentityFromPost(

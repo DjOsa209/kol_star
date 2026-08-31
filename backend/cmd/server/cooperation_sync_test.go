@@ -93,6 +93,10 @@ func TestSyncCooperationPostUsesFinalLinkAndStoredCover(t *testing.T) {
 	mock.ExpectExec("update biz_cooperations set").
 		WithArgs(int64(1000), int64(130), int64(12), nil, 99).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select views, engagement_count, comments_count").
+		WithArgs(99).
+		WillReturnRows(sqlmock.NewRows([]string{"views", "engagement_count", "comments_count"}).
+			AddRow(1000, 130, 12))
 
 	app := newApp(db, Config{})
 	result, err := app.syncCooperationPost(context.Background(), 99, false)
@@ -140,6 +144,10 @@ func TestApplyPlatformPostToCooperationPrefersLocalInstagramMedia(t *testing.T) 
 	mock.ExpectExec("update biz_cooperations set").
 		WithArgs(int64(100), int64(15), int64(2), nil, 99).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select views, engagement_count, comments_count").
+		WithArgs(99).
+		WillReturnRows(sqlmock.NewRows([]string{"views", "engagement_count", "comments_count"}).
+			AddRow(100, 15, 2))
 	mock.ExpectQuery("select coalesce\\(platform, ''\\), coalesce\\(platform_user_id, ''\\)").
 		WithArgs(7).
 		WillReturnRows(sqlmock.NewRows([]string{"platform", "platform_user_id"}).
@@ -257,6 +265,31 @@ func TestCooperationPostSyncResultIncludesCurrentMetrics(t *testing.T) {
 	}
 	if result.EngagementCount != 372 {
 		t.Fatalf("engagement count = %d, want 372", result.EngagementCount)
+	}
+}
+
+func TestApplyPlatformPostMetricsRejectsMissingCooperation(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectExec("update biz_cooperations set").
+		WithArgs(int64(0), int64(367), int64(5), nil, 542).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("select views, engagement_count, comments_count").
+		WithArgs(542).
+		WillReturnRows(sqlmock.NewRows([]string{"views", "engagement_count", "comments_count"}))
+	app := newApp(db, Config{})
+	err = app.applyPlatformPostMetricsToCooperation(context.Background(), 542, platformPost{
+		LikeCount: 239, CommentCount: 5, ShareCount: 31, SaveCount: 97,
+	})
+	if err == nil {
+		t.Fatal("expected zero-row metric update to fail instead of reporting sync success")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
