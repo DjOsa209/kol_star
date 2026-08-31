@@ -1,5 +1,5 @@
 import dayjs from "dayjs";
-import { readdir, stat } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { sum, formatBytes } from "@pureadmin/utils";
@@ -80,34 +80,27 @@ const wrapperEnv = (envConf: Recordable): ViteEnv => {
   return ret;
 };
 
-const fileListTotal: number[] = [];
+async function directorySize(folder: string): Promise<number> {
+  const entries = await readdir(folder, { withFileTypes: true });
+  const sizes = await Promise.all(
+    entries.map(async entry => {
+      const entryPath = resolve(folder, entry.name);
+      if (entry.isDirectory()) return directorySize(entryPath);
+      if (entry.isFile()) return (await stat(entryPath)).size;
+      return 0;
+    })
+  );
+  return sum(sizes);
+}
 
 /** 获取指定文件夹中所有文件的总大小 */
-const getPackageSize = options => {
-  const { folder = "dist", callback, format = true } = options;
-  readdir(folder, (err, files: string[]) => {
-    if (err) throw err;
-    let count = 0;
-    const checkEnd = () => {
-      ++count == files.length &&
-        callback(format ? formatBytes(sum(fileListTotal)) : sum(fileListTotal));
-    };
-    files.forEach((item: string) => {
-      stat(`${folder}/${item}`, async (err, stats) => {
-        if (err) throw err;
-        if (stats.isFile()) {
-          fileListTotal.push(stats.size);
-          checkEnd();
-        } else if (stats.isDirectory()) {
-          getPackageSize({
-            folder: `${folder}/${item}/`,
-            callback: checkEnd
-          });
-        }
-      });
-    });
-    files.length === 0 && callback(0);
-  });
+const getPackageSize = async (options: {
+  folder?: string;
+  format?: boolean;
+}): Promise<string | number> => {
+  const { folder = "dist", format = true } = options;
+  const total = await directorySize(folder);
+  return format ? formatBytes(total) : total;
 };
 
 export { root, pathResolve, alias, __APP_INFO__, wrapperEnv, getPackageSize };

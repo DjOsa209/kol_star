@@ -4,6 +4,7 @@ import { getPackageSize } from "./utils";
 import dayjs, { type Dayjs } from "dayjs";
 import duration from "dayjs/plugin/duration";
 import boxen, { type Options as BoxenOptions } from "boxen";
+import { resolve } from "node:path";
 dayjs.extend(duration);
 
 const welcomeMessage = gradient(["cyan", "magenta"]).multiline(
@@ -25,7 +26,10 @@ export function viteBuildInfo(): Plugin {
     name: "vite:buildInfo",
     configResolved(resolvedConfig) {
       config = resolvedConfig;
-      outDir = resolvedConfig.build?.outDir ?? "dist";
+      outDir = resolve(
+        resolvedConfig.root,
+        resolvedConfig.build?.outDir ?? "dist"
+      );
     },
     buildStart() {
       console.log(boxen(welcomeMessage, boxenOptions));
@@ -33,24 +37,29 @@ export function viteBuildInfo(): Plugin {
         startTime = dayjs(new Date());
       }
     },
-    closeBundle() {
+    async writeBundle() {
       if (config.command === "build") {
         endTime = dayjs(new Date());
-        getPackageSize({
-          folder: outDir,
-          callback: (size: string) => {
-            console.log(
-              boxen(
-                gradient(["cyan", "magenta"]).multiline(
-                  `🎉 恭喜打包完成（总用时${dayjs
-                    .duration(endTime.diff(startTime))
-                    .format("mm分ss秒")}，打包后的大小为${size}）`
-                ),
-                boxenOptions
-              )
-            );
+        let size: string | number;
+        try {
+          size = await getPackageSize({ folder: outDir });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+            console.warn(`跳过构建产物统计：未找到输出目录 ${outDir}`);
+            return;
           }
-        });
+          throw error;
+        }
+        console.log(
+          boxen(
+            gradient(["cyan", "magenta"]).multiline(
+              `🎉 恭喜打包完成（总用时${dayjs
+                .duration(endTime.diff(startTime))
+                .format("mm分ss秒")}，打包后的大小为${size}）`
+            ),
+            boxenOptions
+          )
+        );
       }
     }
   };
