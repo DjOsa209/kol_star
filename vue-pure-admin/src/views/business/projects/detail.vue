@@ -2459,7 +2459,7 @@ onBeforeUnmount(() => {
 
             <div class="content-detail-summary">
               <div class="content-detail-title-row">
-                <div>
+                <div class="content-detail-labels">
                   <span class="content-detail-platform">
                     <PlatformIconBadge :platform="contentDetailView.platform" />
                     {{ contentDetailView.platform || "合作内容" }}
@@ -6160,18 +6160,27 @@ onBeforeUnmount(() => {
 .content-detail-title-row {
   display: flex;
   gap: 24px;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
 }
-.content-detail-title-row > div > span {
-  color: #e34b45;
-  font-size: 12px;
-  font-weight: 700;
+.content-detail-labels {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
 }
 .content-detail-platform {
   display: inline-flex;
   gap: 7px;
   align-items: center;
+  min-height: 26px;
+  color: #e34b45;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
 }
 .content-detail-platform :deep(.platform-icon-badge) {
   width: 22px;
@@ -6182,30 +6191,38 @@ onBeforeUnmount(() => {
   height: 15px;
 }
 .content-detail-cooperation-types {
-  margin-top: 10px;
+  margin: 0;
+}
+.content-detail-cooperation-types :deep(.el-tag),
+.content-detail-type-tag {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+  line-height: 24px;
 }
 .content-detail-type-tag {
-  margin-top: 10px;
-  margin-left: 6px;
-  vertical-align: middle;
+  margin: 0;
 }
 .content-detail-author {
   display: flex;
-  gap: 12px;
+  gap: 14px;
   align-items: center;
-  margin-top: 20px;
+  margin-top: 22px;
 }
 .content-detail-author > div {
   display: grid;
-  gap: 4px;
+  gap: 5px;
+  min-width: 0;
 }
 .content-detail-author strong {
   color: #2e333a;
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 1.35;
 }
 .content-detail-author span {
   color: #858b94;
   font-size: 12px;
+  line-height: 1.5;
 }
 .content-detail-metrics {
   display: grid;
@@ -6386,7 +6403,11 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
   .content-detail-title-row {
+    align-items: flex-start;
     flex-direction: column;
+  }
+  .content-detail-labels {
+    width: 100%;
   }
   .content-detail-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
