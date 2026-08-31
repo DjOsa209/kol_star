@@ -198,3 +198,30 @@ func TestFetchXiaohongshuPostDetailFallsBackToShareText(t *testing.T) {
 		t.Fatalf("unexpected fallback post: %#v", post)
 	}
 }
+
+func TestResolveXiaohongshuShortLinkExtractsNoteID(t *testing.T) {
+	const noteID = "69fb38ae000000002003be8d"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/o/") {
+			http.Redirect(w, r, "/discovery/item/"+noteID+"?xsec_token=test", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("note"))
+	}))
+	defer server.Close()
+
+	gotID, gotURL := resolveXiaohongshuPostReference(
+		context.Background(), server.Client(), "", server.URL+"/o/7eJIkHmwAQo",
+	)
+	if gotID != noteID || !strings.Contains(gotURL, "/discovery/item/"+noteID) {
+		t.Fatalf("resolved = (%q, %q), want note id %q", gotID, gotURL, noteID)
+	}
+}
+
+func TestCanonicalXiaohongshuShareURLUpgradesHTTP(t *testing.T) {
+	const input = "http://xhslink.com/o/7eJIkHmwAQo"
+	const want = "https://xhslink.com/o/7eJIkHmwAQo"
+	if got := canonicalXiaohongshuShareURL(input); got != want {
+		t.Fatalf("canonicalXiaohongshuShareURL() = %q, want %q", got, want)
+	}
+}

@@ -363,24 +363,88 @@ func (a *app) fetchXiaohongshuPostByURL(ctx context.Context, resourceID int, pos
 	if apiKey == "" {
 		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
 	}
+	originalPostURL := canonicalXiaohongshuShareURL(postURL)
+	client := &http.Client{Timeout: 45 * time.Second}
+	resolvedPostID, resolvedPostURL := resolveXiaohongshuPostReference(
+		ctx, client, postID, originalPostURL,
+	)
+	postID = resolvedPostID
+	apiPostURL := firstNonEmpty(resolvedPostURL, originalPostURL)
 	params := url.Values{}
 	if strings.TrimSpace(postID) != "" {
 		params.Set("note_id", strings.TrimSpace(postID))
 	} else {
-		params.Set("share_text", strings.TrimSpace(postURL))
+		params.Set("share_text", apiPostURL)
 	}
-	client := &http.Client{Timeout: 45 * time.Second}
-	post, err := fetchXiaohongshuPostDetail(ctx, client, apiKey, params, postID, postURL)
+	post, err := fetchXiaohongshuPostDetail(ctx, client, apiKey, params, postID, apiPostURL)
 	if err != nil {
 		return platformPost{}, err
 	}
 	if post.PostURL == "" || strings.TrimSpace(postID) == "" {
-		post.PostURL = postURL
+		post.PostURL = originalPostURL
 	}
 	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "小红书", post); err != nil {
 		return platformPost{}, err
 	}
 	return post, nil
+}
+
+func canonicalXiaohongshuShareURL(value string) string {
+	trimmed := strings.TrimSpace(value)
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	host := strings.ToLower(strings.TrimPrefix(parsed.Hostname(), "www."))
+	if (host == "xhslink.com" || host == "xhslink.cn") && parsed.Scheme == "http" {
+		parsed.Scheme = "https"
+		return parsed.String()
+	}
+	return trimmed
+}
+
+func resolveXiaohongshuPostReference(
+	ctx context.Context,
+	client *http.Client,
+	postID string,
+	postURL string,
+) (string, string) {
+	canonicalURL := canonicalXiaohongshuShareURL(postURL)
+	if strings.TrimSpace(postID) != "" {
+		return strings.TrimSpace(postID), canonicalURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, canonicalURL, nil)
+	if err != nil {
+		return "", canonicalURL
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", canonicalURL
+	}
+	defer resp.Body.Close()
+	resolvedURL := resp.Request.URL.String()
+	if resolvedID := xiaohongshuPostIDFromURL(resolvedURL); resolvedID != "" {
+		return resolvedID, resolvedURL
+	}
+	return "", canonicalURL
+}
+
+func xiaohongshuPostIDFromURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for index, segment := range segments {
+		switch strings.ToLower(segment) {
+		case "explore", "item":
+			if index+1 < len(segments) {
+				return strings.TrimSpace(segments[index+1])
+			}
+		}
+	}
+	return ""
 }
 
 func fetchXiaohongshuPostDetail(
