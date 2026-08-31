@@ -152,6 +152,38 @@ func TestNormalizeTikHubXiaohongshuVideoImagesListCover(t *testing.T) {
 	}
 }
 
+func TestNormalizeTikHubXiaohongshuCurrentEngagementFields(t *testing.T) {
+	data := map[string]any{
+		"data": map[string]any{
+			"data": map[string]any{
+				"id":              "69fb38ae000000002003be8d",
+				"title":           "Video note",
+				"type":            "video",
+				"liked_count":     float64(239),
+				"comments_count":  float64(5),
+				"shared_count":    float64(31),
+				"collected_count": float64(97),
+			},
+		},
+	}
+	posts := normalizeTikHubXiaohongshuPosts(data)
+	if len(posts) != 1 {
+		t.Fatalf("posts = %#v", posts)
+	}
+	post := posts[0]
+	if post.LikeCount != 239 || post.CommentCount != 5 || post.ShareCount != 31 || post.SaveCount != 97 {
+		t.Fatalf("unexpected engagement fields: %#v", post)
+	}
+}
+
+func TestXiaohongshuSinglePostKeepsImportedShareLink(t *testing.T) {
+	const imported = "http://xhslink.com/o/7eJIkHmwAQo"
+	const resolved = "https://www.xiaohongshu.com/discovery/item/69fb38ae000000002003be8d"
+	if got := xiaohongshuStoredPostURL(imported, resolved); got != imported {
+		t.Fatalf("stored post URL = %q, want imported project link %q", got, imported)
+	}
+}
+
 func TestXiaohongshuNextCursorAndServiceError(t *testing.T) {
 	data := map[string]any{
 		"data": map[string]any{

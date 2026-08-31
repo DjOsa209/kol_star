@@ -364,13 +364,14 @@ func (a *app) fetchXiaohongshuPostByURL(ctx context.Context, resourceID int, pos
 	if apiKey == "" {
 		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
 	}
-	originalPostURL := canonicalXiaohongshuShareURL(postURL)
+	importedPostURL := strings.TrimSpace(postURL)
+	requestPostURL := canonicalXiaohongshuShareURL(importedPostURL)
 	client := &http.Client{Timeout: 45 * time.Second}
 	resolvedPostID, resolvedPostURL := resolveXiaohongshuPostReference(
-		ctx, client, postID, originalPostURL,
+		ctx, client, postID, requestPostURL,
 	)
 	postID = resolvedPostID
-	apiPostURL := firstNonEmpty(resolvedPostURL, originalPostURL)
+	apiPostURL := firstNonEmpty(resolvedPostURL, requestPostURL)
 	params := url.Values{}
 	if strings.TrimSpace(postID) != "" {
 		params.Set("note_id", strings.TrimSpace(postID))
@@ -381,13 +382,18 @@ func (a *app) fetchXiaohongshuPostByURL(ctx context.Context, resourceID int, pos
 	if err != nil {
 		return platformPost{}, err
 	}
-	if post.PostURL == "" || strings.TrimSpace(postID) == "" {
-		post.PostURL = originalPostURL
-	}
+	post.PostURL = xiaohongshuStoredPostURL(importedPostURL, post.PostURL)
 	if err := a.upsertSingleContentPlatformPost(ctx, resourceID, "小红书", post); err != nil {
 		return platformPost{}, err
 	}
 	return post, nil
+}
+
+func xiaohongshuStoredPostURL(importedURL string, apiURL string) string {
+	return firstNonEmpty(
+		strings.TrimSpace(importedURL),
+		strings.TrimSpace(apiURL),
+	)
 }
 
 func canonicalXiaohongshuShareURL(value string) string {
