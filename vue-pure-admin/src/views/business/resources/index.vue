@@ -2818,7 +2818,7 @@ onUnmounted(() => {
               >
                 <el-option
                   v-for="platform in [
-                    "小红书",
+                    '小红书',
                     'Website',
                     'X',
                     'YouTube',
