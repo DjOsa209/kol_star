@@ -278,6 +278,7 @@ func normalizeTikHubXiaohongshuPosts(data map[string]any) []platformPost {
 			CoverURL: firstNonEmpty(
 				xiaohongshuImageURL(candidate["cover"]), xiaohongshuImageURL(candidate["cover_url"]),
 				xiaohongshuImageURL(candidate["image_list"]), xiaohongshuImageURL(candidate["imageList"]),
+				xiaohongshuImageURL(candidate["images_list"]),
 				xiaohongshuImageURL(candidate["images"]), xiaohongshuImageURL(candidate["image"]),
 				firstRemoteImageInValue(candidate),
 			),

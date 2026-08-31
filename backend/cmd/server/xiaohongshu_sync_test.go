@@ -133,6 +133,25 @@ func TestNormalizeTikHubXiaohongshuNestedNoteCard(t *testing.T) {
 	}
 }
 
+func TestNormalizeTikHubXiaohongshuVideoImagesListCover(t *testing.T) {
+	data := map[string]any{
+		"data": map[string]any{
+			"data": map[string]any{
+				"id":    "69fb38ae000000002003be8d",
+				"title": "Video note",
+				"type":  "video",
+				"images_list": []any{
+					map[string]any{"url": "https://example.com/video-cover.jpg"},
+				},
+			},
+		},
+	}
+	posts := normalizeTikHubXiaohongshuPosts(data)
+	if len(posts) != 1 || posts[0].CoverURL != "https://example.com/video-cover.jpg" {
+		t.Fatalf("posts = %#v", posts)
+	}
+}
+
 func TestXiaohongshuNextCursorAndServiceError(t *testing.T) {
 	data := map[string]any{
 		"data": map[string]any{

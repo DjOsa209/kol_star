@@ -950,23 +950,8 @@ function contentOperationKey(post: any) {
 }
 
 function clearContentSyncFields(post: any, cooperation: any) {
-  const resourceId = Number(post?.resourceId || cooperation?.resourceId || 0);
-  const records = [
-    post,
-    cooperation,
-    ...cooperations.value.filter(
-      item => Number(item.resourceId) === resourceId
-    ),
-    ...projectResources.value.filter(
-      item => Number(item.resourceId) === resourceId
-    ),
-    ...contentPosts.value.filter(item => Number(item.resourceId) === resourceId)
-  ];
-  new Set(records.filter(Boolean)).forEach(item => {
+  new Set([post, cooperation].filter(Boolean)).forEach(item => {
     Object.assign(item, {
-      platformUrl: "",
-      resourceAvatarUrl: "",
-      resourceAvatarRemoteUrl: "",
       contentCoverUrl: "",
       contentCoverLocalUrl: "",
       contentCoverRemoteUrl: "",

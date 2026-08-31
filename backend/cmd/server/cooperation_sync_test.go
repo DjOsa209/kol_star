@@ -140,6 +140,10 @@ func TestApplyPlatformPostToCooperationPrefersLocalInstagramMedia(t *testing.T) 
 	mock.ExpectExec("update biz_cooperations set").
 		WithArgs(int64(100), int64(15), int64(2), nil, 99).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("select coalesce\\(platform, ''\\), coalesce\\(platform_user_id, ''\\)").
+		WithArgs(7).
+		WillReturnRows(sqlmock.NewRows([]string{"platform", "platform_user_id"}).
+			AddRow("Instagram", "author-1"))
 	mock.ExpectExec("update biz_cooperations set content_platform").
 		WithArgs(
 			"Instagram",
@@ -226,6 +230,16 @@ func TestClearCooperationPostSyncFieldsPreservesResourceIdentity(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPostIdentityCannotOverwriteDifferentResourceAccount(t *testing.T) {
+	identity := cooperationPostResourceIdentity{PlatformUserID: "xiaohongshu-author-2"}
+	if shouldApplyCooperationPostIdentity("小红书", "xiaohongshu-author-1", "小红书", identity) {
+		t.Fatal("post author from another account must not overwrite the resource avatar or identity")
+	}
+	if !shouldApplyCooperationPostIdentity("小红书", "xiaohongshu-author-2", "小红书", identity) {
+		t.Fatal("matching post author should be allowed to refresh the resource identity")
 	}
 }
 

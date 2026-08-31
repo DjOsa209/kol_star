@@ -659,7 +659,14 @@ func (a *app) applyPlatformPostToCooperation(
 		normalizedRemoteImageURL(post.CoverURL),
 	)
 	identity := cooperationResourceIdentityFromPost(link, post)
-	remoteAvatarURL := normalizedRemoteImageURL(identity.AvatarURL)
+	applyIdentity, err := a.cooperationPostIdentityMatchesResource(ctx, resourceID, link.Platform, identity)
+	if err != nil {
+		return err
+	}
+	remoteAvatarURL := ""
+	if applyIdentity {
+		remoteAvatarURL = normalizedRemoteImageURL(identity.AvatarURL)
+	}
 	localCoverURL := ""
 	if isLocalResourceImageURL(post.CoverLocalURL) {
 		localCoverURL = post.CoverLocalURL
@@ -703,7 +710,10 @@ func (a *app) applyPlatformPostToCooperation(
 		}
 	}
 
-	_, err := a.DB().ExecContext(ctx,
+	if !applyIdentity {
+		return nil
+	}
+	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set platform = ?,
 		  platform_url = if(? <> '', ?, platform_url),
 		  platform_user_id = if(? <> '', ?, platform_user_id),
@@ -721,6 +731,49 @@ func (a *app) applyPlatformPostToCooperation(
 		resourceID,
 	)
 	return err
+}
+
+func (a *app) cooperationPostIdentityMatchesResource(
+	ctx context.Context,
+	resourceID int,
+	postPlatform string,
+	identity cooperationPostResourceIdentity,
+) (bool, error) {
+	var resourcePlatform string
+	var resourcePlatformUserID string
+	err := a.DB().QueryRowContext(ctx,
+		`select coalesce(platform, ''), coalesce(platform_user_id, '')
+		   from biz_resources where id = ? limit 1`,
+		resourceID,
+	).Scan(&resourcePlatform, &resourcePlatformUserID)
+	if err != nil {
+		return false, err
+	}
+	return shouldApplyCooperationPostIdentity(
+		resourcePlatform,
+		resourcePlatformUserID,
+		postPlatform,
+		identity,
+	), nil
+}
+
+func shouldApplyCooperationPostIdentity(
+	resourcePlatform string,
+	resourcePlatformUserID string,
+	postPlatform string,
+	identity cooperationPostResourceIdentity,
+) bool {
+	existingPlatform := platformDisplayName(resourcePlatform)
+	incomingPlatform := platformDisplayName(postPlatform)
+	if existingPlatform != "" && incomingPlatform != "" && existingPlatform != incomingPlatform {
+		return false
+	}
+	existingUserID := strings.TrimSpace(resourcePlatformUserID)
+	incomingUserID := strings.TrimSpace(identity.PlatformUserID)
+	if existingUserID != "" {
+		return incomingUserID != "" && strings.EqualFold(existingUserID, incomingUserID)
+	}
+	return incomingUserID != "" || strings.TrimSpace(identity.PlatformHandle) != ""
 }
 
 type cooperationLocalizedImage struct {
