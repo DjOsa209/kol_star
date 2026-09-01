@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestFetchUACIdentity(t *testing.T) {
 			t.Errorf("unexpected UAC payload: %#v", payload)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"userInfo":{"uid":"u-1001","email":"user@example.com","realName":"张三","employeeNo":"1001","deptName":"市场部","avatarUrl":"https://cdn.example.com/u-1001.png"}}}`))
+		_, _ = w.Write([]byte(`{"data":{"userInfo":{"uid":"u-1001","email":"user@example.com","realName":"张三","employeeNo":"1001","deptName":"市场部","sex":1,"avatarUrl":"https://cdn.example.com/u-1001.png"}}}`))
 	}))
 	defer server.Close()
 
@@ -73,33 +74,88 @@ func TestFetchUACIdentity(t *testing.T) {
 	if identity.Subject != "u-1001" || identity.Email != "user@example.com" || identity.Name != "张三" || identity.Department != "市场部" || identity.Avatar != "https://cdn.example.com/u-1001.png" {
 		t.Fatalf("unexpected identity: %#v", identity)
 	}
+	if identity.Sex == nil || *identity.Sex != 1 {
+		t.Fatalf("unexpected identity sex: %#v", identity.Sex)
+	}
 }
 
-func TestSanitizedSSOProfileLogPreservesAvatarAndRedactsCredentials(t *testing.T) {
-	logged := sanitizedSSOProfileLog(map[string]any{
-		"data": map[string]any{
-			"userInfo": map[string]any{
-				"avatarUrl": "https://cdn.example.com/avatar.png",
-				"email":     "user@example.com",
-				"token":     "nested-token",
-			},
-		},
-		"access_token": "access-token",
-		"appSecret":    "app-secret",
-	})
+func TestFirstSSOSex(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  *int
+	}{
+		{name: "male number", value: float64(0), want: intPointer(0)},
+		{name: "female number", value: float64(1), want: intPointer(1)},
+		{name: "female string", value: "1", want: intPointer(1)},
+		{name: "unsupported value", value: float64(2)},
+		{name: "missing value"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profile := map[string]any{}
+			if test.value != nil {
+				profile["sex"] = test.value
+			}
+			got := firstSSOSex(profile, "sex")
+			if test.want == nil {
+				if got != nil {
+					t.Fatalf("sex = %d, want nil", *got)
+				}
+				return
+			}
+			if got == nil || *got != *test.want {
+				t.Fatalf("sex = %v, want %d", got, *test.want)
+			}
+		})
+	}
+}
 
-	if !strings.Contains(logged, `"avatarUrl":"https://cdn.example.com/avatar.png"`) ||
-		!strings.Contains(logged, `"email":"user@example.com"`) {
-		t.Fatalf("diagnostic fields missing from log: %s", logged)
+func TestEnsureSSOUserUpdatesSexOnlyWhenProvided(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		sex        *int
+		wantHasSex bool
+		wantSex    int
+	}{
+		{name: "female", sex: intPointer(1), wantHasSex: true, wantSex: 1},
+		{name: "missing", wantHasSex: false, wantSex: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+
+			mock.ExpectBegin()
+			mock.ExpectQuery(regexp.QuoteMeta(`select id, avatar, username, nickname, status from sys_users where auth_provider = ? and external_subject = ? limit 1`)).
+				WithArgs("uac", "u-1001").
+				WillReturnRows(sqlmock.NewRows([]string{"id", "avatar", "username", "nickname", "status"}).AddRow(3, "", "sso-user", "旧昵称", 1))
+			mock.ExpectExec(`update sys_users set`).
+				WithArgs("", "", "user@example.com", "张三", "张三", test.wantHasSex, test.wantSex, "uac", "u-1001", "1001", "市场部", 3).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery(`select count\(\*\) from sys_user_roles`).
+				WithArgs(3).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			mock.ExpectCommit()
+
+			a := newApp(db, Config{}.withDefaults())
+			if _, err := a.ensureSSOUser(context.Background(), ssoIdentity{
+				Provider: "uac", Subject: "u-1001", Email: "user@example.com", Name: "张三",
+				EmployeeNo: "1001", Department: "市场部", Sex: test.sex,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
-	for _, secret := range []string{"nested-token", "access-token", "app-secret"} {
-		if strings.Contains(logged, secret) {
-			t.Fatalf("credential %q leaked in log: %s", secret, logged)
-		}
-	}
-	if strings.Count(logged, "[REDACTED]") != 3 {
-		t.Fatalf("credentials were not redacted: %s", logged)
-	}
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 func TestEnrichSSOAvatarFromFeishuUserID(t *testing.T) {

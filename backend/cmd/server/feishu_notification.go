@@ -110,10 +110,7 @@ func (client *feishuClient) userAvatar(ctx context.Context, userID, email string
 	if err != nil {
 		return "", err
 	}
-	if resolvedUserID, resolveErr := client.userIDByEmail(ctx, token, email); resolveErr != nil {
-		log.Printf("[SSO-DIAG] Feishu user ID lookup failed for email %q: %v", email, resolveErr)
-	} else if resolvedUserID != "" {
-		log.Printf("[SSO-DIAG] Feishu avatar user resolved: requested_user_id=%q resolved_user_id=%q", userID, resolvedUserID)
+	if resolvedUserID, resolveErr := client.userIDByEmail(ctx, token, email); resolveErr == nil && resolvedUserID != "" {
 		userID = resolvedUserID
 	}
 	endpoint := client.baseURL + "/open-apis/contact/v3/users/" + url.PathEscape(userID) + "?user_id_type=user_id"
@@ -144,7 +141,6 @@ func (client *feishuClient) userAvatar(ctx context.Context, userID, email string
 	if err := decodeFeishuResponse(response, &result); err != nil {
 		return "", fmt.Errorf("查询飞书用户头像：%w", err)
 	}
-	log.Printf("[SSO-DIAG] Feishu user profile: user_id=%q response=%s", userID, sanitizedSSOValueLog(result))
 	if result.Code != 0 {
 		return "", fmt.Errorf("查询飞书用户头像失败：code %d: %s", result.Code, result.Message)
 	}
@@ -187,7 +183,6 @@ func (client *feishuClient) userIDByEmail(ctx context.Context, token, email stri
 	if err := decodeFeishuResponse(response, &result); err != nil {
 		return "", err
 	}
-	log.Printf("[SSO-DIAG] Feishu user ID lookup: email=%q response=%s", email, sanitizedSSOValueLog(result))
 	if result.Code != 0 {
 		return "", fmt.Errorf("按邮箱查询飞书用户失败：code %d: %s", result.Code, result.Message)
 	}

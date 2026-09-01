@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -30,6 +31,7 @@ type ssoIdentity struct {
 	Email        string
 	Name         string
 	Avatar       string
+	Sex          *int
 	EmployeeNo   string
 	Department   string
 	RequestToken string
@@ -199,7 +201,6 @@ func fetchUACIdentity(ctx context.Context, cfg SSOConfig, input uacCallbackInput
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&profile); err != nil {
 		return ssoIdentity{}, errors.New("UAC 用户信息响应无效")
 	}
-	log.Printf("[SSO-DIAG] UAC user profile: %s", sanitizedSSOProfileLog(profile))
 	profile = nestedSSOProfile(profile, "data", "result", "user", "userInfo")
 	identity := ssoIdentity{
 		Provider:     "uac",
@@ -207,6 +208,7 @@ func fetchUACIdentity(ctx context.Context, cfg SSOConfig, input uacCallbackInput
 		Email:        firstSSOString(profile, "email", "mail"),
 		Name:         firstSSOString(profile, "realName", "name", "displayName", "userName"),
 		Avatar:       firstSSOAvatarURL(profile),
+		Sex:          firstSSOSex(profile, "sex", "gender"),
 		EmployeeNo:   firstSSOString(profile, "employeeNo", "employeeNumber", "empNo", "jobNo", "workNo"),
 		Department:   firstSSOString(profile, "deptName", "departmentName", "department", "dept"),
 		RequestToken: requestToken,
@@ -242,6 +244,10 @@ func (a *app) ensureSSOUser(ctx context.Context, identity ssoIdentity) (ssoUser,
 		return ssoUser{}, err
 	}
 	defer tx.Rollback()
+	sex, hasSex := 0, identity.Sex != nil
+	if hasSex {
+		sex = *identity.Sex
+	}
 	var user ssoUser
 	queryUser := func(query string, args ...any) error {
 		return tx.QueryRowContext(ctx, query, args...).Scan(&user.ID, &user.Avatar, &user.Username, &user.Nickname, &user.Status)
@@ -259,9 +265,9 @@ func (a *app) ensureSSOUser(ctx context.Context, identity ssoIdentity) (ssoUser,
 		}
 		result, insertErr := tx.ExecContext(ctx,
 			`insert into sys_users
-			  (avatar, username, nickname, password_hash, email, status, remark, auth_provider, external_subject, employee_no, department_name, last_login_at)
-			 values (?, ?, ?, ?, ?, 1, '企业 SSO 自动创建', ?, ?, ?, ?, now())`,
-			strings.TrimSpace(identity.Avatar), username, nickname, sha256Hex(password), strings.TrimSpace(identity.Email), identity.Provider, identity.Subject, identity.EmployeeNo, identity.Department,
+			  (avatar, username, nickname, password_hash, email, sex, status, remark, auth_provider, external_subject, employee_no, department_name, last_login_at)
+			 values (?, ?, ?, ?, ?, ?, 1, '企业 SSO 自动创建', ?, ?, ?, ?, now())`,
+			strings.TrimSpace(identity.Avatar), username, nickname, sha256Hex(password), strings.TrimSpace(identity.Email), sex, identity.Provider, identity.Subject, identity.EmployeeNo, identity.Department,
 		)
 		if insertErr != nil {
 			return ssoUser{}, insertErr
@@ -276,10 +282,10 @@ func (a *app) ensureSSOUser(ctx context.Context, identity ssoIdentity) (ssoUser,
 	} else {
 		_, err = tx.ExecContext(ctx,
 			`update sys_users set
-			   avatar = if(? <> '', ?, avatar), email = ?, nickname = if(? <> '', ?, nickname), auth_provider = ?, external_subject = ?,
+			   avatar = if(? <> '', ?, avatar), email = ?, nickname = if(? <> '', ?, nickname), sex = if(?, ?, sex), auth_provider = ?, external_subject = ?,
 			   employee_no = ?, department_name = ?, last_login_at = now()
 			 where id = ?`,
-			strings.TrimSpace(identity.Avatar), strings.TrimSpace(identity.Avatar), strings.TrimSpace(identity.Email), strings.TrimSpace(identity.Name), strings.TrimSpace(identity.Name), identity.Provider, identity.Subject,
+			strings.TrimSpace(identity.Avatar), strings.TrimSpace(identity.Avatar), strings.TrimSpace(identity.Email), strings.TrimSpace(identity.Name), strings.TrimSpace(identity.Name), hasSex, sex, identity.Provider, identity.Subject,
 			strings.TrimSpace(identity.EmployeeNo), strings.TrimSpace(identity.Department), user.ID,
 		)
 		if err != nil {
@@ -441,6 +447,15 @@ func firstSSOString(values map[string]any, keys ...string) string {
 	return ""
 }
 
+func firstSSOSex(values map[string]any, keys ...string) *int {
+	value := firstSSOString(values, keys...)
+	sex, err := strconv.Atoi(value)
+	if err != nil || (sex != 0 && sex != 1) {
+		return nil
+	}
+	return &sex
+}
+
 func firstSSOAvatarURL(profile map[string]any) string {
 	for _, key := range []string{"avatarUrl", "avatarURL", "avatar_url", "avatar", "headImgUrl", "headImageUrl", "headUrl", "photoUrl", "profilePhoto"} {
 		value, ok := profile[key]
@@ -459,56 +474,6 @@ func firstSSOAvatarURL(profile map[string]any) string {
 		}
 	}
 	return ""
-}
-
-func sanitizedSSOProfileLog(profile map[string]any) string {
-	return sanitizedSSOValueLog(profile)
-}
-
-func sanitizedSSOValueLog(value any) string {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return `{"error":"unable to encode SSO diagnostic value"}`
-	}
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return `{"error":"unable to sanitize SSO diagnostic value"}`
-	}
-	sanitized, err := json.Marshal(redactSSOLogValue(decoded))
-	if err != nil {
-		return `{"error":"unable to encode sanitized SSO diagnostic value"}`
-	}
-	return truncateLogText(string(sanitized), 16<<10)
-}
-
-func redactSSOLogValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		redacted := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if sensitiveSSOLogKey(key) {
-				redacted[key] = "[REDACTED]"
-				continue
-			}
-			redacted[key] = redactSSOLogValue(item)
-		}
-		return redacted
-	case []any:
-		redacted := make([]any, len(typed))
-		for index, item := range typed {
-			redacted[index] = redactSSOLogValue(item)
-		}
-		return redacted
-	default:
-		return value
-	}
-}
-
-func sensitiveSSOLogKey(key string) bool {
-	normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(strings.TrimSpace(key)))
-	return strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") ||
-		strings.Contains(normalized, "password") || strings.Contains(normalized, "credential") ||
-		normalized == "authorization" || normalized == "cookie" || normalized == "pauth"
 }
 
 func uacSafeResponseError(response *http.Response, tokens ...string) error {
