@@ -114,6 +114,35 @@ func TestEnrichSSOAvatarFromFeishuUserID(t *testing.T) {
 	}
 }
 
+func TestEnrichSSOAvatarSurvivesCanceledCallbackContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"tenant-token","expire":7200}`))
+		case "/open-apis/contact/v3/users/batch_get_id":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user_list":[{"user_id":"1001"}]}}`))
+		case "/open-apis/contact/v3/users/1001":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user":{"avatar":{"avatar_240":"https://cdn.example.com/u-1001.png"}}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	callbackContext, cancelCallback := context.WithCancel(context.Background())
+	cancelCallback()
+
+	identity := enrichSSOAvatar(callbackContext, ssoIdentity{Subject: "u-1001", Email: "user@example.com"}, FeishuConfig{
+		AppID:      "app-id",
+		AppSecret:  "app-secret",
+		APIBaseURL: server.URL,
+	}, server.Client())
+	if identity.Avatar != "https://cdn.example.com/u-1001.png" {
+		t.Fatalf("avatar = %q after callback context cancellation", identity.Avatar)
+	}
+}
+
 func TestSSOStateValidation(t *testing.T) {
 	state, err := newSSOState()
 	if err != nil {

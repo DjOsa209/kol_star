@@ -22,6 +22,8 @@ import (
 
 const ssoStateCookieName = "kol_sso_state"
 
+const ssoAvatarLookupTimeout = 10 * time.Second
+
 type ssoIdentity struct {
 	Provider     string
 	Subject      string
@@ -222,7 +224,9 @@ func enrichSSOAvatar(ctx context.Context, identity ssoIdentity, cfg FeishuConfig
 	if strings.TrimSpace(identity.Avatar) != "" {
 		return identity
 	}
-	avatar, err := newFeishuClient(cfg, httpClient).userAvatar(ctx, identity.Subject, identity.Email)
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ssoAvatarLookupTimeout)
+	defer cancel()
+	avatar, err := newFeishuClient(cfg, httpClient).userAvatar(lookupCtx, identity.Subject, identity.Email)
 	if err != nil {
 		log.Printf("SSO avatar lookup skipped: %v", err)
 		return identity
