@@ -75,6 +75,33 @@ func TestFetchUACIdentity(t *testing.T) {
 	}
 }
 
+func TestSanitizedSSOProfileLogPreservesAvatarAndRedactsCredentials(t *testing.T) {
+	logged := sanitizedSSOProfileLog(map[string]any{
+		"data": map[string]any{
+			"userInfo": map[string]any{
+				"avatarUrl": "https://cdn.example.com/avatar.png",
+				"email":     "user@example.com",
+				"token":     "nested-token",
+			},
+		},
+		"access_token": "access-token",
+		"appSecret":    "app-secret",
+	})
+
+	if !strings.Contains(logged, `"avatarUrl":"https://cdn.example.com/avatar.png"`) ||
+		!strings.Contains(logged, `"email":"user@example.com"`) {
+		t.Fatalf("diagnostic fields missing from log: %s", logged)
+	}
+	for _, secret := range []string{"nested-token", "access-token", "app-secret"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("credential %q leaked in log: %s", secret, logged)
+		}
+	}
+	if strings.Count(logged, "[REDACTED]") != 3 {
+		t.Fatalf("credentials were not redacted: %s", logged)
+	}
+}
+
 func TestEnrichSSOAvatarFromFeishuUserID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

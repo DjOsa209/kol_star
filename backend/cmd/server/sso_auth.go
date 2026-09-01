@@ -199,6 +199,7 @@ func fetchUACIdentity(ctx context.Context, cfg SSOConfig, input uacCallbackInput
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&profile); err != nil {
 		return ssoIdentity{}, errors.New("UAC 用户信息响应无效")
 	}
+	log.Printf("[SSO-DIAG] UAC user profile: %s", sanitizedSSOProfileLog(profile))
 	profile = nestedSSOProfile(profile, "data", "result", "user", "userInfo")
 	identity := ssoIdentity{
 		Provider:     "uac",
@@ -458,6 +459,44 @@ func firstSSOAvatarURL(profile map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func sanitizedSSOProfileLog(profile map[string]any) string {
+	sanitized, err := json.Marshal(redactSSOLogValue(profile))
+	if err != nil {
+		return `{"error":"unable to encode UAC profile"}`
+	}
+	return truncateLogText(string(sanitized), 16<<10)
+}
+
+func redactSSOLogValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		redacted := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if sensitiveSSOLogKey(key) {
+				redacted[key] = "[REDACTED]"
+				continue
+			}
+			redacted[key] = redactSSOLogValue(item)
+		}
+		return redacted
+	case []any:
+		redacted := make([]any, len(typed))
+		for index, item := range typed {
+			redacted[index] = redactSSOLogValue(item)
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+func sensitiveSSOLogKey(key string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(strings.TrimSpace(key)))
+	return strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "password") || strings.Contains(normalized, "credential") ||
+		normalized == "authorization" || normalized == "cookie" || normalized == "pauth"
 }
 
 func uacSafeResponseError(response *http.Response, tokens ...string) error {
