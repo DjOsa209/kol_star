@@ -462,9 +462,21 @@ func firstSSOAvatarURL(profile map[string]any) string {
 }
 
 func sanitizedSSOProfileLog(profile map[string]any) string {
-	sanitized, err := json.Marshal(redactSSOLogValue(profile))
+	return sanitizedSSOValueLog(profile)
+}
+
+func sanitizedSSOValueLog(value any) string {
+	raw, err := json.Marshal(value)
 	if err != nil {
-		return `{"error":"unable to encode UAC profile"}`
+		return `{"error":"unable to encode SSO diagnostic value"}`
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return `{"error":"unable to sanitize SSO diagnostic value"}`
+	}
+	sanitized, err := json.Marshal(redactSSOLogValue(decoded))
+	if err != nil {
+		return `{"error":"unable to encode sanitized SSO diagnostic value"}`
 	}
 	return truncateLogText(string(sanitized), 16<<10)
 }

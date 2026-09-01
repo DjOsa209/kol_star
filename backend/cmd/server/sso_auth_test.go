@@ -170,6 +170,32 @@ func TestEnrichSSOAvatarSurvivesCanceledCallbackContext(t *testing.T) {
 	}
 }
 
+func TestFeishuUserAvatarRejectsSuccessfulResponseWithoutAvatar(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"tenant-token","expire":7200}`))
+		case "/open-apis/contact/v3/users/batch_get_id":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user_list":[{"user_id":"1001"}]}}`))
+		case "/open-apis/contact/v3/users/1001":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user":{"avatar":{}}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := newFeishuClient(FeishuConfig{
+		AppID:      "app-id",
+		AppSecret:  "app-secret",
+		APIBaseURL: server.URL,
+	}, server.Client()).userAvatar(context.Background(), "uac-subject", "user@example.com")
+	if err == nil || !strings.Contains(err.Error(), "头像为空") {
+		t.Fatalf("expected empty-avatar error, got %v", err)
+	}
+}
+
 func TestSSOStateValidation(t *testing.T) {
 	state, err := newSSOState()
 	if err != nil {
