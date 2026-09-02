@@ -4312,6 +4312,7 @@ func (a *app) runImportedProjectSync(
 
 	warnings := append(profileWarnings, contentWarnings...)
 	warnings = append(warnings, screenshotWarnings...)
+	warnings = sortedUniqueProjectImportWarnings(warnings)
 	status := "成功"
 	if failedStages > 0 && successfulStages == 0 {
 		status = "失败"
@@ -4336,6 +4337,33 @@ func (a *app) runImportedProjectSync(
 	finalMessage := message + "；飞书推送：" + delivery.Status + "（" + delivery.Message + "）"
 	a.finishPlatformSyncJob(ctx, jobID, status, finalMessage)
 	log.Printf("[project-import][batch=%s][job=%d] finished: status=%s profiles=%d content=%d screenshots=%d warnings=%d feishu=%s detail=%s", batchID, jobID, status, profileSynced, contentSynced, screenshots, len(warnings), delivery.Status, redactSensitiveText(delivery.Message))
+}
+
+func sortedUniqueProjectImportWarnings(warnings []string) []string {
+	result := make([]string, 0, len(warnings))
+	seen := make(map[string]bool, len(warnings))
+	for _, warning := range warnings {
+		if seen[warning] {
+			continue
+		}
+		seen[warning] = true
+		result = append(result, warning)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return projectImportWarningRowNumber(result[i]) < projectImportWarningRowNumber(result[j])
+	})
+	return result
+}
+
+func projectImportWarningRowNumber(warning string) int {
+	prefix, _, found := strings.Cut(warning, "｜")
+	if found && strings.HasPrefix(prefix, "表格第 ") && strings.HasSuffix(prefix, " 行") {
+		raw := strings.TrimSuffix(strings.TrimPrefix(prefix, "表格第 "), " 行")
+		if rowNumber, err := strconv.Atoi(raw); err == nil && rowNumber > 0 {
+			return rowNumber
+		}
+	}
+	return int(^uint(0) >> 1)
 }
 
 func (a *app) updateImportSyncStage(ctx context.Context, jobID, successCount, failedCount int, stage, message string) {

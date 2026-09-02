@@ -195,6 +195,35 @@ func TestSyncImportedCooperationsUsesResourceNameAndPlatformInWarning(t *testing
 	}
 }
 
+func TestSortedUniqueProjectImportWarningsOrdersRowsAndRemovesDuplicates(t *testing.T) {
+	warnings := []string{
+		"表格第 73 行｜yankodesign.com（Website）：提示",
+		"表格第 27 行｜gizchina.com（Website）：提示",
+		"表格第 6 行｜androidguys.com（Website）：提示",
+		"表格第 31 行｜gsmarena.com（Website）：提示",
+		"表格第 14 行｜cgmagazine.com（Website）：提示",
+		"表格第 6 行｜androidguys.com（Website）：提示",
+		"表格第 14 行｜cgmagazine.com（Website）：提示",
+		"表格第 27 行｜gizchina.com（Website）：提示",
+		"表格第 31 行｜gsmarena.com（Website）：提示",
+		"表格第 32 行｜gsmarena.com（Website）：提示",
+		"表格第 33 行｜gsmarena.com（Website）：提示",
+		"表格第 73 行｜yankodesign.com（Website）：提示",
+	}
+	want := []string{
+		"表格第 6 行｜androidguys.com（Website）：提示",
+		"表格第 14 行｜cgmagazine.com（Website）：提示",
+		"表格第 27 行｜gizchina.com（Website）：提示",
+		"表格第 31 行｜gsmarena.com（Website）：提示",
+		"表格第 32 行｜gsmarena.com（Website）：提示",
+		"表格第 33 行｜gsmarena.com（Website）：提示",
+		"表格第 73 行｜yankodesign.com（Website）：提示",
+	}
+	if got := sortedUniqueProjectImportWarnings(warnings); !reflect.DeepEqual(got, want) {
+		t.Fatalf("sortedUniqueProjectImportWarnings() = %#v, want %#v", got, want)
+	}
+}
+
 func TestApplyPlatformPostToCooperationPrefersLocalInstagramMedia(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

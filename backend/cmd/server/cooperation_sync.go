@@ -569,7 +569,12 @@ func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int, rowN
 			warnings = append(warnings, importedCooperationWarning(rowNumber, resource.Name, resource.Platform, message))
 			continue
 		}
-		if err := a.syncResourceByPlatform(ctx, resource); err != nil {
+		if err := a.syncResourceProfileAndPostsByPlatform(ctx, resource); err != nil {
+			a.markResourceSyncFailed(ctx, resourceID, err.Error())
+			warnings = append(warnings, importedCooperationWarning(rowNumber, resource.Name, resource.Platform, err.Error()))
+			continue
+		}
+		if err := a.refreshResourceAudienceClassification(ctx, resourceID); err != nil {
 			a.markResourceSyncFailed(ctx, resourceID, err.Error())
 			warnings = append(warnings, importedCooperationWarning(rowNumber, resource.Name, resource.Platform, err.Error()))
 			continue
