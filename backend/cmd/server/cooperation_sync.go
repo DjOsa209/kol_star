@@ -95,7 +95,11 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 		source = "API"
 	}
 	if !found {
-		result.Message = "作品库中未找到匹配作品"
+		if link.Platform == "Website" {
+			result.Message = "Website 内容无需同步作品数据，将在图片处理阶段抓取网页缩略图"
+		} else {
+			result.Message = "作品库中未找到匹配作品"
+		}
 		return a.finishCooperationPostSyncResult(
 			ctx, cooperationID, resourceID, allowAPI, result,
 		)
@@ -350,41 +354,89 @@ func cooperationPostSyncFailure(result cooperationPostSyncResult) error {
 	return fmt.Errorf("%s", result.Message)
 }
 
-func (a *app) syncImportedCooperations(ctx context.Context, batchID string) (int, []string) {
+func (a *app) syncImportedCooperations(ctx context.Context, batchID string, rowNumbers map[string]int) (int, []string) {
 	rows, err := a.DB().QueryContext(ctx,
-		`select id from biz_cooperations where import_batch_id = ? order by id`,
+		`select c.id, c.resource_id, coalesce(nullif(r.name, ''), '未命名达人'),
+		        coalesce(nullif(c.content_platform, ''), nullif(r.platform, ''), '未知平台'),
+		        coalesce(nullif(c.final_link, ''), nullif(c.deliverable_links, ''), '')
+		   from biz_cooperations c
+		   left join biz_resources r on r.id = c.resource_id
+		  where c.import_batch_id = ?
+		  order by c.id`,
 		batchID,
 	)
 	if err != nil {
 		return 0, []string{err.Error()}
 	}
 	defer rows.Close()
-	var ids []int
+	type importedCooperation struct {
+		id           int
+		resourceID   int
+		resourceName string
+		platform     string
+		postURL      string
+	}
+	var cooperations []importedCooperation
 	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
+		var cooperation importedCooperation
+		if err := rows.Scan(
+			&cooperation.id,
+			&cooperation.resourceID,
+			&cooperation.resourceName,
+			&cooperation.platform,
+			&cooperation.postURL,
+		); err != nil {
 			return 0, []string{err.Error()}
 		}
-		ids = append(ids, id)
+		cooperations = append(cooperations, cooperation)
 	}
 	if err := rows.Err(); err != nil {
 		return 0, []string{err.Error()}
 	}
 	synced := 0
 	var warnings []string
-	for _, id := range ids {
-		result, err := a.syncCooperationPost(ctx, id, true)
+	for _, cooperation := range cooperations {
+		rowNumber := rowNumbers[importedCooperationSyncKey(cooperation.resourceID, cooperation.postURL)]
+		result, err := a.syncCooperationPost(ctx, cooperation.id, true)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("合作记录 %d：%v", id, err))
+			warnings = append(warnings, importedCooperationWarning(
+				rowNumber,
+				cooperation.resourceName,
+				cooperation.platform,
+				err.Error(),
+			))
 			continue
 		}
 		if result.Synced {
 			synced++
 		} else if result.Message != "" {
-			warnings = append(warnings, fmt.Sprintf("合作记录 %d：%s", id, result.Message))
+			warnings = append(warnings, importedCooperationWarning(
+				rowNumber,
+				cooperation.resourceName,
+				firstNonEmpty(result.Platform, cooperation.platform),
+				result.Message,
+			))
 		}
 	}
 	return synced, warnings
+}
+
+func importedCooperationSyncKey(resourceID int, postURL string) string {
+	return fmt.Sprintf("%d|%s", resourceID, strings.ToLower(normalizedProjectContentURL(postURL)))
+}
+
+func importedCooperationWarning(rowNumber int, resourceName string, platform string, detail string) string {
+	resourceName = firstNonEmpty(strings.TrimSpace(resourceName), "未命名达人")
+	platform = strings.TrimSpace(platform)
+	if normalized := normalizeEditableContentPlatform(platform); normalized != "" {
+		platform = normalized
+	}
+	platform = firstNonEmpty(platform, "未知平台")
+	prefix := ""
+	if rowNumber > 0 {
+		prefix = fmt.Sprintf("表格第 %d 行｜", rowNumber)
+	}
+	return fmt.Sprintf("%s%s（%s）：%s", prefix, resourceName, platform, detail)
 }
 
 type importedWebsiteScreenshotCapture func(
@@ -394,17 +446,18 @@ type importedWebsiteScreenshotCapture func(
 	string,
 ) (string, string)
 
-func (a *app) captureImportedPageScreenshots(ctx context.Context, batchID string) (int, []string) {
-	return a.captureImportedPageScreenshotsWith(ctx, batchID, captureWebsiteScreenshot)
+func (a *app) captureImportedPageScreenshots(ctx context.Context, batchID string, rowNumbers map[string]int) (int, []string) {
+	return a.captureImportedPageScreenshotsWith(ctx, batchID, rowNumbers, captureWebsiteScreenshot)
 }
 
 func (a *app) captureImportedPageScreenshotsWith(
 	ctx context.Context,
 	batchID string,
+	rowNumbers map[string]int,
 	capture importedWebsiteScreenshotCapture,
 ) (int, []string) {
 	rows, err := a.DB().QueryContext(ctx,
-		`select c.id, c.resource_id,
+		`select c.id, c.resource_id, coalesce(nullif(r.name, ''), '未命名达人'),
 		        coalesce(nullif(c.final_link, ''), nullif(c.deliverable_links, ''), '') as post_url,
 		        coalesce(nullif(c.content_platform, ''), nullif(r.platform, ''), 'Website') as platform
 		   from biz_cooperations c
@@ -423,6 +476,7 @@ func (a *app) captureImportedPageScreenshotsWith(
 	type candidate struct {
 		cooperationID int
 		resourceID    int
+		resourceName  string
 		postURL       string
 		platform      string
 	}
@@ -432,6 +486,7 @@ func (a *app) captureImportedPageScreenshotsWith(
 		if err := rows.Scan(
 			&item.cooperationID,
 			&item.resourceID,
+			&item.resourceName,
 			&item.postURL,
 			&item.platform,
 		); err != nil {
@@ -449,8 +504,9 @@ func (a *app) captureImportedPageScreenshotsWith(
 	captured := 0
 	var warnings []string
 	for _, item := range candidates {
+		rowNumber := rowNumbers[importedCooperationSyncKey(item.resourceID, item.postURL)]
 		if !validEditableContentURL(item.postURL) {
-			warnings = append(warnings, fmt.Sprintf("合作记录 %d：网页地址无效", item.cooperationID))
+			warnings = append(warnings, importedCooperationWarning(rowNumber, item.resourceName, item.platform, "网页地址无效"))
 			continue
 		}
 		localCoverURL, warning := capture(
@@ -460,9 +516,10 @@ func (a *app) captureImportedPageScreenshotsWith(
 			item.postURL,
 		)
 		if localCoverURL == "" {
-			warnings = append(warnings, fmt.Sprintf(
-				"合作记录 %d：%s",
-				item.cooperationID,
+			warnings = append(warnings, importedCooperationWarning(
+				rowNumber,
+				item.resourceName,
+				item.platform,
 				firstNonEmpty(warning, "网页缩略图抓取失败"),
 			))
 			continue
@@ -481,7 +538,7 @@ func (a *app) captureImportedPageScreenshotsWith(
 			platformPostID,
 			localCoverURL,
 		); err != nil {
-			warnings = append(warnings, fmt.Sprintf("合作记录 %d：%v", item.cooperationID, err))
+			warnings = append(warnings, importedCooperationWarning(rowNumber, item.resourceName, item.platform, err.Error()))
 			continue
 		}
 		captured++
@@ -489,17 +546,18 @@ func (a *app) captureImportedPageScreenshotsWith(
 	return captured, warnings
 }
 
-func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int) (int, []string) {
+func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int, rowNumbers map[int]int) (int, []string) {
 	synced := 0
 	warnings := make([]string, 0)
 	for _, resourceID := range resourceIDs {
+		rowNumber := rowNumbers[resourceID]
 		var resource syncResourceRow
 		if err := a.DB().QueryRowContext(ctx,
 			`select id, name, platform, platform_url, platform_user_id, platform_handle
 			   from biz_resources where id = ? limit 1`,
 			resourceID,
 		).Scan(&resource.ID, &resource.Name, &resource.Platform, &resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle); err != nil {
-			warnings = append(warnings, fmt.Sprintf("资源 %d：%v", resourceID, err))
+			warnings = append(warnings, importedCooperationWarning(rowNumber, "未命名达人", "未知平台", err.Error()))
 			continue
 		}
 		if platformDisplayName(resource.Platform) == "" {
@@ -508,12 +566,12 @@ func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int) (int
 				`update biz_resources set last_sync_status = '待配置', last_sync_error = ?, last_sync_at = now() where id = ?`,
 				message, resourceID,
 			)
-			warnings = append(warnings, fmt.Sprintf("资源 %d：%s", resourceID, message))
+			warnings = append(warnings, importedCooperationWarning(rowNumber, resource.Name, resource.Platform, message))
 			continue
 		}
 		if err := a.syncResourceByPlatform(ctx, resource); err != nil {
 			a.markResourceSyncFailed(ctx, resourceID, err.Error())
-			warnings = append(warnings, fmt.Sprintf("资源 %d：%v", resourceID, err))
+			warnings = append(warnings, importedCooperationWarning(rowNumber, resource.Name, resource.Platform, err.Error()))
 			continue
 		}
 		synced++

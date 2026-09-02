@@ -4055,6 +4055,8 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 	skippedCooperations := 0
 	matchedResourceIDs := make(map[int64]bool)
 	resourceIDs := make(map[int64]bool)
+	importedResourceRows := make(map[int]int)
+	importedCooperationRows := make(map[string]int)
 	seenRows := make(map[string]bool)
 	var errors []map[string]any
 	for index, raw := range rows {
@@ -4100,6 +4102,13 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 			matchedResourceIDs[resourceID] = true
 		}
 		queueImportedResourceForSync(resourceIDs, resourceID)
+		rowNumber := intField(row, "rowNo")
+		if rowNumber <= 0 {
+			rowNumber = index + 2
+		}
+		if _, exists := importedResourceRows[int(resourceID)]; !exists {
+			importedResourceRows[int(resourceID)] = rowNumber
+		}
 		if err := ensureImportProjectResource(r.Context(), tx, projectID, resourceID, incremental); err != nil {
 			errors = append(errors, map[string]any{"row": index + 2, "message": err.Error()})
 			continue
@@ -4113,6 +4122,11 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 			skippedCooperations++
 			continue
 		}
+		contentURL := ""
+		if rawContentURL := cleanImportString(str(row, "deliverableLinks")); rawContentURL != "" {
+			contentURL, _ = normalizeImportedCooperationLink(rawContentURL)
+		}
+		importedCooperationRows[importedCooperationSyncKey(int(resourceID), contentURL)] = rowNumber
 		if action == importCooperationUpdated {
 			updatedCooperations++
 		} else {
@@ -4199,7 +4213,14 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 			backgroundSyncStarted = true
 			backgroundSyncJobID = jobID
 			log.Printf("[project-import][batch=%s][job=%d] queued: project=%d resources=%d feishuEnabled=%t", batchID, jobID, projectID, len(importedResourceIDs), a.Config().Feishu.ApplicationEnabled || a.Config().Feishu.WebhookEnabled)
-			go a.runImportedProjectSync(int(jobID), batchID, importedResourceIDs, notification)
+			go a.runImportedProjectSync(
+				int(jobID),
+				batchID,
+				importedResourceIDs,
+				importedResourceRows,
+				importedCooperationRows,
+				notification,
+			)
 		}
 	}
 	writeOK(w, map[string]any{
@@ -4234,7 +4255,14 @@ func shouldStartImportedProjectSync(resourceCount int) bool {
 	return resourceCount > 0
 }
 
-func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []int, notification projectImportNotification) {
+func (a *app) runImportedProjectSync(
+	jobID int,
+	batchID string,
+	resourceIDs []int,
+	resourceRows map[int]int,
+	cooperationRows map[string]int,
+	notification projectImportNotification,
+) {
 	ctx := context.Background()
 	log.Printf("[project-import][batch=%s][job=%d] started: project=%d resources=%d", batchID, jobID, notification.ProjectID, len(resourceIDs))
 	defer func() {
@@ -4253,7 +4281,7 @@ func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []in
 	successfulStages := 0
 	failedStages := 0
 	log.Printf("[project-import][batch=%s][job=%d][stage=1/3] syncing profiles", batchID, jobID)
-	profileSynced, profileWarnings := a.syncImportedResources(ctx, resourceIDs)
+	profileSynced, profileWarnings := a.syncImportedResources(ctx, resourceIDs, resourceRows)
 	if len(profileWarnings) > 0 {
 		failedStages++
 	} else {
@@ -4263,7 +4291,7 @@ func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []in
 	log.Printf("[project-import][batch=%s][job=%d][stage=1/3] completed: success=%d warnings=%d", batchID, jobID, profileSynced, len(profileWarnings))
 
 	log.Printf("[project-import][batch=%s][job=%d][stage=2/3] syncing cooperation content", batchID, jobID)
-	contentSynced, contentWarnings := a.syncImportedCooperations(ctx, batchID)
+	contentSynced, contentWarnings := a.syncImportedCooperations(ctx, batchID, cooperationRows)
 	if len(contentWarnings) > 0 {
 		failedStages++
 	} else {
@@ -4273,7 +4301,7 @@ func (a *app) runImportedProjectSync(jobID int, batchID string, resourceIDs []in
 	log.Printf("[project-import][batch=%s][job=%d][stage=2/3] completed: success=%d warnings=%d", batchID, jobID, contentSynced, len(contentWarnings))
 
 	log.Printf("[project-import][batch=%s][job=%d][stage=3/3] capturing screenshots", batchID, jobID)
-	screenshots, screenshotWarnings := a.captureImportedPageScreenshots(ctx, batchID)
+	screenshots, screenshotWarnings := a.captureImportedPageScreenshots(ctx, batchID, cooperationRows)
 	if len(screenshotWarnings) > 0 {
 		failedStages++
 	} else {

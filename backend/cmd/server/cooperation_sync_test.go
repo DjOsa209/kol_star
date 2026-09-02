@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -105,6 +106,89 @@ func TestSyncCooperationPostUsesFinalLinkAndStoredCover(t *testing.T) {
 	}
 	if !result.Synced || result.Source != "作品库" {
 		t.Fatalf("syncCooperationPost() = %#v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncCooperationPostExplainsWebsiteThumbnailCapture(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const finalLink = "https://example.com/articles/launch"
+	mock.ExpectQuery("select resource_id, coalesce\\(final_link, ''\\), coalesce\\(deliverable_links, ''\\)").
+		WithArgs(99).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_id", "final_link", "deliverable_links"}).
+			AddRow(7, finalLink, ""))
+	mock.ExpectQuery("select platform_post_id, title, description, post_url,").
+		WithArgs(7, "Website").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"platform_post_id", "title", "description", "post_url", "cover_url", "media_type",
+			"published_at", "duration_seconds", "view_count", "like_count", "comment_count", "share_count", "save_count",
+		}))
+	mock.ExpectQuery("select coalesce\\(r.platform_url, ''\\),").
+		WithArgs(99, 7).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"platform_url", "final_link", "deliverable_links", "avatar_url", "avatar_remote_url",
+			"content_cover_url", "content_cover_remote_url",
+		}).AddRow("https://example.com", finalLink, "", "", "", "", ""))
+
+	app := newApp(db, Config{})
+	result, err := app.syncCooperationPost(context.Background(), 99, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "Website 内容无需同步作品数据，将在图片处理阶段抓取网页缩略图"
+	if result.Message != want {
+		t.Fatalf("syncCooperationPost() message = %q, want %q", result.Message, want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncImportedCooperationsUsesResourceNameAndPlatformInWarning(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const finalLink = "https://example.com/articles/launch"
+	mock.ExpectQuery("select c.id, c.resource_id, coalesce\\(nullif\\(r.name, ''\\), '未命名达人'\\),").
+		WithArgs("batch-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id", "resource_name", "platform", "post_url"}).
+			AddRow(99, 7, "Acme Media", "Website", finalLink))
+	mock.ExpectQuery("select resource_id, coalesce\\(final_link, ''\\), coalesce\\(deliverable_links, ''\\)").
+		WithArgs(99).
+		WillReturnRows(sqlmock.NewRows([]string{"resource_id", "final_link", "deliverable_links"}).
+			AddRow(7, finalLink, ""))
+	mock.ExpectQuery("select platform_post_id, title, description, post_url,").
+		WithArgs(7, "Website").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"platform_post_id", "title", "description", "post_url", "cover_url", "media_type",
+			"published_at", "duration_seconds", "view_count", "like_count", "comment_count", "share_count", "save_count",
+		}))
+	mock.ExpectQuery("select coalesce\\(r.platform_url, ''\\),").
+		WithArgs(99, 7).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"platform_url", "final_link", "deliverable_links", "avatar_url", "avatar_remote_url",
+			"content_cover_url", "content_cover_remote_url",
+		}).AddRow("https://example.com", finalLink, "", "", "", "", ""))
+
+	app := newApp(db, Config{})
+	rowNumbers := map[string]int{importedCooperationSyncKey(7, finalLink): 5}
+	synced, warnings := app.syncImportedCooperations(context.Background(), "batch-1", rowNumbers)
+	if synced != 0 {
+		t.Fatalf("syncImportedCooperations() synced = %d, want 0", synced)
+	}
+	want := []string{"表格第 5 行｜Acme Media（Website）：Website 内容无需同步作品数据，将在图片处理阶段抓取网页缩略图"}
+	if !reflect.DeepEqual(warnings, want) {
+		t.Fatalf("syncImportedCooperations() warnings = %#v, want %#v", warnings, want)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
