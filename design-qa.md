@@ -76,6 +76,43 @@ final result: blocked
 
 ---
 
+**Campaign Creator Expansion And Content Metrics QA**
+
+- Source visual truth:
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-59fa7494-e28b-4da3-8531-eae28f86ede3.png` (`2864 x 908`)
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-ed34c814-3ae6-411b-8598-fe488d196379.png` (`2644 x 1228`)
+- Implementation: `http://127.0.0.1:8848/#/business/projects/detail?id=24`
+- Implementation screenshot evidence: live Codex in-app Browser captures of the creator table, expanded creator row, content card grid, and content drill-down; the browser surface did not expose a persistent screenshot file path.
+- Viewports: desktop `1600 x 1000` and default app viewport `782 x 780`; device scale factor `1`.
+- State: authenticated project detail using `st_标准项目数据`, creator tab collapsed and expanded states, content card list, and Instagram content drill-down.
+- Full-view comparison evidence: the desktop creator table preserves the reference's compact white table, centered metric columns, creator identity, tier, latest-content thumbnail, and actions. Follower/audience now precedes content count in both creator and media sections.
+- Focused-region comparison evidence: the expanded row visibly contains content, platform, publish date, impressions, likes, comments, shares, and saves. The card grid visibly uses “曝光量”; the drill-down visibly renders the five requested metrics.
+
+**Findings**
+
+- No actionable P0/P1/P2 findings remain.
+- Fonts and typography: the existing product font stack, compact table hierarchy, metric weights, and small supporting copy remain consistent with the reference.
+- Spacing and layout rhythm: the desktop table fits all parent columns without clipping; expanded details are a flush, compact continuation of the parent row with no card border, title block, radius, or surrounding gap. At the narrow breakpoint, the wide detail table remains horizontally scrollable instead of compressing labels.
+- Colors and visual tokens: existing white surfaces, neutral dividers, muted secondary text, blue actions, and status tags are preserved.
+- Image quality and asset fidelity: synchronized creator avatars and content covers are reused at their natural crop; no placeholder or generated replacement was introduced.
+- Copy and content: “播放量” was replaced with “曝光量” in the content card and media table; the drill-down now names exposure, likes, comments, shares, and saves separately.
+- Interactions: creator and media rows expand/collapse; clicking an expanded content item switches to the content tab and opens its drill-down; no browser console errors were observed.
+
+**Comparison History**
+
+- Pass 1 found that expanded-row content updated the URL but did not switch from the creator tab to the drill-down view.
+- Fix: `openContentDetail` now selects the content tab before routing.
+- Pass 2 verified the expanded table, card labels, five-metric drill-down, responsive overflow behavior, and zero console errors.
+- Pass 3 removed the card-like wrapper and verified that each cross-platform content item renders as its own compact data row directly beneath the creator.
+
+**Implementation Checklist**
+
+- Completed: centered parent-table fields, follower/audience column reorder, expandable per-partner content details, exposure terminology, five drill-down metrics, English labels, typecheck, focused lint, production build, and browser interaction verification.
+
+final result: passed
+
+---
+
 **Global Compact Density QA**
 
 - Source visual truth: `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-d956c697-c1e4-44cc-bc09-2504fccc90d8.png`
@@ -212,3 +249,12 @@ final result: passed
 - Browser-rendered comparison remains unavailable because the approved in-app browser rejected local-page access under its URL safety policy.
 
 final result: blocked
+
+---
+
+**Latest QA Status — Campaign Creator Expansion And Content Metrics**
+
+- The complete evidence, interaction checks, responsive checks, and comparison history are recorded in “Campaign Creator Expansion And Content Metrics QA” above.
+- The requested creator expansion, centered fields, column order, exposure terminology, and five drill-down metrics are visually and interactively verified.
+
+final result: passed

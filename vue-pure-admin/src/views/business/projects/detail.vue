@@ -841,6 +841,7 @@ function selectCampaignTab(tab: CampaignTab) {
 
 function openContentDetail(post: any) {
   if (post?.id === undefined || post?.id === null) return;
+  campaignTab.value = "content";
   router.push({
     path: route.path,
     query: { ...route.query, contentId: String(post.id) }
@@ -1653,6 +1654,26 @@ function postEngagement(row: any) {
   ].reduce((sum, key) => sum + numberValue(row[key]), 0);
 }
 
+function postLikeCount(row: any) {
+  return numberValue(row.likeCount) || numberValue(row.likesCount);
+}
+
+function postCommentCount(row: any) {
+  return numberValue(row.commentCount) || numberValue(row.commentsCount);
+}
+
+function postShareCount(row: any) {
+  return numberValue(row.shareCount) || numberValue(row.sharesCount);
+}
+
+function postSaveCount(row: any) {
+  return (
+    numberValue(row.saveCount) ||
+    numberValue(row.favoriteCount) ||
+    numberValue(row.favoritesCount)
+  );
+}
+
 function isPaidKOLCooperation(row: any) {
   const resourceType = String(row.resourceType || "");
   return numberValue(row.quoteAmount) > 0 && !/媒体|media/i.test(resourceType);
@@ -1664,8 +1685,7 @@ function normalizePlatformName(value: unknown) {
   if (/tik\s?tok/.test(normalized)) return "TikTok";
   if (/you\s?tube/.test(normalized)) return "YouTube";
   if (/instagram|\big\b/.test(normalized)) return "Instagram";
-  if (/小红书|xiaohongshu|red\s?note|\bxhs\b/.test(normalized))
-    return "小红书";
+  if (/小红书|xiaohongshu|red\s?note|\bxhs\b/.test(normalized)) return "小红书";
   if (/facebook|\bfb\b/.test(normalized)) return "Facebook";
   if (/twitter|^x$/.test(normalized)) return "X";
   if (/linkedin/.test(normalized)) return "LinkedIn";
@@ -2553,18 +2573,35 @@ onBeforeUnmount(() => {
 
           <div class="content-detail-metrics">
             <article>
-              <span>{{ contentExposureLabel(contentDetailView) }}</span>
+              <span>{{ fieldLabel("曝光量") }}</span>
               <strong>{{
                 formatCount(postExposure(contentDetailView))
               }}</strong>
               <small>{{ contentExposureHint(contentDetailView) }}</small>
             </article>
             <article>
-              <span>{{ fieldLabel("互动量") }}</span>
+              <span>{{ fieldLabel("点赞量") }}</span>
               <strong>{{
-                formatCount(postEngagement(contentDetailView))
+                formatCount(postLikeCount(contentDetailView))
               }}</strong>
-              <small>{{ fieldLabel("点赞、评论、分享与收藏") }}</small>
+            </article>
+            <article>
+              <span>{{ fieldLabel("评论量") }}</span>
+              <strong>{{
+                formatCount(postCommentCount(contentDetailView))
+              }}</strong>
+            </article>
+            <article>
+              <span>{{ fieldLabel("分享量") }}</span>
+              <strong>{{
+                formatCount(postShareCount(contentDetailView))
+              }}</strong>
+            </article>
+            <article>
+              <span>{{ fieldLabel("收藏量") }}</span>
+              <strong>{{
+                formatCount(postSaveCount(contentDetailView))
+              }}</strong>
             </article>
           </div>
 
@@ -2848,7 +2885,98 @@ onBeforeUnmount(() => {
           <span>{{ influencerRows.length }} 位达人</span>
         </div>
         <el-table :data="influencerRows" class="creator-table">
-          <el-table-column :label="fieldLabel('达人')" min-width="250" sortable>
+          <el-table-column
+            type="expand"
+            :label="fieldLabel('展开')"
+            width="72"
+            align="center"
+          >
+            <template #default="{ row }">
+              <div class="creator-content-detail">
+                <el-table
+                  v-if="projectContentCount(row)"
+                  :data="projectPostsForResource(row)"
+                  class="creator-content-table"
+                >
+                  <el-table-column
+                    :label="fieldLabel('内容')"
+                    min-width="220"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">
+                      <button
+                        class="expanded-content-cell"
+                        type="button"
+                        @click="openContentDetail(post)"
+                      >
+                        <img
+                          v-if="post.coverUrl"
+                          :src="post.coverUrl"
+                          :alt="post.title || post.resourceName"
+                          @error="useRemotePostCover($event, post)"
+                        />
+                        <span v-else class="expanded-content-cover-empty" />
+                        <PlatformIconBadge
+                          class="expanded-content-platform"
+                          :platform="post.platform"
+                          :title="post.platform"
+                          :aria-label="post.platform"
+                        />
+                        <strong>{{
+                          post.title || post.postUrl || "未命名内容"
+                        }}</strong>
+                      </button>
+                    </template>
+                  </el-table-column>
+                  <el-table-column
+                    :label="fieldLabel('发布时间')"
+                    width="120"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">{{
+                      dateText(post.publishedAt)
+                    }}</template>
+                  </el-table-column>
+                  <el-table-column
+                    :label="fieldLabel('曝光量')"
+                    width="110"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">{{
+                      formatCount(postExposure(post))
+                    }}</template>
+                  </el-table-column>
+                  <el-table-column
+                    v-for="metric in [
+                      { label: '点赞量', value: postLikeCount },
+                      { label: '评论量', value: postCommentCount },
+                      { label: '分享量', value: postShareCount },
+                      { label: '收藏量', value: postSaveCount }
+                    ]"
+                    :key="metric.label"
+                    :label="fieldLabel(metric.label)"
+                    width="100"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">{{
+                      formatCount(metric.value(post))
+                    }}</template>
+                  </el-table-column>
+                </el-table>
+                <el-empty
+                  v-else
+                  :description="fieldLabel('暂无内容')"
+                  :image-size="48"
+                />
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('达人')"
+            min-width="250"
+            align="center"
+            sortable
+          >
             <template #default="{ row }">
               <button
                 type="button"
@@ -2878,22 +3006,12 @@ onBeforeUnmount(() => {
             prop="category"
             :label="fieldLabel('领域')"
             min-width="120"
+            align="center"
           />
-          <el-table-column
-            :label="fieldLabel('内容数量')"
-            width="110"
-            align="right"
-            sortable
-            :sort-method="sortByContentCount"
-          >
-            <template #default="{ row }">
-              {{ projectContentCount(row) }}
-            </template>
-          </el-table-column>
           <el-table-column
             :label="fieldLabel('粉丝量')"
             width="125"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByAudience"
           >
@@ -2905,9 +3023,20 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column
+            :label="fieldLabel('内容数量')"
+            width="110"
+            align="center"
+            sortable
+            :sort-method="sortByContentCount"
+          >
+            <template #default="{ row }">{{
+              projectContentCount(row)
+            }}</template>
+          </el-table-column>
+          <el-table-column
             :label="fieldLabel('曝光量')"
             width="125"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByExposure"
           >
@@ -2918,7 +3047,7 @@ onBeforeUnmount(() => {
           <el-table-column
             :label="fieldLabel('互动量')"
             width="125"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByEngagement"
           >
@@ -2929,7 +3058,7 @@ onBeforeUnmount(() => {
           <el-table-column
             :label="fieldLabel('CPM')"
             width="120"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByCPM"
           >
@@ -2947,6 +3076,7 @@ onBeforeUnmount(() => {
             prop="collaboratorTier"
             :label="fieldLabel('层级')"
             width="100"
+            align="center"
           >
             <template #default="{ row }">
               <el-tag effect="plain">{{
@@ -2989,6 +3119,7 @@ onBeforeUnmount(() => {
             :label="fieldLabel('操作')"
             width="120"
             fixed="right"
+            align="center"
           >
             <template #default="{ row }">
               <el-button
@@ -3018,7 +3149,98 @@ onBeforeUnmount(() => {
           <span>{{ mediaRows.length }} 家媒体</span>
         </div>
         <el-table :data="mediaRows" class="creator-table media-table">
-          <el-table-column :label="fieldLabel('媒体')" min-width="250" sortable>
+          <el-table-column
+            type="expand"
+            :label="fieldLabel('展开')"
+            width="72"
+            align="center"
+          >
+            <template #default="{ row }">
+              <div class="creator-content-detail">
+                <el-table
+                  v-if="projectContentCount(row)"
+                  :data="projectPostsForResource(row)"
+                  class="creator-content-table"
+                >
+                  <el-table-column
+                    :label="fieldLabel('内容')"
+                    min-width="220"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">
+                      <button
+                        class="expanded-content-cell"
+                        type="button"
+                        @click="openContentDetail(post)"
+                      >
+                        <img
+                          v-if="post.coverUrl"
+                          :src="post.coverUrl"
+                          :alt="post.title || post.resourceName"
+                          @error="useRemotePostCover($event, post)"
+                        />
+                        <span v-else class="expanded-content-cover-empty" />
+                        <PlatformIconBadge
+                          class="expanded-content-platform"
+                          :platform="post.platform"
+                          :title="post.platform"
+                          :aria-label="post.platform"
+                        />
+                        <strong>{{
+                          post.title || post.postUrl || "未命名内容"
+                        }}</strong>
+                      </button>
+                    </template>
+                  </el-table-column>
+                  <el-table-column
+                    :label="fieldLabel('发布时间')"
+                    width="120"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">{{
+                      dateText(post.publishedAt)
+                    }}</template>
+                  </el-table-column>
+                  <el-table-column
+                    :label="fieldLabel('曝光量')"
+                    width="110"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">{{
+                      formatCount(postExposure(post))
+                    }}</template>
+                  </el-table-column>
+                  <el-table-column
+                    v-for="metric in [
+                      { label: '点赞量', value: postLikeCount },
+                      { label: '评论量', value: postCommentCount },
+                      { label: '分享量', value: postShareCount },
+                      { label: '收藏量', value: postSaveCount }
+                    ]"
+                    :key="metric.label"
+                    :label="fieldLabel(metric.label)"
+                    width="100"
+                    align="center"
+                  >
+                    <template #default="{ row: post }">{{
+                      formatCount(metric.value(post))
+                    }}</template>
+                  </el-table-column>
+                </el-table>
+                <el-empty
+                  v-else
+                  :description="fieldLabel('暂无内容')"
+                  :image-size="48"
+                />
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('媒体')"
+            min-width="250"
+            align="center"
+            sortable
+          >
             <template #default="{ row }">
               <button
                 type="button"
@@ -3048,22 +3270,12 @@ onBeforeUnmount(() => {
             prop="category"
             :label="fieldLabel('领域')"
             min-width="120"
+            align="center"
           />
-          <el-table-column
-            :label="fieldLabel('内容数量')"
-            width="110"
-            align="right"
-            sortable
-            :sort-method="sortByContentCount"
-          >
-            <template #default="{ row }">{{
-              projectContentCount(row)
-            }}</template>
-          </el-table-column>
           <el-table-column
             :label="fieldLabel('月独立访客（UMV）')"
             width="170"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByAudience"
           >
@@ -3072,9 +3284,20 @@ onBeforeUnmount(() => {
             }}</template>
           </el-table-column>
           <el-table-column
-            :label="fieldLabel('播放量')"
+            :label="fieldLabel('内容数量')"
+            width="110"
+            align="center"
+            sortable
+            :sort-method="sortByContentCount"
+          >
+            <template #default="{ row }">{{
+              projectContentCount(row)
+            }}</template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('曝光量')"
             width="125"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByExposure"
           >
@@ -3085,7 +3308,7 @@ onBeforeUnmount(() => {
           <el-table-column
             :label="fieldLabel('互动量')"
             width="125"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByEngagement"
           >
@@ -3096,7 +3319,7 @@ onBeforeUnmount(() => {
           <el-table-column
             :label="fieldLabel('CPM')"
             width="120"
-            align="right"
+            align="center"
             sortable
             :sort-method="sortByCPM"
           >
@@ -3114,6 +3337,7 @@ onBeforeUnmount(() => {
             prop="collaboratorTier"
             :label="fieldLabel('层级')"
             width="100"
+            align="center"
           >
             <template #default="{ row }"
               ><el-tag effect="plain">{{
@@ -3155,6 +3379,7 @@ onBeforeUnmount(() => {
             :label="fieldLabel('操作')"
             width="120"
             fixed="right"
+            align="center"
           >
             <template #default="{ row }">
               <el-button
@@ -3197,7 +3422,7 @@ onBeforeUnmount(() => {
           </el-select>
           <el-select v-model="contentSort" class="content-sort-filter">
             <el-option :label="fieldLabel('最新发布')" value="latest" />
-            <el-option :label="fieldLabel('播放量从高到低')" value="views" />
+            <el-option :label="fieldLabel('曝光量从高到低')" value="views" />
             <el-option
               :label="fieldLabel('互动量从高到低')"
               value="engagement"
@@ -3303,7 +3528,7 @@ onBeforeUnmount(() => {
               </el-tag>
               <div class="content-card-metrics">
                 <span>
-                  <small>{{ contentExposureLabel(post) }}</small>
+                  <small>{{ fieldLabel("曝光量") }}</small>
                   <strong>{{ formatCount(postExposure(post)) }}</strong>
                 </span>
                 <span>
@@ -5795,6 +6020,69 @@ onBeforeUnmount(() => {
   align-items: center;
   color: #484d55;
 }
+.creator-content-detail {
+  padding: 0 0 0 72px;
+  background: #f7f8fa;
+}
+.creator-content-table {
+  border: 0;
+  border-radius: 0;
+}
+:deep(.creator-table .el-table__expanded-cell) {
+  padding: 0 !important;
+  background: #f7f8fa !important;
+}
+:deep(.creator-content-table th.el-table__cell) {
+  height: 34px;
+  padding: 0;
+  background: #f2f4f7;
+}
+:deep(.creator-content-table td.el-table__cell) {
+  height: 46px;
+  padding: 4px 0;
+  background: #f7f8fa;
+}
+.expanded-content-cell {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+  max-width: 100%;
+  padding: 0;
+  color: #30343a;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+.expanded-content-cell img,
+.expanded-content-cover-empty {
+  display: inline-flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 28px;
+  overflow: hidden;
+  background: #eef2f6;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.expanded-content-cell strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expanded-content-cell :deep(.expanded-content-platform) {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+}
+.expanded-content-cell :deep(.expanded-content-platform img) {
+  width: 18px;
+  height: 18px;
+}
 .latest-content-thumb {
   width: 92px;
   height: 58px;
@@ -6269,7 +6557,7 @@ onBeforeUnmount(() => {
 }
 .content-detail-metrics {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-top: 18px;
   overflow: hidden;
   background: #fff;
@@ -6456,7 +6744,13 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .content-detail-metrics article:nth-child(2) {
+    border-right: 1px solid #e7e9ed;
+  }
+  .content-detail-metrics article:nth-child(even) {
     border-right: 0;
+  }
+  .creator-content-detail {
+    padding-left: 16px;
   }
   .toolbar-actions {
     width: 100%;
@@ -6478,7 +6772,7 @@ onBeforeUnmount(() => {
 .umv-value {
   display: inline-flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   line-height: 1.2;
 }
 

@@ -607,6 +607,12 @@ const englishFieldLabels: Record<string, string> = {
   保存草稿: "Save Draft",
   创建于: "Created",
   "点赞、评论、分享与收藏": "Likes, comments, shares and saves",
+  点赞量: "Likes",
+  评论量: "Comments",
+  分享量: "Shares",
+  收藏量: "Saves",
+  展开: "Expand",
+  曝光量从高到低: "Impressions: High to Low",
   内容概览: "Content Overview",
   "合作方按名称去重，内容按发布链接去重统计。":
     "Partners are deduplicated by name and content is deduplicated by published URL.",
