@@ -39,6 +39,30 @@ final result: passed
 
 ---
 
+**Project Resource Direct Entry And Expanded Content QA**
+
+- Source visual truth: `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-1a5c8e27-cc82-4bbb-8900-24f3dc3c511c.jpg`
+- Implementation: `http://127.0.0.1:8848/#/business/projects/detail?id=24`
+- Intended state: creator tab with expanded rows and the add creator/media dialog open.
+- Implementation screenshot: blocked; the isolated in-app browser session reached the local login page, but the image CAPTCHA prevented authenticated capture.
+
+**Findings**
+
+- [P1] Authenticated screenshot comparison remains unavailable, so final pixel-level alignment cannot be certified.
+- Code inspection confirms both creator and media expanded tables use left-aligned content columns and a full-width, start-aligned content cell.
+- Expanded content data is sorted by publish time descending before rendering.
+- The add creator/media action now opens the complete data-entry form directly; the resource-library selector and online-search path were removed from this flow.
+- The backend create endpoint accepts the direct form payload, creates the resource record transactionally, and associates it with the current project while retaining compatibility with existing resource-ID calls.
+
+**Verification**
+
+- Passed: Vue TypeScript check, focused ESLint, production build, Go formatting, Go server tests, and diff whitespace validation.
+- Blocked: authenticated screenshot capture and screenshot-to-screenshot comparison.
+
+final result: blocked
+
+---
+
 **Project Overview Metrics And Platform Charts QA**
 
 - Source visual truth: `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-3e9ad5af-5e67-4760-bf4d-ef95ffd90406.png`

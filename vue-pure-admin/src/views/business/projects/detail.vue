@@ -22,10 +22,8 @@ import {
   downloadProjectData,
   getProjectDetail,
   getProjectList,
-  getProjectResourceOptions,
   renewProject,
   reportProjectInfluencer,
-  searchOnlineProjectResource,
   syncCooperation,
   updateProject,
   updateProjectBudget,
@@ -125,14 +123,7 @@ const renewDialog = ref(false);
 const reportDialog = ref(false);
 const creatorDialog = ref(false);
 const creatorDialogMode = ref<"create" | "edit">("create");
-const creatorOptions = ref<any[]>([]);
-const creatorOptionsLoading = ref(false);
-const creatorLibraryKeyword = ref("");
-const onlineSearchExpanded = ref(false);
-const onlineSearchLoading = ref(false);
-const onlineSearchResult = ref<any>(null);
 const submitting = ref(false);
-const onlineSearchOptionValue = -1;
 
 const projectForm = reactive({
   name: "",
@@ -183,20 +174,6 @@ const creatorForm = reactive({
   audienceSize: 0,
   collaboratorTier: ""
 });
-const onlineSearchForm = reactive({
-  platform: "Instagram",
-  query: "",
-  resourceType: "KOL"
-});
-
-const visibleCreatorOptions = computed(() => {
-  const keyword = creatorLibraryKeyword.value.trim().toLowerCase();
-  if (!keyword) return creatorOptions.value;
-  return creatorOptions.value.filter(item =>
-    creatorOptionLabel(item).toLowerCase().includes(keyword)
-  );
-});
-
 const navItems = [
   { key: "collaboration", label: "协作执行", icon: "ri:team-line" },
   { key: "report", label: "效果报告", icon: "ri:bar-chart-box-line" },
@@ -1278,10 +1255,12 @@ function projectPostsForResource(row: any) {
   const resourceIds = creatorResourceIds(row);
   const projectLinks = cooperationContentUrls(row);
   if (!projectLinks.size) return [];
-  return projectContentPosts.value.filter(post => {
-    if (!resourceIds.has(Number(post.resourceId))) return false;
-    return projectLinks.has(normalizedContentUrl(post.postUrl));
-  });
+  return projectContentPosts.value
+    .filter(post => {
+      if (!resourceIds.has(Number(post.resourceId))) return false;
+      return projectLinks.has(normalizedContentUrl(post.postUrl));
+    })
+    .sort((left, right) => contentDateRank(right) - contentDateRank(left));
 }
 
 function projectContentCount(row: any) {
@@ -1399,31 +1378,13 @@ function resetCreatorForm() {
     audienceSize: 0,
     collaboratorTier: ""
   });
-  creatorLibraryKeyword.value = "";
-  onlineSearchExpanded.value = false;
-  onlineSearchResult.value = null;
-  Object.assign(onlineSearchForm, {
-    platform: "Instagram",
-    query: "",
-    resourceType: "KOL"
-  });
 }
 
-async function openCreateProjectResource() {
+function openCreateProjectResource() {
   if (!project.value) return;
   resetCreatorForm();
   creatorDialogMode.value = "create";
   creatorDialog.value = true;
-  creatorOptionsLoading.value = true;
-  try {
-    const res = await getProjectResourceOptions({
-      projectId: project.value.id
-    });
-    creatorOptions.value =
-      res.code === 0 && Array.isArray(res.data) ? res.data : [];
-  } finally {
-    creatorOptionsLoading.value = false;
-  }
 }
 
 function openEditProjectResource(row: any) {
@@ -1445,78 +1406,9 @@ function openEditProjectResource(row: any) {
   creatorDialog.value = true;
 }
 
-function creatorOptionLabel(row: any) {
-  return [row.resourceName, row.resourceType, row.platform]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function filterCreatorOptions(value: string) {
-  creatorLibraryKeyword.value = value;
-}
-
-function handleCreatorOptionChange(value: number | null) {
-  if (value !== onlineSearchOptionValue) {
-    onlineSearchExpanded.value = false;
-    onlineSearchResult.value = null;
-    return;
-  }
-  creatorForm.resourceId = null;
-  onlineSearchForm.query = creatorLibraryKeyword.value.trim();
-  onlineSearchExpanded.value = true;
-}
-
-async function runOnlineCreatorSearch() {
-  if (!project.value) return;
-  if (!onlineSearchForm.platform || !onlineSearchForm.query.trim()) {
-    ElMessage.warning("请选择平台并输入主页链接、@handle 或账号");
-    return;
-  }
-  onlineSearchLoading.value = true;
-  onlineSearchResult.value = null;
-  try {
-    const res = await searchOnlineProjectResource({
-      projectId: project.value.id,
-      ...onlineSearchForm
-    });
-    if (res.code !== 0) {
-      ElMessage.warning(res.message || "全网搜索失败");
-      return;
-    }
-    const resource = res.data?.resource;
-    if (!resource?.resourceId) {
-      ElMessage.warning("平台接口未返回有效账号");
-      return;
-    }
-    if (
-      !creatorOptions.value.some(
-        item => Number(item.resourceId) === Number(resource.resourceId)
-      )
-    ) {
-      creatorOptions.value.unshift(resource);
-    }
-    creatorForm.resourceId = Number(resource.resourceId);
-    onlineSearchResult.value = resource;
-    ElMessage.success(
-      res.data?.created
-        ? "已从平台找到账号并同步到全球资源库"
-        : "已在全球资源库中找到该账号"
-    );
-  } finally {
-    onlineSearchLoading.value = false;
-  }
-}
-
 async function submitProjectResource() {
   if (!project.value) return;
-  if (!creatorForm.resourceId) {
-    ElMessage.warning("请选择达人或媒体");
-    return;
-  }
-  if (
-    creatorDialogMode.value === "edit" &&
-    (!creatorForm.resourceName.trim() || !creatorForm.resourceType)
-  ) {
+  if (!creatorForm.resourceName.trim() || !creatorForm.resourceType) {
     ElMessage.warning("请填写达人/媒体名称和类型");
     return;
   }
@@ -1526,7 +1418,7 @@ async function submitProjectResource() {
       creatorDialogMode.value === "create"
         ? await addProjectResource({
             projectId: project.value.id,
-            resourceId: creatorForm.resourceId,
+            ...creatorForm,
             source: "项目手动添加",
             status: "已关联"
           })
@@ -2901,7 +2793,7 @@ onBeforeUnmount(() => {
                   <el-table-column
                     :label="fieldLabel('内容')"
                     min-width="220"
-                    align="center"
+                    align="left"
                   >
                     <template #default="{ row: post }">
                       <button
@@ -3165,7 +3057,7 @@ onBeforeUnmount(() => {
                   <el-table-column
                     :label="fieldLabel('内容')"
                     min-width="220"
-                    align="center"
+                    align="left"
                   >
                     <template #default="{ row: post }">
                       <button
@@ -3602,211 +3494,81 @@ onBeforeUnmount(() => {
     width="620px"
   >
     <el-form :model="creatorForm" label-position="top">
-      <template v-if="creatorDialogMode === 'create'">
-        <el-form-item :label="fieldLabel('从全球资源库选择')" required>
-          <el-select
-            v-model="creatorForm.resourceId"
-            filterable
-            :filter-method="filterCreatorOptions"
-            :loading="creatorOptionsLoading"
-            :placeholder="fieldLabel('搜索达人、媒体或平台')"
-            class="w-full!"
-            @change="handleCreatorOptionChange"
-          >
+      <el-alert
+        v-if="creatorDialogMode === 'edit'"
+        :title="fieldLabel('修改会同步更新全球资源库中的该达人/媒体资料。')"
+        type="info"
+        :closable="false"
+        show-icon
+        class="creator-edit-alert"
+      />
+      <div class="creator-form-grid">
+        <el-form-item :label="fieldLabel('名称')" required>
+          <el-input v-model="creatorForm.resourceName" />
+        </el-form-item>
+        <el-form-item :label="fieldLabel('类型')" required>
+          <el-select v-model="creatorForm.resourceType" class="w-full!">
             <el-option
-              v-for="item in visibleCreatorOptions"
-              :key="item.resourceId"
-              :label="creatorOptionLabel(item)"
-              :value="item.resourceId"
+              v-for="item in ['KOL', '媒体', '艺术家']"
+              :key="item"
+              :label="item"
+              :value="item"
             />
-            <el-option
-              v-if="creatorLibraryKeyword.trim()"
-              :value="onlineSearchOptionValue"
-              :label="`未找到目标？全网搜索“${creatorLibraryKeyword.trim()}”`"
-              class="online-search-option"
-            >
-              <div class="online-search-option-content">
-                <IconifyIconOnline icon="ri:global-line" />
-                <span>{{ fieldLabel("未找到目标？全网搜索") }}</span>
-                <small>{{ creatorLibraryKeyword.trim() }}</small>
-              </div>
-            </el-option>
           </el-select>
         </el-form-item>
-        <section v-if="onlineSearchExpanded" class="online-search-panel">
-          <header>
-            <div>
-              <strong>{{ fieldLabel("从指定平台查询") }}</strong>
-              <span>{{ fieldLabel("查询成功后会同步进入全球资源库") }}</span>
-            </div>
-            <IconifyIconOnline icon="ri:global-line" />
-          </header>
-          <div class="online-search-grid">
-            <el-form-item :label="fieldLabel('平台')" required>
-              <el-select v-model="onlineSearchForm.platform" class="w-full!">
-                <el-option label="小红书 / RedNote" value="小红书" />
-                <el-option label="Instagram" value="Instagram" />
-                <el-option label="TikTok" value="TikTok" />
-                <el-option label="YouTube" value="YouTube" />
-                <el-option label="X" value="X" />
-                <el-option
-                  :label="fieldLabel('Facebook（TikHub 暂未开放接口）')"
-                  value="Facebook"
-                  disabled
-                />
-                <el-option label="LinkedIn" value="LinkedIn" />
-                <el-option label="Reddit" value="Reddit" />
-                <el-option
-                  v-if="onlineSearchForm.resourceType === '媒体'"
-                  label="Website"
-                  value="Website"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item :label="fieldLabel('类型')">
-              <el-select
-                v-model="onlineSearchForm.resourceType"
-                class="w-full!"
-              >
-                <el-option :label="fieldLabel('达人（KOL）')" value="KOL" />
-                <el-option :label="fieldLabel('媒体')" value="媒体" />
-                <el-option :label="fieldLabel('艺术家')" value="艺术家" />
-              </el-select>
-            </el-form-item>
-          </div>
-          <el-form-item
-            :label="fieldLabel('主页链接 / @handle / 平台账号')"
-            required
-          >
-            <el-input
-              v-model="onlineSearchForm.query"
-              clearable
-              :placeholder="fieldLabel('例如 @username 或完整主页链接')"
-              @keyup.enter="runOnlineCreatorSearch"
-            >
-              <template #append>
-                <el-button
-                  :loading="onlineSearchLoading"
-                  @click="runOnlineCreatorSearch"
-                  >查询</el-button
-                >
-              </template>
-            </el-input>
-          </el-form-item>
-          <div v-if="onlineSearchResult" class="online-search-result">
-            <el-avatar :src="onlineSearchResult.resourceAvatarUrl" :size="42">
-              {{ String(onlineSearchResult.resourceName || "R").slice(0, 1) }}
-            </el-avatar>
-            <div>
-              <strong>{{ onlineSearchResult.resourceName }}</strong>
-              <span>
-                {{ onlineSearchResult.platform }}
-                {{
-                  onlineSearchResult.platformHandle
-                    ? `@${onlineSearchResult.platformHandle}`
-                    : ""
-                }}
-                ·
-                {{
-                  onlineSearchResult.resourceType === "媒体"
-                    ? `${formatCount(onlineSearchResult.audienceSize)} UMV`
-                    : `${formatCount(onlineSearchResult.followers)} 粉丝`
-                }}
-              </span>
-            </div>
-            <el-tag type="success" effect="light">{{
-              fieldLabel("已选中")
-            }}</el-tag>
-          </div>
-        </section>
-        <el-alert
-          v-if="!creatorOptionsLoading && creatorOptions.length === 0"
-          :title="
-            fieldLabel(
-              '全球资源库暂无可添加账号，可在上方输入账号后选择“全网搜索”。'
-            )
+        <el-form-item :label="fieldLabel('领域')">
+          <el-input v-model="creatorForm.category" />
+        </el-form-item>
+        <el-form-item :label="fieldLabel('市场')">
+          <el-input v-model="creatorForm.market" />
+        </el-form-item>
+        <el-form-item :label="fieldLabel('平台')">
+          <el-input v-model="creatorForm.platform" />
+        </el-form-item>
+        <el-form-item
+          :label="
+            creatorForm.resourceType === '媒体'
+              ? normalizePlatformName(creatorForm.platform) === 'Website'
+                ? '月访问量（Monthly Visits）'
+                : '月独立访客（UMV）'
+              : '本平台粉丝数'
           "
-          type="info"
-          :closable="false"
-          show-icon
-        />
-      </template>
-      <template v-else>
-        <el-alert
-          :title="fieldLabel('修改会同步更新全球资源库中的该达人/媒体资料。')"
-          type="info"
-          :closable="false"
-          show-icon
-          class="creator-edit-alert"
-        />
-        <div class="creator-form-grid">
-          <el-form-item :label="fieldLabel('名称')" required>
-            <el-input v-model="creatorForm.resourceName" />
-          </el-form-item>
-          <el-form-item :label="fieldLabel('类型')" required>
-            <el-select v-model="creatorForm.resourceType" class="w-full!">
-              <el-option
-                v-for="item in ['KOL', '媒体', '艺术家']"
-                :key="item"
-                :label="item"
-                :value="item"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item :label="fieldLabel('领域')">
-            <el-input v-model="creatorForm.category" />
-          </el-form-item>
-          <el-form-item :label="fieldLabel('市场')">
-            <el-input v-model="creatorForm.market" />
-          </el-form-item>
-          <el-form-item :label="fieldLabel('平台')">
-            <el-input v-model="creatorForm.platform" />
-          </el-form-item>
-          <el-form-item
-            :label="
-              creatorForm.resourceType === '媒体'
-                ? normalizePlatformName(creatorForm.platform) === 'Website'
-                  ? '月访问量（Monthly Visits）'
-                  : '月独立访客（UMV）'
-                : '本平台粉丝数'
-            "
-          >
-            <el-input-number
-              v-if="creatorForm.resourceType === '媒体'"
-              v-model="creatorForm.audienceSize"
-              :min="0"
-              class="w-full!"
-            />
-            <el-input-number
-              v-else
-              v-model="creatorForm.followers"
-              :min="0"
-              class="w-full!"
-            />
-          </el-form-item>
-          <el-form-item
-            :label="fieldLabel('主页链接')"
-            class="creator-form-grid__wide"
-          >
-            <el-input v-model="creatorForm.platformUrl" />
-          </el-form-item>
-          <el-form-item
-            :label="fieldLabel('联系方式')"
-            class="creator-form-grid__wide"
-          >
-            <el-input v-model="creatorForm.primaryContact" />
-          </el-form-item>
-          <el-form-item
-            :label="fieldLabel('层级（系统自动）')"
-            class="creator-form-grid__wide"
-          >
-            <el-input
-              :model-value="creatorForm.collaboratorTier || '保存后自动计算'"
-              disabled
-            />
-          </el-form-item>
-        </div>
-      </template>
+        >
+          <el-input-number
+            v-if="creatorForm.resourceType === '媒体'"
+            v-model="creatorForm.audienceSize"
+            :min="0"
+            class="w-full!"
+          />
+          <el-input-number
+            v-else
+            v-model="creatorForm.followers"
+            :min="0"
+            class="w-full!"
+          />
+        </el-form-item>
+        <el-form-item
+          :label="fieldLabel('主页链接')"
+          class="creator-form-grid__wide"
+        >
+          <el-input v-model="creatorForm.platformUrl" />
+        </el-form-item>
+        <el-form-item
+          :label="fieldLabel('联系方式')"
+          class="creator-form-grid__wide"
+        >
+          <el-input v-model="creatorForm.primaryContact" />
+        </el-form-item>
+        <el-form-item
+          :label="fieldLabel('层级（系统自动）')"
+          class="creator-form-grid__wide"
+        >
+          <el-input
+            :model-value="creatorForm.collaboratorTier || '保存后自动计算'"
+            disabled
+          />
+        </el-form-item>
+      </div>
     </el-form>
     <template #footer>
       <el-button @click="creatorDialog = false">{{
@@ -6043,7 +5805,8 @@ onBeforeUnmount(() => {
   background: #f7f8fa;
 }
 .expanded-content-cell {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   gap: 9px;
   align-items: center;
   max-width: 100%;

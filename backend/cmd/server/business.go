@@ -3580,13 +3580,74 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 	body := readBody(r)
 	projectID := intField(body, "projectId")
 	resourceID := intField(body, "resourceId")
-	if projectID == 0 || resourceID == 0 {
-		writeError(w, http.StatusOK, 10001, "项目和资源不能为空")
+	if projectID == 0 {
+		writeError(w, http.StatusOK, 10001, "项目不能为空")
 		return
+	}
+	tx, err := a.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	defer tx.Rollback()
+	if resourceID == 0 {
+		name := strings.TrimSpace(str(body, "resourceName"))
+		resourceType := strings.TrimSpace(str(body, "resourceType"))
+		if name == "" || resourceType == "" {
+			writeError(w, http.StatusOK, 10001, "请填写达人/媒体名称和类型")
+			return
+		}
+		platform := platformDisplayName(str(body, "platform"))
+		if platform == "" {
+			platform = strings.TrimSpace(str(body, "platform"))
+		}
+		platformURL := strings.TrimSpace(str(body, "platformUrl"))
+		if platformURL != "" {
+			var normalizeErr error
+			platformURL, normalizeErr = normalizeImportedProfileLink(platformURL)
+			if normalizeErr != nil {
+				writeError(w, http.StatusOK, 10001, normalizeErr.Error())
+				return
+			}
+		}
+		followers := intField(body, "followers")
+		audienceSize := followers
+		audienceUnit := "Followers"
+		referenceSource := "项目手动添加"
+		if resourceType == "媒体" {
+			followers = 0
+			audienceSize = intField(body, "audienceSize")
+			audienceUnit = "UMV"
+			referenceSource = "Similarweb"
+		}
+		result, createErr := tx.ExecContext(r.Context(),
+			`insert into biz_resources
+			 (name, resource_type, country, market, platform, platform_handle, platform_url,
+			  category, contact, status, followers, audience_size, audience_size_unit,
+			  reference_source, score, level, risk_level)
+			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, '可合作', ?, ?, ?, ?, 60, 'B', '低')`,
+			name, resourceType, str(body, "market"), str(body, "market"), platform,
+			importedPlatformHandle(platform, platformURL), platformURL, str(body, "category"),
+			str(body, "primaryContact"), followers, audienceSize, audienceUnit, referenceSource,
+		)
+		if createErr != nil {
+			writeDBError(w, createErr)
+			return
+		}
+		id, idErr := result.LastInsertId()
+		if idErr != nil {
+			writeDBError(w, idErr)
+			return
+		}
+		resourceID = int(id)
+		if err := refreshAllResourceAudienceClassifications(r.Context(), tx); err != nil {
+			writeDBError(w, err)
+			return
+		}
 	}
 	status := defaultString(str(body, "status"), "候选")
 	reason := str(body, "reason")
-	_, err := a.DB().ExecContext(r.Context(),
+	_, err = tx.ExecContext(r.Context(),
 		`insert into biz_project_resources
 		 (project_id, resource_id, status, source, recommend_reason, priority, estimated_cost, risk_tip)
 		 values (?, ?, ?, ?, ?, ?, ?, ?)
@@ -3605,7 +3666,11 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		writeDBError(w, err)
 		return
 	}
-	writeOK(w, map[string]any{"created": true})
+	if err := tx.Commit(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"created": true, "resourceId": resourceID})
 }
 
 func (a *app) businessProjectResourceOptions(w http.ResponseWriter, r *http.Request) {
