@@ -103,6 +103,13 @@ export const getProjectResourceOptions = (params?: object) => {
   );
 };
 
+export const getProjectResourceFormOptions = () => {
+  return http.request<Result<any>>(
+    "get",
+    "/business/project-resources/form-options"
+  );
+};
+
 export const searchOnlineProjectResource = (data?: object) => {
   return http.request<Result>(
     "post",

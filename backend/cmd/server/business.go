@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -3584,6 +3585,74 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusOK, 10001, "项目不能为空")
 		return
 	}
+	type projectResourceContent struct {
+		Platform    string
+		ContentURL  string
+		ContentType string
+	}
+	contents := make([]projectResourceContent, 0)
+	if rawContents, ok := body["contents"].([]any); ok {
+		for _, rawContent := range rawContents {
+			content, ok := rawContent.(map[string]any)
+			if !ok {
+				writeError(w, http.StatusOK, 10001, "合作内容格式不正确")
+				return
+			}
+			contentURL, normalizeErr := normalizeImportedCooperationLink(str(content, "contentUrl"))
+			if normalizeErr != nil {
+				writeError(w, http.StatusOK, 10001, normalizeErr.Error())
+				return
+			}
+			platform := normalizeImportedPlatform(str(content, "platform"), contentURL)
+			contentType := strings.TrimSpace(str(content, "contentType"))
+			if platform == "" || contentType == "" {
+				writeError(w, http.StatusOK, 10001, "请完整填写每条内容的平台和内容类型")
+				return
+			}
+			contents = append(contents, projectResourceContent{
+				Platform: platform, ContentURL: contentURL, ContentType: contentType,
+			})
+		}
+	}
+	cooperationMode := strings.TrimSpace(str(body, "cooperationMode"))
+	if cooperationMode != "" {
+		if cooperationMode != "single" && cooperationMode != "package" {
+			writeError(w, http.StatusOK, 10001, "合作模式仅支持单次合作或打包合作")
+			return
+		}
+		if len(contents) == 0 || (cooperationMode == "single" && len(contents) != 1) {
+			writeError(w, http.StatusOK, 10001, "单次合作只能添加一条内容，打包合作至少添加一条内容")
+			return
+		}
+		quoteAmount, hasQuoteAmount := body["quoteAmount"]
+		if strings.TrimSpace(str(body, "market")) == "" ||
+			strings.TrimSpace(str(body, "platformUrl")) == "" ||
+			strings.TrimSpace(str(body, "cooperationType")) == "" ||
+			!hasQuoteAmount || quoteAmount == nil || floatField(body, "quoteAmount") < 0 {
+			writeError(w, http.StatusOK, 10001, "合作方链接、市场、合作类型、内容和合作费用均为必填项")
+			return
+		}
+		standardOptions, optionsErr := a.standardImportOptions(r.Context())
+		if optionsErr != nil {
+			writeDBError(w, optionsErr)
+			return
+		}
+		resourceType := strings.TrimSpace(str(body, "resourceType"))
+		category := strings.TrimSpace(str(body, "category"))
+		if !standardImportOptionAllowed(standardOptions, "resourceType", resourceType) ||
+			(category != "" && !standardImportOptionAllowed(standardOptions, "category", category)) ||
+			!standardImportOptionAllowed(standardOptions, "cooperationType", str(body, "cooperationType")) {
+			writeError(w, http.StatusOK, 10001, "类型、领域或合作类型不符合标准模板")
+			return
+		}
+		for _, content := range contents {
+			if !standardImportOptionAllowed(standardOptions, "platform", content.Platform) ||
+				!standardImportOptionAllowed(standardOptions, "contentType", content.ContentType) {
+				writeError(w, http.StatusOK, 10001, "平台或内容类型不符合标准模板")
+				return
+			}
+		}
+	}
 	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeDBError(w, err)
@@ -3666,11 +3735,71 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		writeDBError(w, err)
 		return
 	}
+	cooperationIDs := make([]int, 0, len(contents))
+	if len(contents) > 0 {
+		totalCost := floatField(body, "quoteAmount")
+		contentCosts := allocateCooperationCosts(totalCost, len(contents))
+		batchID := ""
+		if cooperationMode == "package" {
+			batchID = fmt.Sprintf("manual-package-%d", time.Now().UnixNano())
+		}
+		for index, content := range contents {
+			contentCost := contentCosts[index]
+			result, createErr := tx.ExecContext(r.Context(),
+				`insert into biz_cooperations
+				 (project_id, resource_id, cooperation_type, cooperation_mode, package_id, content_platform, content_type,
+				  owner, vendor, quote_amount, currency, status, deliverable_status,
+				  deliverable_links, final_link, import_batch_id, notes)
+				 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '已发布', '已完成', ?, ?, ?, ?)`,
+				projectID, resourceID, str(body, "cooperationType"), cooperationMode, batchID, content.Platform, content.ContentType,
+				str(body, "owner"), str(body, "vendor"), contentCost,
+				defaultString(str(body, "currency"), "USD"), content.ContentURL, content.ContentURL,
+				batchID, str(body, "notes"),
+			)
+			if createErr != nil {
+				writeDBError(w, createErr)
+				return
+			}
+			cooperationID, idErr := result.LastInsertId()
+			if idErr != nil {
+				writeDBError(w, idErr)
+				return
+			}
+			cooperationIDs = append(cooperationIDs, int(cooperationID))
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		writeDBError(w, err)
 		return
 	}
-	writeOK(w, map[string]any{"created": true, "resourceId": resourceID})
+	syncWarnings := make([]string, 0)
+	for _, cooperationID := range cooperationIDs {
+		if _, syncErr := a.syncCooperationPost(r.Context(), cooperationID, true); syncErr != nil {
+			syncWarnings = append(syncWarnings, syncErr.Error())
+		}
+	}
+	writeOK(w, map[string]any{
+		"created": true, "resourceId": resourceID,
+		"cooperationIds": cooperationIDs, "syncWarnings": syncWarnings,
+	})
+}
+
+func allocateCooperationCosts(total float64, count int) []float64 {
+	if count <= 0 {
+		return nil
+	}
+	totalCents := int64(math.Round(total * 100))
+	baseCents := totalCents / int64(count)
+	remainder := totalCents % int64(count)
+	costs := make([]float64, count)
+	for index := range costs {
+		cents := baseCents
+		if int64(index) < remainder {
+			cents++
+		}
+		costs[index] = float64(cents) / 100
+	}
+	return costs
 }
 
 func (a *app) businessProjectResourceOptions(w http.ResponseWriter, r *http.Request) {
@@ -3704,6 +3833,21 @@ func (a *app) businessProjectResourceOptions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeOK(w, rows)
+}
+
+func (a *app) businessProjectResourceFormOptions(w http.ResponseWriter, r *http.Request) {
+	options, err := a.standardImportOptions(r.Context())
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{
+		"resourceTypes":    options["resourceType"],
+		"categories":       options["category"],
+		"platforms":        options["platform"],
+		"cooperationTypes": options["cooperationType"],
+		"contentTypes":     options["contentType"],
+	})
 }
 
 func (a *app) updateBusinessProjectResource(w http.ResponseWriter, r *http.Request) {
@@ -3960,7 +4104,8 @@ func (a *app) businessCooperations(w http.ResponseWriter, r *http.Request) {
 		        r.platform_url as platformUrl, r.country, r.market, r.language, r.platform,
 		        r.resource_type as resourceType, r.category, r.audience_size as audienceSize,
 		        r.audience_size_unit as audienceSizeUnit, r.tier as collaboratorTier, r.contact as primaryContact,
-		        c.cooperation_type as cooperationType, c.content_type as contentType, c.owner, c.vendor, c.audience_segment as audienceSegment,
+		        c.cooperation_type as cooperationType, c.cooperation_mode as cooperationMode,
+		        c.package_id as packageId, c.content_type as contentType, c.owner, c.vendor, c.audience_segment as audienceSegment,
 		        c.creative_name as creativeName, c.quote_amount as quoteAmount,
 		        c.currency, c.status, c.deliverable_status as deliverableStatus,
 		        c.impressions, c.views, c.clicks, c.conversions, c.engagement_count as engagementCount,

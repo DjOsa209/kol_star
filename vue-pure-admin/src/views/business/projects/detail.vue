@@ -22,6 +22,7 @@ import {
   downloadProjectData,
   getProjectDetail,
   getProjectList,
+  getProjectResourceFormOptions,
   renewProject,
   reportProjectInfluencer,
   syncCooperation,
@@ -167,13 +168,77 @@ const creatorForm = reactive({
   resourceType: "KOL",
   category: "",
   market: "",
+  cooperationMode: "single" as "single" | "package",
+  cooperationType: "付费合作",
+  quoteAmount: 0,
+  currency: "USD",
   platform: "YouTube",
   platformUrl: "",
   primaryContact: "",
+  owner: "",
+  vendor: "",
+  notes: "",
   followers: 0,
   audienceSize: 0,
-  collaboratorTier: ""
+  collaboratorTier: "",
+  contents: [
+    {
+      platform: "YouTube",
+      contentUrl: "",
+      contentType: "兴趣圈层类"
+    }
+  ]
 });
+
+const standardPlatformOptions = ref([
+  "Website",
+  "播客",
+  "电视",
+  "报刊",
+  "小红书",
+  "YouTube",
+  "TikTok",
+  "Instagram",
+  "Facebook",
+  "X",
+  "LinkedIn",
+  "Reddit"
+]);
+const standardResourceTypeOptions = ref(["KOL", "媒体", "艺术家"]);
+const creatorCooperationTypeOptions = ref([
+  "付费合作",
+  "产品置换",
+  "联盟合作",
+  "活动合作",
+  "采访合作"
+]);
+const standardCategoryOptions = ref([
+  "科技",
+  "生活方式",
+  "商业",
+  "设计",
+  "游戏",
+  "摄影",
+  "体育",
+  "娱乐",
+  "汽车",
+  "财经",
+  "教育",
+  "大众媒体"
+]);
+const creatorContentTypeOptions = ref([
+  "生活记录类",
+  "娱乐搞笑类",
+  "兴趣圈层类",
+  "消费种草类",
+  "商业/品牌类",
+  "新闻资讯类",
+  "动画/创意类",
+  "短剧类"
+]);
+const creatorMarketOptions = computed(() =>
+  countryOptionsWithLegacyValues(creatorForm.market ? [creatorForm.market] : [])
+);
 const navItems = [
   { key: "collaboration", label: "协作执行", icon: "ri:team-line" },
   { key: "report", label: "效果报告", icon: "ri:bar-chart-box-line" },
@@ -1371,20 +1436,65 @@ function resetCreatorForm() {
     resourceType: "KOL",
     category: "",
     market: "",
+    cooperationMode: "single",
+    cooperationType: "付费合作",
+    quoteAmount: 0,
+    currency: "USD",
     platform: "YouTube",
     platformUrl: "",
     primaryContact: "",
+    owner: "",
+    vendor: "",
+    notes: "",
     followers: 0,
     audienceSize: 0,
-    collaboratorTier: ""
+    collaboratorTier: "",
+    contents: [
+      {
+        platform: "YouTube",
+        contentUrl: "",
+        contentType: "兴趣圈层类"
+      }
+    ]
   });
 }
 
-function openCreateProjectResource() {
+function addCreatorContentRow() {
+  creatorForm.contents.push({
+    platform: creatorForm.contents.at(-1)?.platform || "YouTube",
+    contentUrl: "",
+    contentType: creatorForm.contents.at(-1)?.contentType || "兴趣圈层类"
+  });
+}
+
+function removeCreatorContentRow(index: number) {
+  if (creatorForm.contents.length <= 1) return;
+  creatorForm.contents.splice(index, 1);
+}
+
+function handleCooperationModeChange(mode: "single" | "package") {
+  if (mode === "single" && creatorForm.contents.length > 1) {
+    creatorForm.contents.splice(1);
+  }
+}
+
+async function openCreateProjectResource() {
   if (!project.value) return;
   resetCreatorForm();
   creatorDialogMode.value = "create";
   creatorDialog.value = true;
+  const res = await getProjectResourceFormOptions();
+  if (res.code !== 0 || !res.data) return;
+  standardPlatformOptions.value =
+    res.data.platforms || standardPlatformOptions.value;
+  standardResourceTypeOptions.value =
+    res.data.resourceTypes || standardResourceTypeOptions.value;
+  creatorCooperationTypeOptions.value =
+    res.data.cooperationTypes || creatorCooperationTypeOptions.value;
+  standardCategoryOptions.value =
+    res.data.categories || standardCategoryOptions.value;
+  creatorContentTypeOptions.value =
+    res.data.contentTypes || creatorContentTypeOptions.value;
 }
 
 function openEditProjectResource(row: any) {
@@ -1412,6 +1522,28 @@ async function submitProjectResource() {
     ElMessage.warning("请填写达人/媒体名称和类型");
     return;
   }
+  if (creatorDialogMode.value === "create") {
+    if (!creatorForm.market.trim()) {
+      ElMessage.warning("请填写市场");
+      return;
+    }
+    if (!creatorForm.platformUrl.trim()) {
+      ElMessage.warning("请填写标准模板中的合作方主页链接");
+      return;
+    }
+    if (!creatorForm.cooperationType || creatorForm.quoteAmount < 0) {
+      ElMessage.warning("请填写合作类型和合作费用");
+      return;
+    }
+    if (
+      creatorForm.contents.some(
+        item => !item.platform || !item.contentType || !item.contentUrl.trim()
+      )
+    ) {
+      ElMessage.warning("请完整填写每条内容的平台、内容链接和内容类型");
+      return;
+    }
+  }
   submitting.value = true;
   try {
     const res =
@@ -1419,6 +1551,7 @@ async function submitProjectResource() {
         ? await addProjectResource({
             projectId: project.value.id,
             ...creatorForm,
+            platform: creatorForm.contents[0]?.platform || creatorForm.platform,
             source: "项目手动添加",
             status: "已关联"
           })
@@ -3491,7 +3624,7 @@ onBeforeUnmount(() => {
     :title="
       creatorDialogMode === 'create' ? '添加达人 / 媒体' : '编辑达人 / 媒体'
     "
-    width="620px"
+    width="820px"
   >
     <el-form :model="creatorForm" label-position="top">
       <el-alert
@@ -3509,7 +3642,7 @@ onBeforeUnmount(() => {
         <el-form-item :label="fieldLabel('类型')" required>
           <el-select v-model="creatorForm.resourceType" class="w-full!">
             <el-option
-              v-for="item in ['KOL', '媒体', '艺术家']"
+              v-for="item in standardResourceTypeOptions"
               :key="item"
               :label="item"
               :value="item"
@@ -3517,39 +3650,71 @@ onBeforeUnmount(() => {
           </el-select>
         </el-form-item>
         <el-form-item :label="fieldLabel('领域')">
-          <el-input v-model="creatorForm.category" />
+          <el-select
+            v-model="creatorForm.category"
+            clearable
+            filterable
+            class="w-full!"
+          >
+            <el-option
+              v-for="item in standardCategoryOptions"
+              :key="item"
+              :label="fieldLabel(item)"
+              :value="item"
+            />
+          </el-select>
         </el-form-item>
-        <el-form-item :label="fieldLabel('市场')">
-          <el-input v-model="creatorForm.market" />
+        <el-form-item :label="fieldLabel('市场')" required>
+          <el-select
+            v-model="creatorForm.market"
+            clearable
+            filterable
+            class="w-full!"
+          >
+            <el-option
+              v-for="item in creatorMarketOptions"
+              :key="item.code || item.name"
+              :label="item.label"
+              :value="item.name"
+            />
+          </el-select>
         </el-form-item>
-        <el-form-item :label="fieldLabel('平台')">
+        <el-form-item
+          v-if="creatorDialogMode === 'edit'"
+          :label="fieldLabel('平台')"
+        >
           <el-input v-model="creatorForm.platform" />
         </el-form-item>
         <el-form-item
           :label="
-            creatorForm.resourceType === '媒体'
-              ? normalizePlatformName(creatorForm.platform) === 'Website'
-                ? '月访问量（Monthly Visits）'
-                : '月独立访客（UMV）'
-              : '本平台粉丝数'
+            creatorDialogMode === 'create'
+              ? '粉丝数 / 访问量（系统自动）'
+              : creatorForm.resourceType === '媒体'
+                ? normalizePlatformName(creatorForm.platform) === 'Website'
+                  ? '月访问量（Monthly Visits）'
+                  : '月独立访客（UMV）'
+                : '本平台粉丝数'
           "
         >
           <el-input-number
             v-if="creatorForm.resourceType === '媒体'"
             v-model="creatorForm.audienceSize"
             :min="0"
+            :disabled="creatorDialogMode === 'create'"
             class="w-full!"
           />
           <el-input-number
             v-else
             v-model="creatorForm.followers"
             :min="0"
+            :disabled="creatorDialogMode === 'create'"
             class="w-full!"
           />
         </el-form-item>
         <el-form-item
-          :label="fieldLabel('主页链接')"
+          :label="fieldLabel('合作方（主页链接）')"
           class="creator-form-grid__wide"
+          :required="creatorDialogMode === 'create'"
         >
           <el-input v-model="creatorForm.platformUrl" />
         </el-form-item>
@@ -3560,6 +3725,7 @@ onBeforeUnmount(() => {
           <el-input v-model="creatorForm.primaryContact" />
         </el-form-item>
         <el-form-item
+          v-if="creatorDialogMode === 'edit'"
           :label="fieldLabel('层级（系统自动）')"
           class="creator-form-grid__wide"
         >
@@ -3569,6 +3735,134 @@ onBeforeUnmount(() => {
           />
         </el-form-item>
       </div>
+      <template v-if="creatorDialogMode === 'create'">
+        <section class="creator-form-section">
+          <header>
+            <strong>{{ fieldLabel("合作信息") }}</strong>
+            <span>打包合作按整体价格均摊，项目总成本仅计算一次</span>
+          </header>
+          <div class="creator-form-grid">
+            <el-form-item :label="fieldLabel('合作模式')" required>
+              <el-radio-group
+                v-model="creatorForm.cooperationMode"
+                @change="handleCooperationModeChange"
+              >
+                <el-radio-button value="single">单次合作</el-radio-button>
+                <el-radio-button value="package">打包合作</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item :label="fieldLabel('合作类型')" required>
+              <el-select v-model="creatorForm.cooperationType" class="w-full!">
+                <el-option
+                  v-for="item in creatorCooperationTypeOptions"
+                  :key="item"
+                  :label="fieldLabel(item)"
+                  :value="item"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item
+              :label="
+                creatorForm.cooperationMode === 'package'
+                  ? fieldLabel('整体合作费用（USD）')
+                  : fieldLabel('单条内容费用（USD）')
+              "
+              required
+            >
+              <el-input-number
+                v-model="creatorForm.quoteAmount"
+                :min="0"
+                :precision="2"
+                class="w-full!"
+              />
+            </el-form-item>
+          </div>
+        </section>
+
+        <section class="creator-form-section">
+          <header>
+            <strong>{{ fieldLabel("合作内容") }}</strong>
+            <el-button
+              v-if="creatorForm.cooperationMode === 'package'"
+              link
+              type="primary"
+              @click="addCreatorContentRow"
+            >
+              <IconifyIconOnline icon="ri:add-line" />
+              添加平台 / 内容
+            </el-button>
+          </header>
+          <div class="creator-content-form-list">
+            <div
+              v-for="(content, index) in creatorForm.contents"
+              :key="index"
+              class="creator-content-form-row"
+            >
+              <span class="creator-content-form-index">{{ index + 1 }}</span>
+              <el-form-item :label="fieldLabel('平台')" required>
+                <el-select v-model="content.platform" class="w-full!">
+                  <el-option
+                    v-for="item in standardPlatformOptions"
+                    :key="item"
+                    :label="fieldLabel(item)"
+                    :value="item"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item :label="fieldLabel('内容链接')" required>
+                <el-input
+                  v-model="content.contentUrl"
+                  placeholder="https://..."
+                />
+              </el-form-item>
+              <el-form-item :label="fieldLabel('内容类型')" required>
+                <el-select v-model="content.contentType" class="w-full!">
+                  <el-option
+                    v-for="item in creatorContentTypeOptions"
+                    :key="item"
+                    :label="fieldLabel(item)"
+                    :value="item"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-button
+                v-if="
+                  creatorForm.cooperationMode === 'package' &&
+                  creatorForm.contents.length > 1
+                "
+                circle
+                plain
+                type="danger"
+                class="creator-content-remove"
+                :aria-label="`删除第 ${index + 1} 条内容`"
+                @click="removeCreatorContentRow(index)"
+              >
+                <IconifyIconOnline icon="ri:delete-bin-line" />
+              </el-button>
+            </div>
+          </div>
+        </section>
+
+        <section class="creator-form-section">
+          <header>
+            <strong>{{ fieldLabel("补充信息（非必填）") }}</strong>
+          </header>
+          <div class="creator-form-grid">
+            <el-form-item :label="fieldLabel('对接人')">
+              <el-input v-model="creatorForm.owner" />
+            </el-form-item>
+            <el-form-item :label="fieldLabel('供应商')">
+              <el-input v-model="creatorForm.vendor" />
+            </el-form-item>
+            <el-form-item
+              :label="fieldLabel('备注')"
+              class="creator-form-grid__wide"
+            >
+              <el-input v-model="creatorForm.notes" type="textarea" :rows="2" />
+            </el-form-item>
+          </div>
+        </section>
+      </template>
     </el-form>
     <template #footer>
       <el-button @click="creatorDialog = false">{{
@@ -5966,6 +6260,45 @@ onBeforeUnmount(() => {
 .creator-form-grid__wide {
   grid-column: 1 / -1;
 }
+.creator-form-section {
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid #ebeef3;
+}
+.creator-form-section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.creator-form-section > header span {
+  color: #8a8f99;
+  font-size: 12px;
+}
+.creator-content-form-list {
+  display: grid;
+  gap: 8px;
+}
+.creator-content-form-row {
+  display: grid;
+  grid-template-columns: 28px 150px minmax(220px, 1fr) 170px 32px;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  background: #f7f8fa;
+}
+.creator-content-form-row :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+.creator-content-form-index {
+  align-self: center;
+  color: #8a8f99;
+  font-size: 12px;
+  text-align: center;
+}
+.creator-content-remove {
+  margin-bottom: 1px;
+}
 .platform-filter {
   width: 155px;
 }
@@ -6529,6 +6862,20 @@ onBeforeUnmount(() => {
   }
   .creator-form-grid__wide {
     grid-column: auto;
+  }
+  .creator-content-form-row {
+    grid-template-columns: 28px 1fr 32px;
+  }
+  .creator-content-form-row :deep(.el-form-item) {
+    grid-column: 2;
+  }
+  .creator-content-form-index {
+    grid-row: 1;
+    grid-column: 1;
+  }
+  .creator-content-remove {
+    grid-row: 1;
+    grid-column: 3;
   }
 }
 

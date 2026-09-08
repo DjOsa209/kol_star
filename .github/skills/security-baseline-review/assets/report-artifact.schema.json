@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/pi-security-review/report-artifact-1.1.json",
+  "title": "PI Security Review Report Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reportId",
+    "generatedAt",
+    "baseline",
+    "dataClassification",
+    "remoteUploadAllowed",
+    "uploadApprovalRequired",
+    "uploadStatus",
+    "workspaceLabel",
+    "skillPath",
+    "reportMarkdown"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.1" },
+    "reportId": { "type": "string", "format": "uuid" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "baseline": { "const": "sec-baseline.md" },
+    "dataClassification": { "const": "CONFIDENTIAL" },
+    "remoteUploadAllowed": { "type": "boolean" },
+    "uploadApprovalRequired": { "const": false },
+    "uploadStatus": {
+      "enum": ["not-configured", "pending", "uploaded", "failed"]
+    },
+    "workspaceLabel": { "type": "string", "minLength": 1 },
+    "skillPath": { "type": "string", "minLength": 1 },
+    "reportMarkdown": { "type": "string", "minLength": 1 },
+    "remoteReportId": { "type": "string", "minLength": 1 },
+    "uploadedAt": { "type": "string", "format": "date-time" }
+  }
+}

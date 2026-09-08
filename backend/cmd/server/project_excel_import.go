@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/xuri/excelize/v2"
 )
+
+//go:embed templates/XMP_Standard_Project_Import_EN.xlsx
+var englishStandardProjectImportTemplate []byte
 
 const standardProjectCostNumberFormat = `"$"#,##0.00;-"$"#,##0.00`
 
@@ -44,6 +48,15 @@ var excelContentAliases = []struct {
 
 var standardProjectImportHeaders = []string{
 	"标准字段", "Name", "collaboratorName", "resourceType", "category", "market", "audienceSize",
+	"collaboratorTier", "platform", "collaborationType", "contentUrl", "contentType", "cost", "views",
+	"engagement", "primaryContact", "owner", "vendor", "notes", "CPM",
+}
+
+// The supplied English workbook keeps the merged A1:A2 cell as "Name". It
+// remains import-compatible because column A is the merged label column; keep
+// this narrow variant accepted while retaining strict header validation.
+var englishStandardProjectImportHeaders = []string{
+	"Name", "Name", "collaboratorName", "resourceType", "category", "market", "audienceSize",
 	"collaboratorTier", "platform", "collaborationType", "contentUrl", "contentType", "cost", "views",
 	"engagement", "primaryContact", "owner", "vendor", "notes", "CPM",
 }
@@ -100,7 +113,7 @@ var standardProjectImportRules = []string{
 }
 
 var standardProjectImportScopesEnglish = []string{
-	"填写范畴",
+	"Filling Scope",
 	"Media Name\nCreator Name",
 	"Media Website URL\nCreator Account URL",
 	"KOL\nMedia\nArtist",
@@ -123,7 +136,7 @@ var standardProjectImportScopesEnglish = []string{
 }
 
 var standardProjectImportRulesEnglish = []string{
-	"填写规范",
+	"Filling Guidelines",
 	"Please enter the name of the partner you are collaborating with.",
 	"1. Enter the corresponding URL for each partner:\n- For media partners, enter the official website link.\n- For KOLs, enter the corresponding platform homepage link.\n2. Use one URL per partner/resource and enter the full HTTPS link.",
 	"Select from preset categories only. Custom input is not allowed.",
@@ -296,11 +309,11 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 }
 
 func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string][]string, english bool) (*excelize.File, error) {
+	if english {
+		return buildEnglishStandardProjectImportTemplate(options)
+	}
 	book := excelize.NewFile()
 	sheet := "标准模板"
-	if english {
-		sheet = "Standard Template"
-	}
 	defaultSheet := book.GetSheetName(0)
 	if err := book.SetSheetName(defaultSheet, sheet); err != nil {
 		return nil, err
@@ -310,11 +323,7 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 	scopes := standardProjectImportScopes
 	rules := standardProjectImportRules
 	templateOptions := options
-	if english {
-		scopes = standardProjectImportScopesEnglish
-		rules = standardProjectImportRulesEnglish
-		templateOptions = localizedStandardImportOptions(options, true)
-	}
+
 	scopeRow := make([]any, len(scopes))
 	ruleRow := make([]any, len(rules))
 	for index := range standardProjectImportHeaders {
@@ -502,6 +511,42 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 	return book, nil
 }
 
+func buildEnglishStandardProjectImportTemplate(options map[string][]string) (*excelize.File, error) {
+	book, err := excelize.OpenReader(bytes.NewReader(englishStandardProjectImportTemplate))
+	if err != nil {
+		return nil, err
+	}
+
+	// Keep the supplied workbook's layout and formatting, while refreshing the
+	// selectable values from the same dynamic option source as the Chinese
+	// template.
+	sheet := "Standard Template"
+	templateOptions := localizedStandardImportOptions(options, true)
+	for _, definition := range []struct {
+		column string
+		field  string
+	}{
+		{"D", "resourceType"}, {"E", "category"}, {"I", "platform"}, {"J", "cooperationType"}, {"L", "contentType"},
+	} {
+		if err := book.DeleteDataValidation(sheet, definition.column+"5:"+definition.column+"2000"); err != nil {
+			book.Close()
+			return nil, err
+		}
+		validation := excelize.NewDataValidation(true)
+		validation.Sqref = definition.column + "5:" + definition.column + "2000"
+		if err := validation.SetDropList(templateOptions[definition.field]); err != nil {
+			book.Close()
+			return nil, err
+		}
+		validation.SetError(excelize.DataValidationErrorStyleStop, "Non-standard option", "Select a preset option")
+		if err := book.AddDataValidation(sheet, validation); err != nil {
+			book.Close()
+			return nil, err
+		}
+	}
+	return book, nil
+}
+
 func localizedStandardImportOptions(options map[string][]string, english bool) map[string][]string {
 	localized := cloneStandardImportOptions(options)
 	if !english {
@@ -623,16 +668,26 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 	if err != nil {
 		return nil, err
 	}
-	if len(grid) < 4 || !standardImportRowMatches(grid[0], standardProjectImportHeaders) {
+	englishTemplate := sheet == "Standard Template"
+	if len(grid) < 4 {
+		return nil, fmt.Errorf("第1行必须是锁定的标准字段表头")
+	}
+	headerMatches := standardImportRowMatches(grid[0], standardProjectImportHeaders)
+	if englishTemplate {
+		headerMatches = headerMatches || standardImportRowMatches(grid[0], englishStandardProjectImportHeaders)
+	}
+	if !headerMatches {
 		return nil, fmt.Errorf("第1行必须是锁定的标准字段表头")
 	}
 	if !standardImportRowMatches(grid[1], standardProjectImportLabels) {
 		return nil, fmt.Errorf("第2行中文表头与标准模板不一致")
 	}
-	if !standardImportInstructionRowMatches(grid[2], standardProjectImportScopes[0]) {
+	if !standardImportInstructionRowMatches(grid[2], standardProjectImportScopes[0]) &&
+		(!englishTemplate || !standardImportInstructionRowMatches(grid[2], standardProjectImportScopesEnglish[0])) {
 		return nil, fmt.Errorf("第3行必须保留填写范畴说明")
 	}
-	if !standardImportInstructionRowMatches(grid[3], standardProjectImportRules[0]) {
+	if !standardImportInstructionRowMatches(grid[3], standardProjectImportRules[0]) &&
+		(!englishTemplate || !standardImportInstructionRowMatches(grid[3], standardProjectImportRulesEnglish[0])) {
 		return nil, fmt.Errorf("第4行必须保留填写规范说明")
 	}
 	headers := grid[0]
