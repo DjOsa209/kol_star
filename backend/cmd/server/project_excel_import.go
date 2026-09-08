@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	_ "embed"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,9 +11,6 @@ import (
 
 	"github.com/xuri/excelize/v2"
 )
-
-//go:embed templates/XMP_Standard_Project_Import_EN.xlsx
-var englishStandardProjectImportTemplate []byte
 
 const standardProjectCostNumberFormat = `"$"#,##0.00;-"$"#,##0.00`
 
@@ -309,25 +305,34 @@ func buildStandardProjectImportTemplateWithOptions(options map[string][]string) 
 }
 
 func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string][]string, english bool) (*excelize.File, error) {
-	if english {
-		return buildEnglishStandardProjectImportTemplate(options)
-	}
 	book := excelize.NewFile()
 	sheet := "标准模板"
+	if english {
+		sheet = "Standard Template"
+	}
 	defaultSheet := book.GetSheetName(0)
 	if err := book.SetSheetName(defaultSheet, sheet); err != nil {
 		return nil, err
 	}
-	headerRow := make([]any, len(standardProjectImportHeaders))
+	headers := standardProjectImportHeaders
+	if english {
+		headers = englishStandardProjectImportHeaders
+	}
+	headerRow := make([]any, len(headers))
 	labelRow := make([]any, len(standardProjectImportLabels))
 	scopes := standardProjectImportScopes
 	rules := standardProjectImportRules
 	templateOptions := options
+	if english {
+		scopes = standardProjectImportScopesEnglish
+		rules = standardProjectImportRulesEnglish
+		templateOptions = localizedStandardImportOptions(options, true)
+	}
 
 	scopeRow := make([]any, len(scopes))
 	ruleRow := make([]any, len(rules))
-	for index := range standardProjectImportHeaders {
-		headerRow[index] = standardProjectImportHeaders[index]
+	for index := range headers {
+		headerRow[index] = headers[index]
 		if standardProjectImportLabels[index] != "" {
 			labelRow[index] = standardProjectImportLabels[index]
 		}
@@ -487,6 +492,10 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 		return nil, err
 	}
 	widths := []float64{12, 25, 25, 16, 16, 14, 18, 18, 16, 20, 32, 32, 14, 18, 16, 24, 16, 16, 24, 12}
+	if english {
+		widths[0] = 15.141592920354
+		widths[11] = 36.3805309734513
+	}
 	for index, width := range widths {
 		column, _ := excelize.ColumnNumberToName(index + 1)
 		if err := book.SetColWidth(sheet, column, column, width); err != nil {
@@ -496,7 +505,11 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 	_ = book.SetRowHeight(sheet, 1, 26)
 	_ = book.SetRowHeight(sheet, 2, 28)
 	_ = book.SetRowHeight(sheet, 3, 148)
-	_ = book.SetRowHeight(sheet, 4, 148)
+	if english {
+		_ = book.SetRowHeight(sheet, 4, 171)
+	} else {
+		_ = book.SetRowHeight(sheet, 4, 148)
+	}
 	if err := book.SetPanes(sheet, &excelize.Panes{Freeze: true, Split: false, YSplit: 4, TopLeftCell: "A5", ActivePane: "bottomLeft"}); err != nil {
 		return nil, err
 	}
@@ -507,42 +520,6 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 	}
 	if err := book.ProtectWorkbook(&excelize.WorkbookProtectionOptions{Password: "xmp-standard-template", LockStructure: true}); err != nil {
 		return nil, err
-	}
-	return book, nil
-}
-
-func buildEnglishStandardProjectImportTemplate(options map[string][]string) (*excelize.File, error) {
-	book, err := excelize.OpenReader(bytes.NewReader(englishStandardProjectImportTemplate))
-	if err != nil {
-		return nil, err
-	}
-
-	// Keep the supplied workbook's layout and formatting, while refreshing the
-	// selectable values from the same dynamic option source as the Chinese
-	// template.
-	sheet := "Standard Template"
-	templateOptions := localizedStandardImportOptions(options, true)
-	for _, definition := range []struct {
-		column string
-		field  string
-	}{
-		{"D", "resourceType"}, {"E", "category"}, {"I", "platform"}, {"J", "cooperationType"}, {"L", "contentType"},
-	} {
-		if err := book.DeleteDataValidation(sheet, definition.column+"5:"+definition.column+"2000"); err != nil {
-			book.Close()
-			return nil, err
-		}
-		validation := excelize.NewDataValidation(true)
-		validation.Sqref = definition.column + "5:" + definition.column + "2000"
-		if err := validation.SetDropList(templateOptions[definition.field]); err != nil {
-			book.Close()
-			return nil, err
-		}
-		validation.SetError(excelize.DataValidationErrorStyleStop, "Non-standard option", "Select a preset option")
-		if err := book.AddDataValidation(sheet, validation); err != nil {
-			book.Close()
-			return nil, err
-		}
 	}
 	return book, nil
 }
