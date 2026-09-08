@@ -405,7 +405,10 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 			return nil, err
 		}
 	}
-	editableStyle, err := book.NewStyle(&excelize.Style{Protection: &excelize.Protection{Locked: false}})
+	editableStyle, err := book.NewStyle(&excelize.Style{
+		Alignment:  &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true},
+		Protection: &excelize.Protection{Locked: false},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -417,6 +420,7 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 	}
 	costStyle, err := book.NewStyle(&excelize.Style{
 		CustomNumFmt: stringPointer(standardProjectCostNumberFormat),
+		Alignment:    &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true},
 		Protection:   &excelize.Protection{Locked: false},
 	})
 	if err != nil {
@@ -427,6 +431,7 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 	}
 	calculatedStyle, err := book.NewStyle(&excelize.Style{
 		Fill:       excelize.Fill{Type: "pattern", Color: []string{"#F3F4F6"}, Pattern: 1},
+		Alignment:  &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true},
 		Protection: &excelize.Protection{Locked: true},
 	})
 	if err != nil {
