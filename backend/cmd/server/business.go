@@ -3626,10 +3626,9 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		}
 		quoteAmount, hasQuoteAmount := body["quoteAmount"]
 		if strings.TrimSpace(str(body, "market")) == "" ||
-			strings.TrimSpace(str(body, "platformUrl")) == "" ||
 			strings.TrimSpace(str(body, "cooperationType")) == "" ||
 			!hasQuoteAmount || quoteAmount == nil || floatField(body, "quoteAmount") < 0 {
-			writeError(w, http.StatusOK, 10001, "合作方链接、市场、合作类型、内容和合作费用均为必填项")
+			writeError(w, http.StatusOK, 10001, "市场、合作类型、内容和合作费用均为必填项")
 			return
 		}
 		standardOptions, optionsErr := a.standardImportOptions(r.Context())
@@ -3659,6 +3658,8 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer tx.Rollback()
+	resourceIDsByPlatform := make(map[string]int)
+	projectResourceIDs := make([]int, 0, max(1, len(contents)))
 	if resourceID == 0 {
 		name := strings.TrimSpace(str(body, "resourceName"))
 		resourceType := strings.TrimSpace(str(body, "resourceType"))
@@ -3666,58 +3667,47 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusOK, 10001, "请填写达人/媒体名称和类型")
 			return
 		}
-		platform := platformDisplayName(str(body, "platform"))
-		if platform == "" {
-			platform = strings.TrimSpace(str(body, "platform"))
-		}
-		platformURL := strings.TrimSpace(str(body, "platformUrl"))
-		if platformURL != "" {
-			var normalizeErr error
-			platformURL, normalizeErr = normalizeImportedProfileLink(platformURL)
-			if normalizeErr != nil {
-				writeError(w, http.StatusOK, 10001, normalizeErr.Error())
-				return
+		platforms := make([]string, 0, max(1, len(contents)))
+		seenPlatforms := make(map[string]bool)
+		for _, content := range contents {
+			if !seenPlatforms[content.Platform] {
+				seenPlatforms[content.Platform] = true
+				platforms = append(platforms, content.Platform)
 			}
 		}
-		followers := intField(body, "followers")
-		audienceSize := followers
-		audienceUnit := "Followers"
-		referenceSource := "项目手动添加"
-		if resourceType == "媒体" {
-			followers = 0
-			audienceSize = intField(body, "audienceSize")
-			audienceUnit = "UMV"
-			referenceSource = "Similarweb"
+		if len(platforms) == 0 {
+			platform := platformDisplayName(str(body, "platform"))
+			if platform == "" {
+				platform = strings.TrimSpace(str(body, "platform"))
+			}
+			platforms = append(platforms, platform)
 		}
-		result, createErr := tx.ExecContext(r.Context(),
-			`insert into biz_resources
-			 (name, resource_type, country, market, platform, platform_handle, platform_url,
-			  category, contact, status, followers, audience_size, audience_size_unit,
-			  reference_source, score, level, risk_level)
-			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, '可合作', ?, ?, ?, ?, 60, 'B', '低')`,
-			name, resourceType, str(body, "market"), str(body, "market"), platform,
-			importedPlatformHandle(platform, platformURL), platformURL, str(body, "category"),
-			str(body, "primaryContact"), followers, audienceSize, audienceUnit, referenceSource,
-		)
-		if createErr != nil {
-			writeDBError(w, createErr)
-			return
+		for _, platform := range platforms {
+			createdResourceID, createErr := createManualProjectResource(
+				r.Context(), tx, body, name, resourceType, platform,
+			)
+			if createErr != nil {
+				writeDBError(w, createErr)
+				return
+			}
+			if resourceID == 0 {
+				resourceID = createdResourceID
+			}
+			resourceIDsByPlatform[platform] = createdResourceID
+			projectResourceIDs = append(projectResourceIDs, createdResourceID)
 		}
-		id, idErr := result.LastInsertId()
-		if idErr != nil {
-			writeDBError(w, idErr)
-			return
-		}
-		resourceID = int(id)
 		if err := refreshAllResourceAudienceClassifications(r.Context(), tx); err != nil {
 			writeDBError(w, err)
 			return
 		}
+	} else {
+		projectResourceIDs = append(projectResourceIDs, resourceID)
 	}
 	status := defaultString(str(body, "status"), "候选")
 	reason := str(body, "reason")
-	_, err = tx.ExecContext(r.Context(),
-		`insert into biz_project_resources
+	for _, linkedResourceID := range projectResourceIDs {
+		_, err = tx.ExecContext(r.Context(),
+			`insert into biz_project_resources
 		 (project_id, resource_id, status, source, recommend_reason, priority, estimated_cost, risk_tip)
 		 values (?, ?, ?, ?, ?, ?, ?, ?)
 		 on duplicate key update
@@ -3728,12 +3718,13 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		   estimated_cost = values(estimated_cost),
 		   risk_tip = values(risk_tip),
 		   updated_at = now()`,
-		projectID, resourceID, status, defaultString(str(body, "source"), "智能助手"),
-		reason, str(body, "priority"), floatField(body, "estimatedCost"), str(body, "riskTip"),
-	)
-	if err != nil {
-		writeDBError(w, err)
-		return
+			projectID, linkedResourceID, status, defaultString(str(body, "source"), "智能助手"),
+			reason, str(body, "priority"), floatField(body, "estimatedCost"), str(body, "riskTip"),
+		)
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
 	}
 	cooperationIDs := make([]int, 0, len(contents))
 	if len(contents) > 0 {
@@ -3745,13 +3736,17 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 		}
 		for index, content := range contents {
 			contentCost := contentCosts[index]
+			contentResourceID := resourceID
+			if platformResourceID := resourceIDsByPlatform[content.Platform]; platformResourceID > 0 {
+				contentResourceID = platformResourceID
+			}
 			result, createErr := tx.ExecContext(r.Context(),
 				`insert into biz_cooperations
 				 (project_id, resource_id, cooperation_type, cooperation_mode, package_id, content_platform, content_type,
 				  owner, vendor, quote_amount, currency, status, deliverable_status,
 				  deliverable_links, final_link, import_batch_id, notes)
 				 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '已发布', '已完成', ?, ?, ?, ?)`,
-				projectID, resourceID, str(body, "cooperationType"), cooperationMode, batchID, content.Platform, content.ContentType,
+				projectID, contentResourceID, str(body, "cooperationType"), cooperationMode, batchID, content.Platform, content.ContentType,
 				str(body, "owner"), str(body, "vendor"), contentCost,
 				defaultString(str(body, "currency"), "USD"), content.ContentURL, content.ContentURL,
 				batchID, str(body, "notes"),
@@ -3778,10 +3773,83 @@ func (a *app) createBusinessProjectResource(w http.ResponseWriter, r *http.Reque
 			syncWarnings = append(syncWarnings, syncErr.Error())
 		}
 	}
+	for _, syncedResourceID := range projectResourceIDs {
+		resource, syncableErr := a.syncableResourceByID(r.Context(), syncedResourceID)
+		if syncableErr != nil {
+			syncWarnings = append(syncWarnings, syncableErr.Error())
+			continue
+		}
+		if profileErr := a.syncResourceProfileAndPostsByPlatform(r.Context(), resource); profileErr != nil {
+			syncWarnings = append(syncWarnings, fmt.Sprintf("%s 主页数据同步失败：%v", resource.Platform, profileErr))
+		}
+	}
+	canonicalResourceName := strings.TrimSpace(str(body, "resourceName"))
+	if canonicalResourceName != "" && len(projectResourceIDs) > 1 {
+		for _, syncedResourceID := range projectResourceIDs {
+			if _, renameErr := a.DB().ExecContext(r.Context(),
+				`update biz_resources set name = ? where id = ?`,
+				canonicalResourceName, syncedResourceID,
+			); renameErr != nil {
+				syncWarnings = append(syncWarnings, renameErr.Error())
+			}
+		}
+	}
+	if len(projectResourceIDs) > 0 {
+		if classificationErr := refreshAllResourceAudienceClassifications(r.Context(), a.DB()); classificationErr != nil {
+			syncWarnings = append(syncWarnings, classificationErr.Error())
+		}
+	}
 	writeOK(w, map[string]any{
 		"created": true, "resourceId": resourceID,
-		"cooperationIds": cooperationIDs, "syncWarnings": syncWarnings,
+		"resourceIds": projectResourceIDs, "cooperationIds": cooperationIDs, "syncWarnings": syncWarnings,
 	})
+}
+
+func createManualProjectResource(
+	ctx context.Context,
+	tx *sql.Tx,
+	body map[string]any,
+	name string,
+	resourceType string,
+	platform string,
+) (int, error) {
+	platformURL := strings.TrimSpace(str(body, "platformUrl"))
+	if platformURL != "" {
+		normalizedURL, err := normalizeImportedProfileLink(platformURL)
+		if err != nil {
+			return 0, err
+		}
+		if inferredPlatform := platformFromLink(normalizedURL); inferredPlatform == "" || inferredPlatform == platform {
+			platformURL = normalizedURL
+		} else {
+			platformURL = ""
+		}
+	}
+	followers := intField(body, "followers")
+	audienceSize := followers
+	audienceUnit := "Followers"
+	referenceSource := "项目手动添加"
+	if resourceType == "媒体" {
+		followers = 0
+		audienceSize = intField(body, "audienceSize")
+		audienceUnit = "UMV"
+		referenceSource = "Similarweb"
+	}
+	result, err := tx.ExecContext(ctx,
+		`insert into biz_resources
+		 (name, resource_type, country, market, platform, platform_handle, platform_url,
+		  category, contact, status, followers, audience_size, audience_size_unit,
+		  reference_source, score, level, risk_level)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, '可合作', ?, ?, ?, ?, 60, 'B', '低')`,
+		name, resourceType, str(body, "market"), str(body, "market"), platform,
+		importedPlatformHandle(platform, platformURL), platformURL, str(body, "category"),
+		str(body, "primaryContact"), followers, audienceSize, audienceUnit, referenceSource,
+	)
+	if err != nil {
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	return int(id), err
 }
 
 func allocateCooperationCosts(total float64, count int) []float64 {

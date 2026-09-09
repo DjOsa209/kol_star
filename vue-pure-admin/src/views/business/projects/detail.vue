@@ -1527,10 +1527,6 @@ async function submitProjectResource() {
       ElMessage.warning("请填写市场");
       return;
     }
-    if (!creatorForm.platformUrl.trim()) {
-      ElMessage.warning("请填写标准模板中的合作方主页链接");
-      return;
-    }
     if (!creatorForm.cooperationType || creatorForm.quoteAmount < 0) {
       ElMessage.warning("请填写合作类型和合作费用");
       return;
@@ -1568,6 +1564,14 @@ async function submitProjectResource() {
         ? "达人/媒体已添加"
         : "达人/媒体已更新"
     );
+    const syncWarnings = Array.isArray(res.data?.syncWarnings)
+      ? res.data.syncWarnings.filter(Boolean)
+      : [];
+    if (creatorDialogMode.value === "create" && syncWarnings.length > 0) {
+      ElMessage.warning(
+        `已添加，但有 ${syncWarnings.length} 个平台未能自动同步主页；可在达人“编辑”中补充主页链接`
+      );
+    }
     creatorDialog.value = false;
     await loadDetail();
   } finally {
@@ -3712,9 +3716,9 @@ onBeforeUnmount(() => {
           />
         </el-form-item>
         <el-form-item
+          v-if="creatorDialogMode === 'edit'"
           :label="fieldLabel('合作方（主页链接）')"
           class="creator-form-grid__wide"
-          :required="creatorDialogMode === 'create'"
         >
           <el-input v-model="creatorForm.platformUrl" />
         </el-form-item>
@@ -3782,6 +3786,7 @@ onBeforeUnmount(() => {
         <section class="creator-form-section">
           <header>
             <strong>{{ fieldLabel("合作内容") }}</strong>
+            <span>系统将通过内容链接识别各平台主页并同步账号数据</span>
             <el-button
               v-if="creatorForm.cooperationMode === 'package'"
               link
