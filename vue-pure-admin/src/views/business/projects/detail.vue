@@ -1160,11 +1160,21 @@ function usesPageScreenshot(post: any) {
 
 function contentAudienceLabel(post: any) {
   if (!isMediaResource(contentResource(post))) return "粉丝";
-  return isWebsiteContent(post) ? "月访问量" : "月独立访客（UMV）";
+  return "月独立访客";
 }
 
 function contentExposureLabel(post: any) {
-  return isWebsiteContent(post) ? "访问量" : "播放量";
+  return isMediaResource(contentResource(post)) ? "阅读量" : "曝光量";
+}
+
+function contentSecondaryMetricLabel(post: any) {
+  return isMediaResource(contentResource(post)) ? "月独立访客" : "互动量";
+}
+
+function contentSecondaryMetricValue(post: any) {
+  return isMediaResource(contentResource(post))
+    ? contentFollowers(post)
+    : postEngagement(post);
 }
 
 function contentExposureHint(post: any) {
@@ -2169,7 +2179,7 @@ function renderPlatformPerformanceChart() {
         left: "center",
         top: "42%",
         style: {
-          text: metric === "exposure" ? "总曝光 / 播放" : "总互动",
+          text: metric === "exposure" ? "曝光量" : "总互动",
           fill: "#7a808a",
           fontSize: 12,
           textAlign: "center"
@@ -2463,7 +2473,7 @@ onBeforeUnmount(() => {
         :class="{ active: campaignTab === 'creators' }"
         @click="selectCampaignTab('creators')"
       >
-        达人 ({{ projectCreators.length }})
+        达人/媒体 ({{ projectCreators.length }})
       </button>
       <button
         type="button"
@@ -2595,7 +2605,7 @@ onBeforeUnmount(() => {
                   }}</strong>
                   <span>
                     {{ formatCount(contentFollowers(contentDetailView)) }}
-                    {{ contentAudienceLabel(contentDetailView) }} ·
+                    {{ fieldLabel(contentAudienceLabel(contentDetailView)) }} ·
                     {{ dateText(contentDetailView.publishedAt) }} 发布
                   </span>
                 </div>
@@ -2693,7 +2703,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="overview-metric-grid performance-overview-grid">
             <article class="overview-metric-card primary-metric-card">
-              <span>{{ fieldLabel("总曝光 / 播放量") }}</span>
+              <span>{{ fieldLabel("曝光量") }}</span>
               <strong>{{ formatCount(campaignOverview.views) }}</strong>
               <small>{{ fieldLabel("所有合作内容累计数据") }}</small>
             </article>
@@ -3105,6 +3115,45 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column
+            :label="fieldLabel('曝光量')"
+            width="125"
+            align="center"
+            sortable
+            :sort-method="sortByExposure"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectExposure(row))
+            }}</template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('互动量')"
+            width="125"
+            align="center"
+            sortable
+            :sort-method="sortByEngagement"
+          >
+            <template #default="{ row }">{{
+              formatCount(projectEngagement(row))
+            }}</template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('CPM')"
+            width="120"
+            align="center"
+            sortable
+            :sort-method="sortByCPM"
+          >
+            <template #default="{ row }">
+              <span
+                :title="
+                  fieldLabel('项目内该达人全部平台总成本 / 总播放量 × 1000')
+                "
+              >
+                {{ moneyText(projectCPM(row)) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column
             prop="collaboratorTier"
             :label="fieldLabel('层级')"
             width="100"
@@ -3327,45 +3376,6 @@ onBeforeUnmount(() => {
             }}</template>
           </el-table-column>
           <el-table-column
-            :label="fieldLabel('曝光量')"
-            width="125"
-            align="center"
-            sortable
-            :sort-method="sortByExposure"
-          >
-            <template #default="{ row }">{{
-              formatCount(projectExposure(row))
-            }}</template>
-          </el-table-column>
-          <el-table-column
-            :label="fieldLabel('互动量')"
-            width="125"
-            align="center"
-            sortable
-            :sort-method="sortByEngagement"
-          >
-            <template #default="{ row }">{{
-              formatCount(projectEngagement(row))
-            }}</template>
-          </el-table-column>
-          <el-table-column
-            :label="fieldLabel('CPM')"
-            width="120"
-            align="center"
-            sortable
-            :sort-method="sortByCPM"
-          >
-            <template #default="{ row }">
-              <span
-                :title="
-                  fieldLabel('项目内该媒体全部平台总成本 / 总播放量 × 1000')
-                "
-              >
-                {{ moneyText(projectCPM(row)) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column
             prop="collaboratorTier"
             :label="fieldLabel('层级')"
             width="100"
@@ -3486,7 +3496,7 @@ onBeforeUnmount(() => {
                 <strong>{{ post.resourceName || "未知达人 / 媒体" }}</strong>
                 <span>
                   {{ formatCount(contentFollowers(post)) }}
-                  {{ contentAudienceLabel(post) }}
+                  {{ fieldLabel(contentAudienceLabel(post)) }}
                 </span>
               </div>
               <div class="content-card-actions" @click.stop>
@@ -3560,12 +3570,16 @@ onBeforeUnmount(() => {
               </el-tag>
               <div class="content-card-metrics">
                 <span>
-                  <small>{{ fieldLabel("曝光量") }}</small>
+                  <small>{{ fieldLabel(contentExposureLabel(post)) }}</small>
                   <strong>{{ formatCount(postExposure(post)) }}</strong>
                 </span>
                 <span>
-                  <small>{{ fieldLabel("互动量") }}</small>
-                  <strong>{{ formatCount(postEngagement(post)) }}</strong>
+                  <small>{{
+                    fieldLabel(contentSecondaryMetricLabel(post))
+                  }}</small>
+                  <strong>{{
+                    formatCount(contentSecondaryMetricValue(post))
+                  }}</strong>
                 </span>
               </div>
             </div>
