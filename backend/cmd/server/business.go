@@ -1880,7 +1880,7 @@ func normalizeTikHubTikTokUser(data map[string]any, fallbackUsername, fallbackSe
 }
 
 func normalizeTikHubTikTokPosts(data map[string]any, username string) []platformPost {
-	items := firstListAt(data, "itemList", "items", "aweme_list", "videos", "data", "list", "value")
+	items := firstListAt(data, "itemList", "items", "aweme_list", "aweme_details", "videos", "data", "list", "value")
 	posts := make([]platformPost, 0, len(items))
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)
@@ -1982,7 +1982,7 @@ func normalizeTikHubInstagramPosts(timeline map[string]any, username string) []p
 		if len(author) > 0 {
 			rawPost["user"] = author
 		}
-		postID := firstNonEmpty(anyString(item["id"]), anyString(item["pk"]), anyString(item["media_id"]), anyString(item["shortcode"]), anyString(item["code"]))
+		postID := firstNonEmpty(anyString(item["pk"]), anyString(item["id"]), anyString(item["media_id"]), anyString(item["shortcode"]), anyString(item["code"]))
 		if postID == "" {
 			continue
 		}
@@ -2000,9 +2000,13 @@ func normalizeTikHubInstagramPosts(timeline map[string]any, username string) []p
 			Duration:       int(firstNonZeroInt64(item["video_duration"], item["duration"])),
 			ViewCount:      firstNonZeroInt64(item["play_count"], item["video_play_count"], item["ig_play_count"], item["video_view_count"], item["view_count"]),
 			LikeCount:      firstNonZeroInt64(item["like_count"], nestedInt64(item, "edge_liked_by", "count"), nestedInt64(item, "edge_media_preview_like", "count")),
-			CommentCount:   firstNonZeroInt64(item["comment_count"], nestedInt64(item, "edge_media_to_comment", "count")),
-			ShareCount:     firstNonZeroInt64(item["share_count"]),
-			Raw:            rawPost,
+			CommentCount: firstNonZeroInt64(
+				item["comment_count"],
+				nestedInt64(item, "edge_media_to_comment", "count"),
+				nestedInt64(item, "edge_media_preview_comment", "count"),
+			),
+			ShareCount: firstNonZeroInt64(item["share_count"]),
+			Raw:        rawPost,
 		})
 	}
 	return posts
@@ -2474,7 +2478,7 @@ func firstListAt(row map[string]any, keys ...string) []any {
 				return value
 			}
 		case map[string]any:
-			if nested := firstListAt(value, "edges", "items", "data", "itemList", "aweme_list", "videos", "list"); len(nested) > 0 {
+			if nested := firstListAt(value, "edges", "items", "data", "itemList", "aweme_list", "aweme_details", "videos", "list"); len(nested) > 0 {
 				return nested
 			}
 		}

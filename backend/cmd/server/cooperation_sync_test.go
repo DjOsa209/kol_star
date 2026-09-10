@@ -324,6 +324,60 @@ func TestApplyPlatformPostToCooperationPrefersLocalInstagramMedia(t *testing.T) 
 	}
 }
 
+func TestFetchInstagramPostByURLUsesV3CommentCount(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const postURL = "https://www.instagram.com/p/DU6wT78Aa8D/"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/instagram/v3/get_post_info" {
+			t.Errorf("request path = %q, want Instagram V3 post info", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("url"); got != postURL {
+			t.Errorf("url query = %q, want %q", got, postURL)
+		}
+		if got := r.URL.Query().Get("post_url"); got != "" {
+			t.Errorf("unexpected V1 post_url query: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"code": 200,
+			"data": {
+				"items": [{
+					"id": "3835590508919500547_51682409774",
+					"pk": "3835590508919500547",
+					"code": "DU6wT78Aa8D",
+					"comment_count": 405,
+					"like_count": 1200,
+					"media_type": 1
+				}]
+			}
+		}`))
+	}))
+	defer server.Close()
+	t.Setenv("TIKHUB_API_BASE_URL", server.URL)
+
+	mock.ExpectExec("insert into biz_resource_platform_posts").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	app := newApp(db, Config{PlatformAPIs: PlatformAPIConfig{TikHubAPIKey: "test-key"}})
+	post, err := app.fetchInstagramPostByURL(context.Background(), 7, postURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if post.CommentCount != 405 {
+		t.Fatalf("Instagram comment count = %d, want 405", post.CommentCount)
+	}
+	if post.PlatformPostID != "3835590508919500547" {
+		t.Fatalf("Instagram post ID = %q, want stable media pk", post.PlatformPostID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClearCooperationPostSyncFieldsPreservesResourceIdentity(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -524,5 +578,28 @@ func TestFindSinglePlatformItem(t *testing.T) {
 	})
 	if anyString(got["aweme_id"]) != "123" {
 		t.Fatalf("findSinglePlatformItem() = %#v", got)
+	}
+}
+
+func TestFindSingleTikTokItemPreservesShareAndCollectCounts(t *testing.T) {
+	data := map[string]any{
+		"aweme_details": []any{
+			map[string]any{
+				"aweme_id": "7339393672959757570",
+				"statistics": map[string]any{
+					"share_count":   108266,
+					"collect_count": 682755,
+				},
+			},
+		},
+	}
+
+	item := findSinglePlatformItem(data)
+	posts := normalizeTikHubTikTokPosts(map[string]any{"items": []any{item}}, "")
+	if len(posts) != 1 {
+		t.Fatalf("expected one TikTok post, got %d (item=%#v)", len(posts), item)
+	}
+	if posts[0].ShareCount != 108266 || posts[0].SaveCount != 682755 {
+		t.Fatalf("unexpected TikTok share/save counts: %#v", posts[0])
 	}
 }

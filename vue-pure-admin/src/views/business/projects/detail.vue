@@ -97,7 +97,8 @@ const contentEditForm = reactive({
   cooperationId: 0,
   resourceId: 0,
   platform: "Website",
-  postUrl: ""
+  postUrl: "",
+  exposure: 0
 });
 const editableContentPlatformOptions = [
   "小红书",
@@ -907,7 +908,8 @@ function prepareContentEdit(post: any) {
     cooperationId: Number(cooperation.id),
     resourceId: Number(post.resourceId),
     platform: normalizePlatformName(post.platform),
-    postUrl: String(post.postUrl || "").trim()
+    postUrl: String(post.postUrl || "").trim(),
+    exposure: Math.max(0, Math.trunc(postExposure(post)))
   });
   editingContentPost.value = post;
   contentEditing.value = true;
@@ -941,7 +943,8 @@ async function saveContentEdit() {
     const res = await updateProjectContent({
       projectId: Number(project.value.id),
       ...contentEditForm,
-      postUrl
+      postUrl,
+      exposure: Math.max(0, Math.trunc(Number(contentEditForm.exposure) || 0))
     });
     if (res.code !== 0) {
       ElMessage.warning(res.message || "合作内容更新失败");
@@ -952,7 +955,7 @@ async function saveContentEdit() {
     if (res.data?.previewWarning) {
       ElMessage.warning(res.data.previewWarning);
     } else {
-      ElMessage.success("内容链接与平台已更新");
+      ElMessage.success("内容链接、平台与曝光量已更新");
     }
   } finally {
     contentSaving.value = false;
@@ -3608,6 +3611,16 @@ onBeforeUnmount(() => {
           v-model="contentEditForm.postUrl"
           clearable
           placeholder="https://..."
+        />
+      </el-form-item>
+      <el-form-item :label="fieldLabel('曝光量')" required>
+        <el-input-number
+          v-model="contentEditForm.exposure"
+          :min="0"
+          :step="1"
+          :precision="0"
+          controls-position="right"
+          class="w-full!"
         />
       </el-form-item>
     </el-form>

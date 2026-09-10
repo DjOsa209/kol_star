@@ -1186,7 +1186,7 @@ func (a *app) fetchInstagramPostByURL(ctx context.Context, resourceID int, postU
 		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
 	}
 	data, err := tikhubGET(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
-		"/instagram/v1/fetch_post_by_url", url.Values{"post_url": []string{postURL}})
+		"/instagram/v3/get_post_info", url.Values{"url": []string{postURL}})
 	if err != nil {
 		return platformPost{}, err
 	}
@@ -1236,7 +1236,7 @@ func findSinglePlatformItemValue(value any, depth int) map[string]any {
 			}
 		}
 	}
-	for _, key := range []string{"items", "value", "list", "aweme_list", "medias"} {
+	for _, key := range []string{"items", "value", "list", "aweme_list", "aweme_details", "medias"} {
 		if nested, exists := data[key]; exists {
 			if found := findSinglePlatformItemValue(nested, depth+1); len(found) > 0 {
 				return found

@@ -387,6 +387,12 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 	postID := parseProjectContentPostID(str(body, "contentId"))
 	postURL := strings.TrimSpace(str(body, "postUrl"))
 	platform := normalizeEditableContentPlatform(str(body, "platform"))
+	_, exposureProvided := body["exposure"]
+	exposure := intField(body, "exposure")
+	if exposure < 0 {
+		writeError(w, http.StatusOK, 10001, "曝光量不能小于 0")
+		return
+	}
 	if projectID <= 0 || cooperationID <= 0 || resourceID <= 0 {
 		writeError(w, http.StatusOK, 10001, "项目、合作记录和合作方不能为空")
 		return
@@ -555,6 +561,29 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 			syncWarning = syncResult.Message
 		}
 	}
+	if exposureProvided {
+		// 手工录入的曝光量优先于平台同步结果，确保编辑内容时可以修正第三方数据。
+		if _, err = a.DB().ExecContext(r.Context(),
+			`update biz_cooperations
+			    set views = ?, impressions = ?
+			  where id = ? and project_id = ? and resource_id = ?`,
+			exposure, exposure, cooperationID, projectID, resourceID,
+		); err != nil {
+			writeDBError(w, err)
+			return
+		}
+		if postID > 0 {
+			if _, err = a.DB().ExecContext(r.Context(),
+				`update biz_resource_platform_posts
+				    set view_count = ?
+				  where id = ? and resource_id = ?`,
+				exposure, postID, resourceID,
+			); err != nil {
+				writeDBError(w, err)
+				return
+			}
+		}
+	}
 
 	var platformURL, resourceAvatarRemoteURL string
 	var savedFinalLink, savedDeliverableLinks string
@@ -601,6 +630,7 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		"previewWarning":          syncWarning,
 		"cooperationId":           cooperationID,
 		"contentRecordId":         postID,
+		"exposure":                exposure,
 	})
 }
 

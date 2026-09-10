@@ -47,7 +47,7 @@ func TestNormalizeTikHubInstagramProfileAndPosts(t *testing.T) {
 	if len(posts) != 1 {
 		t.Fatalf("expected one post, got %d", len(posts))
 	}
-	if posts[0].ViewCount != 12000 || posts[0].CoverURL == "" || posts[0].Description != "Recent reel" {
+	if posts[0].ViewCount != 12000 || posts[0].CommentCount != 30 || posts[0].CoverURL == "" || posts[0].Description != "Recent reel" {
 		t.Fatalf("unexpected post: %#v", posts[0])
 	}
 	if averageViewedPostViews(posts) != 12000 {
@@ -73,6 +73,28 @@ func TestNormalizeTikHubInstagramNestedProfileFollowers(t *testing.T) {
 	}
 	if user.FollowerCount != 9876 {
 		t.Fatalf("nested Instagram followers = %d, want 9876", user.FollowerCount)
+	}
+}
+
+func TestNormalizeTikHubInstagramGraphQLCommentCount(t *testing.T) {
+	posts := normalizeTikHubInstagramPosts(map[string]any{
+		"edges": []any{
+			map[string]any{
+				"node": map[string]any{
+					"id":        "3835590508919500547",
+					"shortcode": "DU6wT78Aa8D",
+					"edge_media_preview_comment": map[string]any{
+						"count": 405,
+					},
+				},
+			},
+		},
+	}, "creator")
+	if len(posts) != 1 {
+		t.Fatalf("expected one Instagram post, got %d", len(posts))
+	}
+	if posts[0].CommentCount != 405 {
+		t.Fatalf("Instagram comment count = %d, want 405", posts[0].CommentCount)
 	}
 }
 
