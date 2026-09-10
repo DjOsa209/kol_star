@@ -3115,45 +3115,6 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column
-            :label="fieldLabel('曝光量')"
-            width="125"
-            align="center"
-            sortable
-            :sort-method="sortByExposure"
-          >
-            <template #default="{ row }">{{
-              formatCount(projectExposure(row))
-            }}</template>
-          </el-table-column>
-          <el-table-column
-            :label="fieldLabel('互动量')"
-            width="125"
-            align="center"
-            sortable
-            :sort-method="sortByEngagement"
-          >
-            <template #default="{ row }">{{
-              formatCount(projectEngagement(row))
-            }}</template>
-          </el-table-column>
-          <el-table-column
-            :label="fieldLabel('CPM')"
-            width="120"
-            align="center"
-            sortable
-            :sort-method="sortByCPM"
-          >
-            <template #default="{ row }">
-              <span
-                :title="
-                  fieldLabel('项目内该达人全部平台总成本 / 总播放量 × 1000')
-                "
-              >
-                {{ moneyText(projectCPM(row)) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column
             prop="collaboratorTier"
             :label="fieldLabel('层级')"
             width="100"
@@ -3355,7 +3316,7 @@ onBeforeUnmount(() => {
           />
           <el-table-column
             :label="fieldLabel('月独立访客（UMV）')"
-            width="170"
+            width="200"
             align="center"
             sortable
             :sort-method="sortByAudience"
