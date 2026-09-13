@@ -1,3 +1,186 @@
+**Infinix SSO, English Copy, And Brand Mark QA**
+
+- Source visual truth: `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/tmp.fe3vZgv5va/stitch-reference.html` plus the generated transparent brand asset `/Users/rui.ma1/Documents/kol_admin/vue-pure-admin/src/assets/infinix-resource-mark.png`.
+- Implementation: `http://localhost:4173/#/login`.
+- Screenshot evidence: the reference and implementation were rendered sequentially in the same Codex in-app Browser tab at `885 x 780` CSS pixels and emitted together in one comparison input.
+- State: unauthenticated local preview without the project backend attached; administrator login is active and enterprise SSO is visible but disabled with an explicit environment status.
+- Focused-region evidence: brand mark at compact display size, English operational labels, authentication status, SSO button state, administrator fallback, form controls, and responsive two-pane composition were inspected.
+
+**Findings**
+
+- No actionable P0/P1/P2 findings remain.
+- SSO integration: the frontend entry uses `/api/auth/sso/login`; the backend registers the login and UAC callback handlers, validates a short-lived state cookie, exchanges UAC tokens for identity, initializes the user session, and returns to the configured frontend. Focused Go SSO tests passed.
+- Environment accuracy: the current `4173` preview was intentionally started without an API base and therefore cannot reach the project backend. The UI now reports `LOCAL ACCESS`, disables the SSO action, and explains that enterprise identity is not connected. A deployment using the repository's default `/api` proxy enables the button only when `/auth/config` reports a ready UAC configuration.
+- English copy: legacy Transsion/KOL cockpit phrases were replaced with `GLOBAL RESOURCE OPERATIONS`, `INFINIX RESOURCE NETWORK · ENTERPRISE`, `DISCOVER`, `OPERATE`, `INSIGHT`, `SECURE SIGN-IN`, and connection-aware `UAC CONNECTED` / `LOCAL ACCESS` states.
+- Brand mark: a new transparent, high-resolution network-orbit mark uses the interface's obsidian, neon-chartreuse, and cyan palette. It preserves a clear silhouette at login and sidebar sizes and replaces the previous generic droplet in both locations.
+- Layout and contrast: the wider brand lockup remains balanced, all new English labels fit without clipping, and disabled SSO styling remains readable against the authentication card.
+
+**Comparison History**
+
+- Pass 1 found a P1 functional-trust issue: SSO was visually enabled in a mock-only preview, so clicking it navigated to a frontend fallback instead of UAC. Legacy English labels and the generic droplet mark also conflicted with the new Infinix identity.
+- Fix: restored auth-config-driven enablement while keeping SSO discoverable, added explicit connection-state copy, rewrote all visible English identity labels, generated a new transparent brand mark, and connected it to login and shared navigation.
+- Pass 2 compared the source and revised login together, then verified the compact logo rendering, disabled local state, form hierarchy, and responsive fit. No actionable P0/P1/P2 issues remained.
+
+**Implementation Checklist**
+
+- Completed: SSO route audit, UAC callback audit, connection-aware login state, English-copy replacement, generated project-bound logo asset, login/sidebar integration, Prettier, Stylelint, ESLint, Vue TypeScript checking, focused Go SSO tests, production build, browser comparison, and diff whitespace validation.
+
+final result: passed
+
+---
+
+**Infinix Login Identity And SSO QA**
+
+- Implementation: `http://localhost:4173/#/login`.
+- Screenshot evidence: live Codex in-app Browser capture at `885 x 780` CSS pixels; the browser surface did not expose a persistent screenshot file path.
+- State: unauthenticated login with enterprise SSO and administrator credentials visible together.
+- Focused-region evidence: product lockup, system heading, authentication card, SSO action, administrator divider, credential fields, CAPTCHA, primary login action, copyright, and browser title were inspected.
+
+**Findings**
+
+- No actionable P0/P1/P2 findings remain.
+- The primary hero, compact brand lockup, authentication description, SSO helper copy, copyright, and document title consistently use `Infinix 全球资源运营系统`.
+- Enterprise SSO is now a permanently visible primary action instead of depending on the optional auth-config response. The administrator form remains visible below a clear separator, so both login paths are immediately discoverable.
+- Browser inspection confirmed the two visible actions `企业 SSO 登录` and `登录`, the expected hero text, and document title `登录 | Infinix 全球资源运营系统`.
+
+**Comparison History**
+
+- Pass 1 found a P1 discoverability issue: local auth configuration disabled the conditional SSO block, leaving only administrator login visible. The old `全球 KOL 运营中枢` identity also remained prominent.
+- Fix: made the SSO entry persistent with its safe default route, retained the administrator form, replaced the old identity throughout the login flow, and updated the global platform title.
+- Pass 2 verified the final rendered page and found no actionable P0/P1/P2 issues.
+
+**Implementation Checklist**
+
+- Completed: SSO visibility, dual-login hierarchy, Infinix naming, SSO callback copy, platform/browser title, formatting, Stylelint, Vue TypeScript checking, production build, browser inspection, and diff whitespace validation.
+
+final result: passed
+
+---
+
+**Stitch Module Layout, Contrast, And Login QA**
+
+- Source visual truth:
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/tmp.fe3vZgv5va/stitch-reference.png`
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/tmp.fe3vZgv5va/stitch-reference.html`
+- Implementation routes: `http://127.0.0.1:4173/#/business/projects`, `http://127.0.0.1:4173/#/business/resources`, and `http://localhost:4173/#/login`.
+- Screenshot evidence: live Codex in-app Browser captures; this browser surface did not expose persistent screenshot file paths.
+- Viewport and normalization: the Stitch HTML, authenticated project page, and unauthenticated login page were rendered sequentially in the same browser tab at `1280 x 720` CSS pixels and device scale factor `1`, then emitted together in one comparison input.
+- State: authenticated local-mock project/resource empty states and unauthenticated login state. The business endpoints intentionally return an unavailable-data toast in the current local mock setup.
+- Full-view comparison evidence: reference, project workspace, and login were compared together at the same viewport. The resource library was captured separately as a second representative module-heavy page.
+- Focused-region evidence: obsidian navigation shell, active navigation, gridded canvas, page-title modules, action clusters, filter module, table module, empty state, headings, descriptions, placeholders, disabled actions, login brand pane, authentication card, and responsive two-column composition were inspected.
+
+**Findings**
+
+- No actionable P0/P1/P2 findings remain.
+- Fonts and typography: high-weight headings, uppercase operational labels, compact metadata, Chinese body copy, placeholders, and table labels form a clear hierarchy on both dark and light surfaces.
+- Spacing and layout rhythm: business screens now use separate bordered white modules instead of a continuous undifferentiated workspace. Page headers, filters, content tables, and action groups follow the reference's dense operational-card rhythm.
+- Colors and contrast: the obsidian shell, warm gridded workspace, white modules, neon-lime primary actions, dark ink, and neutral supporting text match the reference hierarchy. Computed-color sampling confirmed distinct light-surface text (`#111116`, `#526600`, `#686762`) and dark-surface copy (`#ffffff`, `#c9c9cf`, `#b5b5bd`). Disabled actions and placeholders remain visibly distinct from their backgrounds.
+- Image quality and asset fidelity: the existing product logo and avatar assets are retained. UI icons come from the project's icon library; no placeholder illustrations, generated assets, or handcrafted SVG approximations were added.
+- Copy and content: existing Chinese product terminology and workflows remain intact. Reference language is used sparingly for cockpit identity and security status without displacing functional labels.
+- Interactions and runtime: authenticated navigation and representative business modules loaded successfully; the login form, CAPTCHA, keep-signed-in option, and primary action remain present. Console inspection found only the reference HTML's Tailwind CDN warning and no application theme/runtime warning.
+
+**Comparison History**
+
+- Pass 1 found a P1 layout mismatch: non-dashboard screens still read as a flat white application surface and the login route retained its previous generic illustration/form composition.
+- Fix: introduced shared page-header modules, warm grid canvases, bordered card/panel modules, project workspace separation, and a responsive two-pane login with an obsidian brand panel and focused authentication card.
+- Pass 2 found P2 contrast drift in supporting copy, placeholders, disabled actions, and dark-surface login text.
+- Fix: normalized semantic ink/muted tokens, strengthened placeholder and disabled-state contrast, and added explicit dark-login text overrides.
+- Pass 3 compared the reference, project page, and login page together at the same viewport, then sampled the resource-library modules and computed text colors. No actionable P0/P1/P2 differences remained.
+
+**Implementation Checklist**
+
+- Completed: shared layout modules, global Stitch-derived palette, readable semantic text states, project/resource module verification, login redesign, responsive rules, Stylelint/Prettier, Vue TypeScript checking, production build, browser comparison, computed-color sampling, and diff whitespace validation.
+
+**Follow-up Polish**
+
+- P3: Recheck populated table rows, dialogs, and dashboard charts against production API data; local mock mode currently exercises empty and unavailable-data states.
+
+final result: passed
+
+---
+
+**Stitch Global UI Theme QA**
+
+- Source visual truth:
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/tmp.fe3vZgv5va/stitch-reference.png` (`360 x 512` Stitch thumbnail)
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/tmp.fe3vZgv5va/stitch-reference.html` (original Stitch screen, metadata `2560 x 3638`)
+- Implementation routes: `http://127.0.0.1:4173/#/business/dashboard`, `/business/resources`, `/business/projects`, `/business/assistant`, `/business/tags`, `/business/governance`, and `/system/user/index`.
+- Implementation screenshot evidence: live Codex in-app Browser captures; the browser surface did not expose persistent screenshot file paths.
+- Viewport and normalization: source HTML and dashboard implementation were rendered sequentially in the same browser tab at `885 x 780` CSS pixels and device scale factor `1`, then emitted together in one comparison input. The small Stitch thumbnail was used only as secondary source evidence.
+- State: authenticated desktop app; business routes use their valid local mock empty states, while user management uses populated mock table data.
+- Full-view comparison evidence: the reference and dashboard were compared together at the same viewport. Resource library, projects, assistant, tags, governance, and user management were then sampled to verify that the shared shell and tokens propagate beyond the dashboard.
+- Focused-region evidence: navigation active states, top bar and tabs, page canvases, cards, forms, selects, buttons, table headers/rows, pagination, empty states, status messaging, and responsive sidebar behavior were inspected. No additional image-asset comparison was needed because the implementation preserves the existing logo/avatar assets and icon library.
+
+**Findings**
+
+- No actionable P0/P1/P2 findings remain.
+- Fonts and typography: display headings, operational labels, table headers, and compact metadata preserve the reference's bold sans/mono contrast while retaining Chinese fallbacks and readable wrapping.
+- Spacing and layout rhythm: the obsidian shell, compact top chrome, warm workspace, white cards, shallow radii, dense filters, and table rhythm are consistent across both business and system-management routes. At the narrow tested viewport the sidebar may collapse to protect working-area width; this is an intentional responsive difference from the wide Stitch source.
+- Colors and visual tokens: the old blue primary system color is replaced globally by neon lime; obsidian navigation, warm cream page backgrounds, neutral borders, black secondary actions, semantic green/orange/red states, and subtle cyan/blue data accents match the source hierarchy.
+- Image quality and asset fidelity: existing product logo and user avatars are preserved at their native treatment; UI icons continue to come from the project's icon library. No placeholder drawings, custom SVG approximations, or generated assets were introduced.
+- Copy and content: page-specific Chinese product terminology remains intact. Source language such as `TRANSSION PULSE`, live pipeline, action-required, and operational telemetry is retained where it supports the dashboard identity without leaking implementation instructions into the UI.
+- Interactions and states: navigation across business and system modules, route active states, filters, buttons, selects, tables, pagination, empty states, and responsive sidebar behavior were exercised. The console contained one expected Axios 404 from an unavailable local mock business endpoint; no theme/runtime errors were observed.
+
+**Comparison History**
+
+- Pass 1 found a P1 scope mismatch: the Stitch palette was limited to the dashboard route, leaving the rest of the application on the previous blue/cool-gray visual system.
+- Fix: moved the visual language into global theme tokens and shared component rules; removed the dashboard-only body class; updated the configured primary color; recolored login/SSO surfaces; and normalized business-page canvases, buttons, forms, tables, dialogs, tags, pagination, and navigation.
+- Pass 2 found P2 residual drift on project primary actions and the tag taxonomy header/metric accent.
+- Fix: added explicit primary/success button states with reliable cascade priority and converted the tag header, border, fallback tag color, and blue summary/category accents to the warm-lime palette.
+- Pass 3 compared the normalized source and dashboard together, then verified representative resource, project, assistant, tag, governance, and system-management screens. No actionable P0/P1/P2 differences remained.
+
+**Implementation Checklist**
+
+- Completed: global palette tokens, obsidian sidebar/header/tabs, neon active and action states, warm page canvases, neutral cards and inputs, dense tables, overlays/dialogs, login and SSO theming, representative route checks, Stylelint, Vue TypeScript check, production build, and diff whitespace validation.
+
+**Follow-up Polish**
+
+- P3: Recheck platform charts and populated campaign/resource states against production data; local mock mode intentionally exposed several empty and API-unavailable states.
+
+final result: passed
+
+---
+
+**Stitch Global KOL Cockpit Redesign QA**
+
+- Source visual truth:
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/tmp.fe3vZgv5va/stitch-reference.png` (`360 x 512` Stitch thumbnail)
+  - `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/tmp.fe3vZgv5va/stitch-reference.html` (original Stitch screen, metadata `2560 x 3638`)
+- Implementation: `http://127.0.0.1:4173/#/business/dashboard`
+- Implementation screenshot evidence: live Codex in-app Browser capture; the browser surface did not expose a persistent screenshot file path.
+- Viewport: source HTML and implementation rendered at the same desktop browser viewport, `885 x 780`, device scale factor `1`.
+- State: authenticated data-dashboard route; local mock mode provides the valid dashboard empty state because it has no dashboard fixture.
+- Full-view comparison evidence: source and implementation were emitted together in the same browser comparison call at the same viewport.
+- Focused-region evidence: above-the-fold shell, cockpit heading, action strip, filter controls, metric cards, AI brief list, leaderboard controls, and empty states were visually inspected. Separate raster assets were not required because the implementation preserves the product logo and uses the existing icon library.
+
+**Findings**
+
+- No actionable P0/P1/P2 findings remain.
+- Fonts and typography: the source's Space Grotesk / JetBrains Mono hierarchy is carried into display headings, live labels, metric labels, and compact operational metadata, with Chinese system fallbacks retained for legibility.
+- Spacing and layout rhythm: the expanded navigation, compact top bar, shallow action strip, four-card metric grid, section dividers, and responsive two-column reflow preserve the source's dense operational cadence without horizontal clipping at the tested viewport.
+- Colors and visual tokens: the obsidian shell, warm-cream canvas, white cards, neon-lime primary state, cyan/blue/orange metric accents, and red priority label match the source palette and semantic emphasis.
+- Image quality and asset fidelity: no content imagery is required in the redesigned dashboard. Existing app logo imagery is preserved and all UI symbols come from the project's icon library; no placeholder artwork or handcrafted SVG icons were introduced.
+- Copy and content: source terminology was localized into the existing KOL Admin domain while retaining `TRANSSION PULSE`, live pipeline, action-required, market, campaign-velocity, AI brief, and top-performer concepts.
+- Interactions: refresh, new-resource navigation, project navigation, date and select filters, search/reset, advanced-filter expand/collapse, and ranking-mode selection remain wired. The advanced-filter and ranking-mode visual states were exercised in the browser.
+
+**Comparison History**
+
+- Pass 1 found a P1 shell mismatch: the implementation retained a white sidebar and header while the source used an obsidian navigation frame with neon active states.
+- Fix: added a route-scoped cockpit theme that applies the dark shell and neon active state only while the dashboard component is mounted, then automatically removes it on navigation.
+- Pass 2 compared source and revised implementation together. The visual hierarchy, palette, density, active navigation, content frame, controls, and metric-card treatment aligned with the reference; no P0/P1/P2 findings remained.
+
+**Implementation Checklist**
+
+- Completed: Stitch MCP source retrieval, reference screenshot and HTML inspection, dashboard information-architecture redesign, route-scoped shell theme, responsive layout, working controls, focused TypeScript check, production build, diff whitespace check, and browser visual comparison.
+
+**Follow-up Polish**
+
+- P3: Recheck populated regional cards, trend chart, and leaderboard rows against the production API dataset; local mock mode intentionally exercised the empty state.
+
+final result: passed
+
+---
+
 **Design QA**
 
 - Source visual truth:

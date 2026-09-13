@@ -4,7 +4,6 @@ import Motion from "./utils/motion";
 import { useRouter } from "vue-router";
 import { message } from "@/utils/message";
 import { loginRules } from "./utils/rule";
-import TypeIt from "@/components/ReTypeit";
 import { debounce } from "@pureadmin/utils";
 import { useNav } from "@/layout/hooks/useNav";
 import { useEventListener } from "@vueuse/core";
@@ -13,9 +12,9 @@ import { $t, transformI18n } from "@/plugins/i18n";
 import { useLayout } from "@/layout/hooks/useLayout";
 import { useUserStoreHook } from "@/store/modules/user";
 import { initRouter, getTopMenu } from "@/router/utils";
-import { bg, avatar, illustration } from "./utils/static";
+import brandMark from "@/assets/infinix-resource-mark.png";
 import { ReImageVerify } from "@/components/ReImageVerify";
-import { onMounted, ref, toRaw, reactive, watch } from "vue";
+import { onMounted, ref, reactive, watch } from "vue";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { useTranslationLang } from "@/layout/hooks/useTranslationLang";
 import { useDataThemeChange } from "@/layout/hooks/useDataThemeChange";
@@ -41,17 +40,16 @@ const loading = ref(false);
 const checked = ref(false);
 const disabled = ref(false);
 const ruleFormRef = ref<FormInstance>();
-const ssoEnabled = ref(false);
 const ssoLoginUrl = ref("/api/auth/sso/login");
+const ssoEnabled = ref(false);
 const authConfigLoaded = ref(false);
-const adminLoginVisible = ref(false);
 
 const { t } = useI18n();
 const { initStorage } = useLayout();
 initStorage();
 const { dataTheme, themeMode, dataThemeChange } = useDataThemeChange();
 dataThemeChange(themeMode.value);
-const { title, getDropdownItemStyle, getDropdownItemClass } = useNav();
+const { getDropdownItemStyle, getDropdownItemClass } = useNav();
 const { locale, translationCh, translationEn } = useTranslationLang();
 
 const ruleForm = reactive({
@@ -97,6 +95,7 @@ const onLogin = async (formEl: FormInstance | undefined) => {
 };
 
 function onSSOLogin() {
+  if (!ssoEnabled.value) return;
   window.location.assign(ssoLoginUrl.value || "/api/auth/sso/login");
 }
 
@@ -109,6 +108,7 @@ onMounted(async () => {
     }
   } catch {
     ssoEnabled.value = false;
+    ssoLoginUrl.value = "/api/auth/sso/login";
   } finally {
     authConfigLoaded.value = true;
   }
@@ -123,7 +123,6 @@ const immediateDebounce: any = debounce(
 useEventListener(document, "keydown", ({ code }) => {
   if (
     ["Enter", "NumpadEnter"].includes(code) &&
-    (!ssoEnabled.value || adminLoginVisible.value) &&
     !disabled.value &&
     !loading.value
   )
@@ -142,9 +141,8 @@ watch(loginDay, value => {
 </script>
 
 <template>
-  <div class="select-none">
-    <img :src="bg" class="wave" />
-    <div class="flex-c absolute right-5 top-3">
+  <div class="login-page select-none">
+    <div class="login-tools">
       <!-- 主题 -->
       <el-switch
         v-model="dataTheme"
@@ -186,46 +184,90 @@ watch(loginDay, value => {
         </template>
       </el-dropdown>
     </div>
-    <div class="login-container">
-      <div class="img">
-        <component :is="toRaw(illustration)" />
+
+    <section class="login-brand" aria-label="产品介绍">
+      <div class="brand-lockup">
+        <img
+          class="brand-logo"
+          :src="brandMark"
+          alt="Infinix 全球资源运营系统"
+        />
+        <div>
+          <strong>INFINIX</strong>
+          <span>GLOBAL RESOURCE OPERATIONS</span>
+        </div>
       </div>
+      <div class="brand-copy">
+        <span class="brand-eyebrow">
+          INFINIX RESOURCE NETWORK · ENTERPRISE
+        </span>
+        <h1>Infinix<br />全球资源运营系统</h1>
+        <p>
+          在一个工作台里发现创作者、推进合作、追踪内容表现，并让每一次海外投放都有清晰依据。
+        </p>
+      </div>
+      <div class="brand-modules" aria-label="平台能力">
+        <article>
+          <strong>DISCOVER</strong>
+          <span>跨市场资源协同</span>
+        </article>
+        <article>
+          <strong>OPERATE</strong>
+          <span>实时内容与项目进度</span>
+        </article>
+        <article>
+          <strong>INSIGHT</strong>
+          <span>智能推荐与复盘</span>
+        </article>
+      </div>
+      <p class="brand-note">INFINIX GLOBAL RESOURCES · SECURE WORKSPACE</p>
+    </section>
+
+    <main class="login-auth">
       <div class="login-box">
         <div class="login-form">
-          <avatar class="avatar" />
+          <div class="auth-header">
+            <span>SECURE SIGN-IN</span>
+            <h2>欢迎回来</h2>
+            <p>
+              登录 <strong>Infinix 全球资源运营系统</strong>
+              继续管理全球创作者合作。
+            </p>
+          </div>
           <Motion>
-            <h2 class="outline-hidden">
-              <TypeIt
-                :options="{ strings: [title], cursor: false, speed: 100 }"
-              />
-            </h2>
+            <div class="auth-status">
+              <i />
+              <span>企业级安全认证</span>
+              <em>{{ ssoEnabled ? "UAC CONNECTED" : "LOCAL ACCESS" }}</em>
+            </div>
           </Motion>
 
-          <Motion v-if="authConfigLoaded && ssoEnabled" :delay="80">
+          <Motion :delay="80">
             <div class="sso-login-block">
               <el-button
                 class="w-full"
                 size="large"
                 type="primary"
+                :loading="!authConfigLoaded"
+                :disabled="authConfigLoaded && !ssoEnabled"
                 @click="onSSOLogin"
               >
                 <IconifyIconOnline icon="ri:shield-user-line" class="mr-2" />
                 企业 SSO 登录
               </el-button>
-              <p>使用企业统一身份进入 XMP</p>
+              <p>
+                {{
+                  ssoEnabled
+                    ? "使用企业统一身份进入 Infinix 全球资源运营系统"
+                    : "当前环境暂未连接企业统一身份服务"
+                }}
+              </p>
               <el-divider>或</el-divider>
-              <el-button
-                link
-                type="primary"
-                @click="adminLoginVisible = !adminLoginVisible"
-              >
-                {{ adminLoginVisible ? "收起管理员登录" : "管理员账号登录" }}
-              </el-button>
+              <span class="account-login-label">管理员账号登录</span>
             </div>
           </Motion>
 
           <el-form
-            v-show="!ssoEnabled || adminLoginVisible"
             ref="ruleFormRef"
             :model="ruleForm"
             :rules="loginRules"
@@ -324,13 +366,10 @@ watch(loginDay, value => {
           </el-form>
         </div>
       </div>
-    </div>
-    <div
-      class="w-full flex-c absolute bottom-3 text-sm text-[rgba(0,0,0,0.6)] dark:text-[rgba(220,220,242,0.8)]"
-    >
-      Copyright © 2026
-      <span>&nbsp;{{ title }}</span>
-    </div>
+      <div class="login-copyright">
+        Copyright © 2026&nbsp;Infinix 全球资源运营系统
+      </div>
+    </main>
   </div>
 </template>
 
@@ -349,12 +388,19 @@ watch(loginDay, value => {
 
   p {
     margin: 8px 0 0;
-    color: var(--el-text-color-secondary);
     font-size: 12px;
+    color: var(--el-text-color-secondary);
   }
 
   :deep(.el-divider) {
     margin: 18px 0 10px;
+  }
+
+  .account-login-label {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    color: #686762;
   }
 }
 

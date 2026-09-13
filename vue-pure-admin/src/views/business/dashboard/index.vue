@@ -51,48 +51,50 @@ let trendChart: ReturnType<typeof echarts.init> | undefined;
 
 const metricCards = computed(() => [
   {
-    key: "totalPostCount",
-    label: "总发布数",
-    value: numberText(data.value.totalPostCount),
-    hint: isEnglish.value
-      ? `${numberText(data.value.hotPostCount)} million-view viral items`
-      : `${numberText(data.value.hotPostCount)} 条百万级爆款`,
-    color: "#16a34a",
-    path: "M2 31 L13 27 L24 29 L35 19 L46 22 L57 12 L68 17 L79 8 L90 15 L101 6"
-  },
-  {
     key: "totalPostViews",
-    label: "总曝光",
+    label: "总触达与曝光",
     value: compactNumber(data.value.totalPostViews),
     hint: "当前筛选内容累计播放",
-    color: "#2563eb",
-    path: "M2 30 L13 34 L24 26 L35 28 L46 17 L57 23 L68 11 L79 18 L90 8 L101 16"
+    icon: "ri:line-chart-line",
+    accent: "lime"
+  },
+  {
+    key: "activeResourceTotal",
+    label: "活跃合作资源",
+    value: numberText(data.value.activeResourceTotal),
+    hint: `${rate(data.value.activeResourceTotal, data.value.resourceTotal)}% 可合作覆盖`,
+    icon: "ri:team-line",
+    accent: "cyan"
   },
   {
     key: "totalPostInteractions",
     label: "总互动",
     value: compactNumber(data.value.totalPostInteractions),
     hint: "点赞、评论与分享汇总",
-    color: "#7c3aed",
-    path: "M2 33 L13 29 L24 31 L35 22 L46 25 L57 13 L68 19 L79 9 L90 17 L101 7"
+    icon: "ri:pulse-line",
+    accent: "blue"
   },
   {
-    key: "hotPostCount",
-    label: "爆款",
-    value: numberText(data.value.hotPostCount),
-    hint: "单条曝光达到 1M",
-    color: "#ea580c",
-    path: "M2 31 L13 30 L24 21 L35 25 L46 17 L57 26 L68 18 L79 28 L90 7 L101 19"
-  },
-  {
-    key: "postEngagementRate",
-    label: "平均互动率",
-    value: percentText(data.value.postEngagementRate),
-    hint: "互动量 / 曝光量",
-    color: "#0891b2",
-    path: "M2 32 L13 33 L24 26 L35 27 L46 18 L57 24 L68 14 L79 20 L90 10 L101 18"
+    key: "totalPostCount",
+    label: "内容资产",
+    value: numberText(data.value.totalPostCount),
+    hint: `${numberText(data.value.hotPostCount)} 条百万级爆款`,
+    icon: "ri:video-line",
+    accent: "orange"
   }
 ]);
+
+const regionalCards = computed(() => {
+  const rows = [...countryOptions.value]
+    .sort((a, b) => Number(b.value || 0) - Number(a.value || 0))
+    .slice(0, 4);
+  const max = Math.max(...rows.map(item => Number(item.value || 0)), 1);
+  return rows.map((item, index) => ({
+    ...item,
+    rank: String(index + 1).padStart(2, "0"),
+    percentage: Math.max(8, Math.round((Number(item.value || 0) / max) * 100))
+  }));
+});
 
 const insightCards = computed(() => {
   const top = rankedResources.value[0];
@@ -247,7 +249,7 @@ function renderTrendChart() {
   trendChart.setOption(
     {
       animationDuration: 500,
-      color: ["#22c55e", "#3b82f6", "#8b5cf6"],
+      color: ["#ccff00", "#111116", "#0099ff"],
       tooltip: {
         trigger: "axis",
         valueFormatter: (value: number) => compactNumber(value)
@@ -257,21 +259,29 @@ function renderTrendChart() {
         left: 0,
         itemWidth: 12,
         itemHeight: 7,
-        textStyle: { color: "#475569" }
+        textStyle: { color: "#6a6963", fontFamily: "JetBrains Mono" }
       },
       grid: { top: 48, right: 18, bottom: 24, left: 18, containLabel: true },
       xAxis: {
         type: "category",
         data: rows.map(item => item.date.slice(5)),
         axisTick: { show: false },
-        axisLine: { lineStyle: { color: "#e2e8f0" } },
-        axisLabel: { color: "#94a3b8", hideOverlap: true }
+        axisLine: { lineStyle: { color: "#d9d6cc" } },
+        axisLabel: {
+          color: "#757470",
+          hideOverlap: true,
+          fontFamily: "JetBrains Mono"
+        }
       },
       yAxis: [
         {
           type: "value",
-          axisLabel: { color: "#94a3b8", formatter: compactNumber },
-          splitLine: { lineStyle: { color: "#eef2f7" } }
+          axisLabel: {
+            color: "#757470",
+            formatter: compactNumber,
+            fontFamily: "JetBrains Mono"
+          },
+          splitLine: { lineStyle: { color: "#e8e5dc" } }
         },
         {
           type: "value",
@@ -286,7 +296,7 @@ function renderTrendChart() {
           yAxisIndex: 1,
           data: rows.map(item => item.postCount),
           barMaxWidth: 18,
-          itemStyle: { borderRadius: [4, 4, 0, 0], opacity: 0.62 }
+          itemStyle: { borderRadius: [3, 3, 0, 0], opacity: 0.9 }
         },
         {
           name: fieldLabel("曝光"),
@@ -327,28 +337,68 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-loading="loading" class="business-dashboard">
-    <section class="dashboard-heading">
-      <div>
-        <h1>CreatorLoop</h1>
-        <p>{{ fieldLabel("创作者资源运营与合作效果洞察工作台") }}</p>
+    <section class="cockpit-heading">
+      <div class="cockpit-title">
+        <div class="brand-line">
+          <span>TRANSSION</span>
+          <strong>PULSE</strong>
+          <i>V3.4 ENTERPRISE</i>
+        </div>
+        <div class="title-line">
+          <h1>{{ fieldLabel("全球 KOL 营销驾驶舱") }}</h1>
+          <span class="live-pill"><i /> LIVE PIPELINE SYNC</span>
+        </div>
+        <p>
+          {{ fieldLabel("覆盖全球重点市场的创作者资源、内容表现与合作效率") }}
+        </p>
       </div>
       <div class="heading-actions">
-        <span>
-          {{ fieldLabel("数据更新时间") }}：
-          {{
-            updatedAt
-              ? updatedAt.toLocaleString(isEnglish ? "en-US" : "zh-CN")
-              : "-"
-          }}
-        </span>
-        <el-button circle aria-label="刷新看板" @click="loadData">
+        <div class="updated-at">
+          <IconifyIconOnline icon="ri:database-2-line" />
+          <span>
+            {{ fieldLabel("数据更新时间") }}
+            {{
+              updatedAt
+                ? updatedAt.toLocaleString(isEnglish ? "en-US" : "zh-CN")
+                : "-"
+            }}
+          </span>
+        </div>
+        <el-button class="icon-button" aria-label="刷新看板" @click="loadData">
           <IconifyIconOnline icon="ri:refresh-line" />
         </el-button>
-        <el-button type="success" @click="router.push('/business/resources')">
-          <IconifyIconOnline icon="ri:add-line" class="mr-1" />
+        <el-button
+          class="primary-action"
+          @click="router.push('/business/resources')"
+        >
+          <IconifyIconOnline icon="ri:add-circle-line" />
           {{ fieldLabel("新增资源") }}
         </el-button>
       </div>
+    </section>
+
+    <section class="action-strip">
+      <div class="action-copy">
+        <span class="action-icon">
+          <IconifyIconOnline icon="ri:alarm-warning-line" />
+        </span>
+        <div>
+          <div class="action-labels">
+            <strong>ACTION REQUIRED</strong>
+            <span>PRIORITY HIGH</span>
+          </div>
+          <p>
+            <b>{{ numberText(data.hotPostCount) }}</b>
+            {{ fieldLabel("条百万级内容待沉淀为案例") }} ·
+            <b>{{ numberText(data.activeResourceTotal) }}</b>
+            {{ fieldLabel("个活跃资源可进入下一轮合作") }}
+          </p>
+        </div>
+      </div>
+      <button type="button" @click="router.push('/business/projects')">
+        {{ fieldLabel("查看营销项目") }}
+        <IconifyIconOnline icon="ri:arrow-right-line" />
+      </button>
     </section>
 
     <section class="filter-panel">
@@ -402,19 +452,20 @@ onBeforeUnmount(() => {
           fieldLabel("搜索")
         }}</el-button>
         <el-button @click="resetFilters">{{ fieldLabel("重置") }}</el-button>
+        <button
+          type="button"
+          class="advanced-trigger"
+          @click="advancedVisible = !advancedVisible"
+        >
+          <IconifyIconOnline icon="ri:equalizer-2-line" />
+          {{ fieldLabel("高级筛选") }}
+          <IconifyIconOnline
+            :icon="
+              advancedVisible ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'
+            "
+          />
+        </button>
       </div>
-      <button
-        type="button"
-        class="advanced-trigger"
-        @click="advancedVisible = !advancedVisible"
-      >
-        <IconifyIconOnline
-          :icon="
-            advancedVisible ? 'ri:arrow-down-s-fill' : 'ri:arrow-right-s-fill'
-          "
-        />
-        {{ fieldLabel("高级筛选") }}
-      </button>
       <div v-if="advancedVisible" class="advanced-content">
         {{
           fieldLabel(
@@ -436,45 +487,63 @@ onBeforeUnmount(() => {
         v-for="item in metricCards"
         :key="item.key"
         class="metric-card"
-        :style="{ '--tone': item.color }"
+        :class="`metric-card--${item.accent}`"
       >
-        <span>{{ fieldLabel(item.label) }}</span>
+        <div class="metric-topline">
+          <span class="metric-icon">
+            <IconifyIconOnline :icon="item.icon" />
+          </span>
+          <span class="metric-status">LIVE</span>
+        </div>
+        <span class="metric-label">{{ fieldLabel(item.label) }}</span>
         <strong>{{ item.value }}</strong>
         <small>{{ fieldLabel(item.hint) }}</small>
-        <svg viewBox="0 0 104 40" aria-hidden="true">
-          <path :d="item.path" />
-        </svg>
       </article>
     </section>
 
-    <section class="insight-panel">
-      <div class="section-heading">
+    <section class="regional-panel">
+      <div class="section-heading section-heading--bordered">
         <div>
-          <h2>{{ fieldLabel("AI 复盘摘要") }}</h2>
-          <p>{{ fieldLabel("基于当前筛选数据自动生成，不是固定模板") }}</p>
+          <span class="section-kicker">GLOBAL MARKET MAP</span>
+          <h2>{{ fieldLabel("重点市场资源分布") }}</h2>
+          <p>{{ fieldLabel("按当前筛选条件展示资源规模最高的市场") }}</p>
         </div>
-        <span class="ai-status">
-          <i />
-          {{ fieldLabel("数据驱动洞察") }}
+        <span class="engagement-pill">
+          {{ fieldLabel("平均互动率") }}
+          <b>{{ percentText(data.postEngagementRate) }}</b>
         </span>
       </div>
-      <div class="insight-grid">
-        <article v-for="item in insightCards" :key="item.title">
-          <span>{{ fieldLabel("数据驱动洞察") }}</span>
-          <h3>{{ item.title }}</h3>
-          <p>{{ item.detail }}</p>
+      <div v-if="regionalCards.length" class="region-grid">
+        <article v-for="item in regionalCards" :key="item.name">
+          <div class="region-card-head">
+            <span>{{ item.rank }}</span>
+            <IconifyIconOnline icon="ri:map-pin-2-line" />
+          </div>
+          <strong>{{ item.name || fieldLabel("未填写市场") }}</strong>
+          <p>{{ numberText(item.value) }} {{ fieldLabel("个资源") }}</p>
+          <div class="region-progress">
+            <i :style="{ width: `${item.percentage}%` }" />
+          </div>
         </article>
       </div>
+      <el-empty
+        v-else
+        :description="fieldLabel('当前筛选范围暂无市场数据')"
+        :image-size="64"
+      />
     </section>
 
     <section class="analysis-grid">
       <article class="analysis-card trend-card">
-        <div class="section-heading">
+        <div class="section-heading section-heading--bordered">
           <div>
-            <h2>{{ fieldLabel("发布与互动趋势") }}</h2>
-            <p>{{ fieldLabel("按天查看发布数、曝光和互动变化") }}</p>
+            <span class="section-kicker">CAMPAIGN VELOCITY</span>
+            <h2>{{ fieldLabel("内容发布与转化节奏") }}</h2>
+            <p>{{ fieldLabel("按天追踪发布数、曝光和互动变化") }}</p>
           </div>
-          <el-tag effect="plain">{{ fieldLabel("按日") }}</el-tag>
+          <el-tag effect="dark" color="#111116">{{
+            fieldLabel("实时")
+          }}</el-tag>
         </div>
         <el-empty
           v-if="!data.trend?.length"
@@ -483,61 +552,86 @@ onBeforeUnmount(() => {
         <div v-else ref="trendChartRef" class="trend-chart" />
       </article>
 
-      <article class="analysis-card ranking-card">
-        <div class="section-heading ranking-heading">
+      <article class="insight-panel">
+        <div class="section-heading section-heading--bordered">
           <div>
-            <h2>{{ fieldLabel("热门资源排行") }}</h2>
-            <p>{{ fieldLabel("按当前筛选内容表现排序") }}</p>
+            <span class="section-kicker">AI EXECUTIVE BRIEF</span>
+            <h2>{{ fieldLabel("智能复盘摘要") }}</h2>
+            <p>{{ fieldLabel("基于实时业务数据动态生成") }}</p>
           </div>
-          <el-button-group>
-            <el-button
-              :type="rankingMode === 'exposure' ? 'success' : 'default'"
-              @click="rankingMode = 'exposure'"
-            >
-              {{ fieldLabel("按曝光") }}
-            </el-button>
-            <el-button
-              :type="rankingMode === 'interactions' ? 'success' : 'default'"
-              @click="rankingMode = 'interactions'"
-            >
-              {{ fieldLabel("按互动") }}
-            </el-button>
-            <el-button
-              :type="rankingMode === 'engagementRate' ? 'success' : 'default'"
-              @click="rankingMode = 'engagementRate'"
-            >
-              {{ fieldLabel("按互动率") }}
-            </el-button>
-          </el-button-group>
+          <span class="ai-status"><i /> SYNCED</span>
         </div>
-        <el-empty
-          v-if="!rankedResources.length"
-          :description="fieldLabel('当前筛选范围暂无排行数据')"
-          :image-size="72"
-        />
-        <div v-else class="ranking-table">
-          <div class="ranking-row ranking-row--head">
-            <span>{{ fieldLabel("资源") }}</span>
-            <span>{{ fieldLabel("曝光") }}</span>
-            <span>{{ fieldLabel("互动率") }}</span>
-          </div>
-          <div
-            v-for="(item, index) in rankedResources"
-            :key="item.id"
-            class="ranking-row"
-          >
+        <div class="insight-list">
+          <article v-for="(item, index) in insightCards" :key="item.title">
+            <b>{{ String(index + 1).padStart(2, "0") }}</b>
             <div>
-              <b>{{ index + 1 }}</b>
-              <span>
-                <strong>{{ item.name || fieldLabel("未命名资源") }}</strong>
-                <small>{{ item.platform || fieldLabel("未填写平台") }}</small>
-              </span>
+              <h3>{{ item.title }}</h3>
+              <p>{{ item.detail }}</p>
             </div>
-            <strong>{{ compactNumber(item.exposure) }}</strong>
-            <strong>{{ percentText(item.engagementRate) }}</strong>
-          </div>
+          </article>
         </div>
       </article>
+    </section>
+
+    <section class="ranking-card">
+      <div class="section-heading section-heading--bordered ranking-heading">
+        <div>
+          <span class="section-kicker">TOP PERFORMERS</span>
+          <h2>{{ fieldLabel("创作者表现排行榜") }}</h2>
+          <p>{{ fieldLabel("按曝光、互动和内容效率识别优先合作资源") }}</p>
+        </div>
+        <el-button-group>
+          <el-button
+            :type="rankingMode === 'exposure' ? 'success' : 'default'"
+            @click="rankingMode = 'exposure'"
+          >
+            {{ fieldLabel("按曝光") }}
+          </el-button>
+          <el-button
+            :type="rankingMode === 'interactions' ? 'success' : 'default'"
+            @click="rankingMode = 'interactions'"
+          >
+            {{ fieldLabel("按互动") }}
+          </el-button>
+          <el-button
+            :type="rankingMode === 'engagementRate' ? 'success' : 'default'"
+            @click="rankingMode = 'engagementRate'"
+          >
+            {{ fieldLabel("按互动率") }}
+          </el-button>
+        </el-button-group>
+      </div>
+      <el-empty
+        v-if="!rankedResources.length"
+        :description="fieldLabel('当前筛选范围暂无排行数据')"
+        :image-size="72"
+      />
+      <div v-else class="ranking-table">
+        <div class="ranking-row ranking-row--head">
+          <span>{{ fieldLabel("创作者与平台") }}</span>
+          <span>{{ fieldLabel("内容") }}</span>
+          <span>{{ fieldLabel("曝光") }}</span>
+          <span>{{ fieldLabel("互动率") }}</span>
+          <span>{{ fieldLabel("状态") }}</span>
+        </div>
+        <div
+          v-for="(item, index) in rankedResources"
+          :key="item.id"
+          class="ranking-row"
+        >
+          <div>
+            <b>{{ index + 1 }}</b>
+            <span>
+              <strong>{{ item.name || fieldLabel("未命名资源") }}</strong>
+              <small>{{ item.platform || fieldLabel("未填写平台") }}</small>
+            </span>
+          </div>
+          <strong>{{ numberText(item.postCount) }}</strong>
+          <strong>{{ compactNumber(item.exposure) }}</strong>
+          <strong>{{ percentText(item.engagementRate) }}</strong>
+          <span class="status-pill">ACTIVE</span>
+        </div>
+      </div>
     </section>
   </div>
 </template>
@@ -545,80 +639,258 @@ onBeforeUnmount(() => {
 <style scoped>
 .business-dashboard {
   min-height: 100%;
-  padding: 18px;
-  color: #0f172a;
-  background: #f5f7fb;
+  padding: 24px;
+  font-family:
+    "Plus Jakarta Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #16161a;
+  background: #f6f5f1;
 }
 
-.dashboard-heading,
+.cockpit-heading,
 .heading-actions,
+.brand-line,
+.title-line,
+.action-strip,
+.action-copy,
+.action-labels,
 .filter-row,
 .section-heading,
+.metric-topline,
+.region-card-head,
 .ranking-row,
 .ranking-row > div {
   display: flex;
   align-items: center;
 }
 
-.dashboard-heading,
+.cockpit-heading,
+.action-strip,
 .section-heading,
+.metric-topline,
+.region-card-head,
 .ranking-row {
   justify-content: space-between;
 }
 
-.dashboard-heading {
-  gap: 20px;
-  margin-bottom: 14px;
+.cockpit-heading {
+  gap: 24px;
+  padding: 12px 4px 18px;
+  color: #111116;
+  background: transparent;
 }
 
-.dashboard-heading h1,
+.brand-line {
+  gap: 8px;
+  margin-bottom: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.brand-line span {
+  font-weight: 800;
+}
+
+.brand-line strong {
+  color: #cf0;
+}
+
+.brand-line i {
+  padding: 3px 7px;
+  font-style: normal;
+  color: #cf0;
+  background: #111116;
+  border: 1px solid #536500;
+  border-radius: 4px;
+}
+
+.title-line {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.cockpit-heading h1,
 .section-heading h2,
-.insight-grid h3 {
+.insight-list h3 {
   margin: 0;
 }
 
-.dashboard-heading h1 {
-  font-size: 30px;
-  line-height: 1;
+.cockpit-heading h1 {
+  font-family: "Space Grotesk", "PingFang SC", sans-serif;
+  font-size: clamp(24px, 2.25vw, 34px);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
 }
 
-.dashboard-heading p,
+.live-pill {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  padding: 6px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  color: #cf0;
+  background: #111116;
+  border: 1px solid #3c480d;
+  border-radius: 999px;
+}
+
+.live-pill i,
+.ai-status i {
+  width: 7px;
+  height: 7px;
+  background: #cf0;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgb(204 255 0 / 75%);
+}
+
+.cockpit-heading p,
 .section-heading p,
-.insight-grid p {
+.insight-list p {
   margin: 6px 0 0;
-  color: #64748b;
+  color: #757470;
 }
 
-.dashboard-heading p {
-  font-size: 13px;
+.cockpit-heading p {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: #6a6963;
 }
 
 .heading-actions {
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
-.heading-actions > span {
+.updated-at {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: #6a6963;
+}
+
+.heading-actions :deep(.el-button) {
+  margin-left: 0;
+}
+
+.heading-actions :deep(.icon-button),
+.heading-actions :deep(.primary-action) {
+  height: 36px;
+  color: #fff;
+  background: #111116;
+  border-color: #111116;
+}
+
+.heading-actions :deep(.icon-button) {
+  width: 36px;
+  padding: 0;
+}
+
+.heading-actions :deep(.primary-action) {
+  gap: 6px;
+  font-weight: 800;
+  color: #111116;
+  background: #cf0;
+  border-color: #cf0;
+}
+
+.action-strip {
+  gap: 20px;
+  padding: 11px 14px;
+  margin-bottom: 14px;
+  background: #fff;
+  border: 1px solid #dedbd1;
+  border-left: 3px solid #ff4500;
+  border-radius: 10px;
+}
+
+.action-copy {
+  gap: 12px;
+  min-width: 0;
+}
+
+.action-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: #111116;
+  background: #cf0;
+  border-radius: 7px;
+}
+
+.action-labels {
+  gap: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+}
+
+.action-labels strong {
+  letter-spacing: 0.1em;
+}
+
+.action-labels span {
+  padding: 2px 5px;
+  color: #fff;
+  background: #ef4444;
+  border-radius: 3px;
+}
+
+.action-copy p {
+  margin: 4px 0 0;
   font-size: 12px;
-  color: #64748b;
+  color: #6a6963;
+}
+
+.action-copy p b {
+  color: #111116;
+}
+
+.action-strip > button,
+.advanced-trigger {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.action-strip > button {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #cf0;
+  background: #111116;
+  border-radius: 7px;
 }
 
 .filter-panel,
 .metric-card,
+.regional-panel,
 .insight-panel,
-.analysis-card {
+.analysis-card,
+.ranking-card {
   background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border: 1px solid #dedbd1;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgb(18 18 22 / 4%);
 }
 
 .filter-panel {
-  padding: 13px;
-  margin-bottom: 14px;
+  padding: 12px;
+  margin-bottom: 16px;
 }
 
 .filter-row {
-  gap: 10px;
+  gap: 8px;
 }
 
 .filter-row :deep(.el-date-editor) {
@@ -626,162 +898,291 @@ onBeforeUnmount(() => {
 }
 
 .filter-row :deep(.el-select) {
-  min-width: 170px;
   flex: 1;
+  min-width: 170px;
 }
 
 .advanced-trigger {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-  padding: 9px 0 0;
-  font-size: 13px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
   font-weight: 700;
-  color: #15803d;
-  cursor: pointer;
-  background: transparent;
-  border: 0;
+  color: #4e4d49;
 }
 
 .advanced-content {
   padding: 10px 12px;
   margin-top: 10px;
   font-size: 12px;
-  color: #64748b;
-  background: #f8fafc;
+  color: #6a6963;
+  background: #f6f5f1;
+  border: 1px solid #e7e4da;
   border-radius: 8px;
 }
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .metric-card {
   position: relative;
-  min-height: 142px;
-  padding: 16px;
+  min-height: 154px;
+  padding: 16px 17px;
   overflow: hidden;
+  border-top: 3px solid #111116;
 }
 
-.metric-card > span {
-  font-size: 13px;
+.metric-card--lime {
+  border-top-color: #cf0;
+}
+
+.metric-card--cyan {
+  border-top-color: #00dc82;
+}
+
+.metric-card--blue {
+  border-top-color: #09f;
+}
+
+.metric-card--orange {
+  border-top-color: #ff7a00;
+}
+
+.metric-topline {
+  margin-bottom: 14px;
+}
+
+.metric-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  font-size: 17px;
+  color: #cf0;
+  background: #111116;
+  border-radius: 6px;
+}
+
+.metric-status {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
   font-weight: 700;
-  color: #475569;
+  color: #87857f;
+  letter-spacing: 0.12em;
+}
+
+.metric-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #5d5c57;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .metric-card > strong {
   display: block;
-  margin-top: 10px;
-  font-size: 30px;
+  margin-top: 7px;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 34px;
+  font-weight: 800;
   line-height: 1;
+  letter-spacing: -0.04em;
 }
 
 .metric-card small {
   display: block;
-  max-width: calc(100% - 72px);
   margin-top: 9px;
-  color: #64748b;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: #757470;
 }
 
-.metric-card svg {
-  position: absolute;
-  right: 13px;
-  bottom: 13px;
-  width: 86px;
-  height: 35px;
-}
-
-.metric-card path {
-  fill: none;
-  stroke: var(--tone);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2.5;
-}
-
-.insight-panel {
-  padding: 16px;
-  margin-top: 14px;
+.regional-panel,
+.analysis-card,
+.insight-panel,
+.ranking-card {
+  padding: 17px;
+  margin-top: 16px;
 }
 
 .section-heading {
   gap: 12px;
 }
 
+.section-heading--bordered {
+  padding-bottom: 13px;
+  border-bottom: 1px solid #e8e5dc;
+}
+
+.section-kicker {
+  display: block;
+  margin-bottom: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 700;
+  color: #7b7a74;
+  letter-spacing: 0.13em;
+}
+
 .section-heading h2 {
-  font-size: 18px;
+  font-family: "Space Grotesk", "PingFang SC", sans-serif;
+  font-size: 17px;
+  font-weight: 800;
 }
 
 .section-heading p,
-.insight-grid p {
-  font-size: 12px;
+.insight-list p {
+  font-size: 11px;
 }
 
-.ai-status {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 700;
-  color: #15803d;
+.engagement-pill {
+  padding: 7px 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: #6a6963;
+  background: #f6f5f1;
+  border: 1px solid #dedbd1;
+  border-radius: 6px;
 }
 
-.ai-status i {
-  width: 7px;
-  height: 7px;
-  background: #22c55e;
-  border-radius: 50%;
-  box-shadow: 0 0 0 4px #dcfce7;
+.engagement-pill b {
+  margin-left: 6px;
+  font-size: 13px;
+  color: #111116;
 }
 
-.insight-grid {
+.region-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
 }
 
-.insight-grid article {
-  min-height: 136px;
-  padding: 15px;
-  text-align: center;
-  background: linear-gradient(180deg, #fbfefc, #fff);
-  border: 1px solid #dce9df;
-  border-radius: 10px;
+.region-grid article {
+  padding: 14px;
+  background: #faf9f6;
+  border: 1px solid #e5e3db;
+  border-radius: 8px;
 }
 
-.insight-grid article > span {
+.region-card-head {
+  margin-bottom: 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: #87857f;
+}
+
+.region-card-head svg {
+  font-size: 17px;
+  color: #111116;
+}
+
+.region-grid article > strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.region-grid article > p {
+  margin: 5px 0 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: #757470;
+}
+
+.region-progress {
+  height: 4px;
+  overflow: hidden;
+  background: #dedbd1;
+  border-radius: 4px;
+}
+
+.region-progress i {
+  display: block;
+  height: 100%;
+  background: #cf0;
+  border-right: 2px solid #111116;
+}
+
+.ai-status {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 6px 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 800;
+  color: #111116;
+  background: #cf0;
+  border-radius: 5px;
+}
+
+.ai-status i {
+  background: #111116;
+  box-shadow: none;
+}
+
+.insight-list {
+  margin-top: 14px;
+}
+
+.insight-list article {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid #ece9e1;
+}
+
+.insight-list article:last-child {
+  border-bottom: 0;
+}
+
+.insight-list article > b {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: #111116;
+  background: #cf0;
+  border-radius: 5px;
+}
+
+.insight-list h3 {
   font-size: 12px;
-  font-weight: 700;
-  color: #15803d;
 }
 
-.insight-grid h3 {
-  margin-top: 15px;
-  font-size: 15px;
-}
-
-.insight-grid p {
-  line-height: 1.7;
+.insight-list p {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
 }
 
 .analysis-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(360px, 0.9fr);
-  gap: 14px;
-  margin-top: 14px;
+  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.75fr);
+  gap: 16px;
 }
 
 .analysis-card {
-  min-height: 405px;
-  padding: 16px;
+  min-height: 388px;
 }
 
 .trend-chart {
   width: 100%;
-  height: 330px;
+  height: 310px;
   margin-top: 10px;
 }
 
@@ -795,32 +1196,41 @@ onBeforeUnmount(() => {
 }
 
 .ranking-table {
-  margin-top: 18px;
+  margin-top: 12px;
 }
 
 .ranking-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 82px 66px;
-  gap: 8px;
-  min-height: 50px;
-  border-bottom: 1px solid #eef2f7;
+  grid-template-columns: minmax(220px, 1.5fr) 80px 110px 90px 88px;
+  gap: 12px;
+  min-height: 58px;
+  padding: 0 10px;
+  border-bottom: 1px solid #ece9e1;
 }
 
 .ranking-row > div {
-  min-width: 0;
   gap: 10px;
+  min-width: 0;
 }
 
 .ranking-row > div > b {
-  width: 22px;
-  color: #94a3b8;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: #757470;
   text-align: center;
+  background: #f1efe8;
+  border-radius: 5px;
 }
 
 .ranking-row:nth-child(2) > div > b,
 .ranking-row:nth-child(3) > div > b,
 .ranking-row:nth-child(4) > div > b {
-  color: #15803d;
+  color: #111116;
+  background: #cf0;
 }
 
 .ranking-row span {
@@ -837,19 +1247,32 @@ onBeforeUnmount(() => {
 
 .ranking-row span small {
   margin-top: 3px;
-  color: #94a3b8;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: #87857f;
 }
 
 .ranking-row--head {
-  min-height: 38px;
-  color: #64748b;
-  background: #f8fafc;
+  min-height: 36px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 700;
+  color: #6a6963;
+  letter-spacing: 0.04em;
+  background: #f6f5f1;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
-.ranking-row--head span:first-child {
-  padding-left: 12px;
+.status-pill {
+  justify-self: start;
+  padding: 4px 7px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 800;
+  color: #111116;
+  background: #cf0;
+  border-radius: 4px;
 }
 
 .mr-1 {
@@ -858,10 +1281,10 @@ onBeforeUnmount(() => {
 
 @media (width <= 1100px) {
   .metric-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .insight-grid {
+  .region-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -881,14 +1304,27 @@ onBeforeUnmount(() => {
     padding: 12px;
   }
 
-  .dashboard-heading {
-    align-items: flex-start;
+  .cockpit-heading,
+  .action-strip {
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .metric-grid,
-  .insight-grid {
+  .region-grid {
     grid-template-columns: 1fr;
+  }
+
+  .heading-actions {
+    justify-content: flex-start;
+  }
+
+  .ranking-table {
+    overflow-x: auto;
+  }
+
+  .ranking-row {
+    min-width: 760px;
   }
 
   .filter-row > *,

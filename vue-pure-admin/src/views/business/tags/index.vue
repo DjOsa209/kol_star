@@ -147,7 +147,7 @@ onMounted(loadData);
             v-for="item in group.items"
             :key="item.id"
             class="tag-card"
-            :style="{ '--tag-color': item.color || '#2563eb' }"
+            :style="{ '--tag-color': item.color || '#526600' }"
           >
             <span class="tag-dot" />
             <span class="tag-name">{{ item.name }}</span>
@@ -212,9 +212,8 @@ onMounted(loadData);
   padding: 22px 24px;
   margin-bottom: 16px;
   background:
-    linear-gradient(135deg, rgb(255 255 255 / 96%) 0%, rgb(240 253 250) 100%),
-    #fff;
-  border: 1px solid #dbe4ee;
+    linear-gradient(135deg, rgb(255 255 255 / 96%) 0%, #faffdf 100%), #fff;
+  border: 1px solid #e5e3db;
   border-radius: 8px;
   box-shadow: 0 14px 32px rgb(15 23 42 / 6%);
 }
@@ -224,7 +223,7 @@ onMounted(loadData);
   display: block;
   font-size: 12px;
   font-weight: 700;
-  color: #0f766e;
+  color: #526600;
   text-transform: uppercase;
   letter-spacing: 0;
 }
@@ -276,7 +275,7 @@ onMounted(loadData);
 }
 
 .summary-card--blue {
-  --summary-color: #2563eb;
+  --summary-color: #526600;
 }
 
 .summary-card--green {
@@ -391,8 +390,8 @@ onMounted(loadData);
 }
 
 .category-card--blue {
-  --category-color: #2563eb;
-  --category-soft: rgb(37 99 235 / 12%);
+  --category-color: #cf0;
+  --category-soft: rgb(204 255 0 / 16%);
 }
 
 .category-card--amber {

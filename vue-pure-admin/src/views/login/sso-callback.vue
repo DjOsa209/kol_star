@@ -67,7 +67,12 @@ onMounted(async () => {
         :class="['callback-icon', { spinning: !errorMessage }]"
       />
       <h1>{{ errorMessage ? "企业身份认证失败" : "正在完成企业身份认证" }}</h1>
-      <p>{{ errorMessage || "正在读取企业账号并进入 XMP，请稍候…" }}</p>
+      <p>
+        {{
+          errorMessage ||
+          "正在读取企业账号并进入 Infinix 全球资源运营系统，请稍候…"
+        }}
+      </p>
       <el-button
         v-if="errorMessage"
         type="primary"
@@ -82,10 +87,10 @@ onMounted(async () => {
 <style scoped>
 .sso-callback-page {
   display: grid;
+  place-items: center;
   min-height: 100vh;
   padding: 24px;
-  place-items: center;
-  background: linear-gradient(135deg, #eff6ff, #f8fafc 55%, #ecfdf5);
+  background: #f6f5f1;
 }
 
 .callback-card {
@@ -93,27 +98,27 @@ onMounted(async () => {
   padding: 40px 32px;
   text-align: center;
   background: #fff;
-  border: 1px solid rgb(148 163 184 / 22%);
+  border: 1px solid #e5e3db;
   border-radius: 12px;
-  box-shadow: 0 18px 50px rgb(15 23 42 / 10%);
+  box-shadow: 0 18px 50px rgb(18 18 22 / 10%);
 }
 
 .callback-icon {
   width: 34px;
   height: 34px;
-  color: #2563eb;
+  color: #a8d400;
 }
 
 .callback-card h1 {
   margin: 18px 0 8px;
-  color: #0f172a;
   font-size: 22px;
+  color: #16161a;
 }
 
 .callback-card p {
   margin: 0 0 22px;
-  color: #64748b;
   line-height: 1.6;
+  color: #757470;
 }
 
 .spinning {

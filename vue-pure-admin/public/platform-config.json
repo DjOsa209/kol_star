@@ -1,6 +1,6 @@
 {
   "Version": "7.0.0",
-  "Title": "XMP",
+  "Title": "Infinix 全球资源运营系统",
   "FixedHeader": true,
   "HiddenSideBar": false,
   "MultiTagsCache": false,
@@ -16,7 +16,7 @@
   "HideFooter": false,
   "Stretch": false,
   "SidebarStatus": true,
-  "EpThemeColor": "#409EFF",
+  "EpThemeColor": "#CCFF00",
   "ShowLogo": true,
   "Watermark": false,
   "TagsStyle": "chrome",
