@@ -362,8 +362,13 @@ const englishFieldLabels: Record<string, string> = {
   "对接人 / 供应商": "Contact Person / Vendor",
   导入方式: "Import Method",
   "添加达人 / 媒体": "Add KOL / Media",
+  添加: "Add",
+  "编辑达人 / 媒体": "Edit KOL / Media",
   层级: "Tier",
   "层级（系统自动）": "Tier (System Generated)",
+  本平台粉丝数: "Followers",
+  保存后自动计算: "Calculated after saving",
+  "月访问量（Monthly Visits）": "Monthly Visits",
   "层级（自动）": "Tier (Automatic)",
   已同步内容数: "Synced Content Count",
   已有项目: "Existing Project",
@@ -1049,7 +1054,7 @@ const englishFieldLabels: Record<string, string> = {
   "修改会同步更新全球资源库中的该达人媒体资料。":
     "Changes will also update this creator or media profile in the global resource library.",
   "修改会同步更新全球资源库中的该达人/媒体资料。":
-    "Changes will also update this creator or media profile in the global resource library.",
+    "Changes will synchronize with the global resource library.",
   "全球资源库暂无可添加账号，可在上方输入账号后选择“全网搜索”。":
     "No accounts are currently available in the global resource library. Enter an account above and select Web Search.",
   关闭: "Close",

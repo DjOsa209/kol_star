@@ -240,6 +240,12 @@ const creatorContentTypeOptions = ref([
 const creatorMarketOptions = computed(() =>
   countryOptionsWithLegacyValues(creatorForm.market ? [creatorForm.market] : [])
 );
+
+function creatorMarketOptionLabel(item: any) {
+  if (locale.value !== "en") return item.label;
+  if (item.code) return `${item.englishName} (${item.code})`;
+  return `${item.englishName || item.name} (Historical Data)`;
+}
 const navItems = [
   { key: "collaboration", label: "协作执行", icon: "ri:team-line" },
   { key: "report", label: "效果报告", icon: "ri:bar-chart-box-line" },
@@ -3621,7 +3627,9 @@ onBeforeUnmount(() => {
   <el-dialog
     v-model="creatorDialog"
     :title="
-      creatorDialogMode === 'create' ? '添加达人 / 媒体' : '编辑达人 / 媒体'
+      fieldLabel(
+        creatorDialogMode === 'create' ? '添加达人 / 媒体' : '编辑达人 / 媒体'
+      )
     "
     width="820px"
   >
@@ -3643,7 +3651,7 @@ onBeforeUnmount(() => {
             <el-option
               v-for="item in standardResourceTypeOptions"
               :key="item"
-              :label="item"
+              :label="fieldLabel(item)"
               :value="item"
             />
           </el-select>
@@ -3673,7 +3681,7 @@ onBeforeUnmount(() => {
             <el-option
               v-for="item in creatorMarketOptions"
               :key="item.code || item.name"
-              :label="item.label"
+              :label="creatorMarketOptionLabel(item)"
               :value="item.name"
             />
           </el-select>
@@ -3686,13 +3694,15 @@ onBeforeUnmount(() => {
         </el-form-item>
         <el-form-item
           :label="
-            creatorDialogMode === 'create'
-              ? '粉丝数 / 访问量（系统自动）'
-              : creatorForm.resourceType === '媒体'
-                ? normalizePlatformName(creatorForm.platform) === 'Website'
-                  ? '月访问量（Monthly Visits）'
-                  : '月独立访客（UMV）'
-                : '本平台粉丝数'
+            fieldLabel(
+              creatorDialogMode === 'create'
+                ? '粉丝数 / 访问量（系统自动）'
+                : creatorForm.resourceType === '媒体'
+                  ? normalizePlatformName(creatorForm.platform) === 'Website'
+                    ? '月访问量（Monthly Visits）'
+                    : '月独立访客（UMV）'
+                  : '本平台粉丝数'
+            )
           "
         >
           <el-input-number
@@ -3729,7 +3739,7 @@ onBeforeUnmount(() => {
           class="creator-form-grid__wide"
         >
           <el-input
-            :model-value="creatorForm.collaboratorTier || '保存后自动计算'"
+            :model-value="fieldLabel(creatorForm.collaboratorTier || '保存后自动计算')"
             disabled
           />
         </el-form-item>
@@ -3873,7 +3883,7 @@ onBeforeUnmount(() => {
         :loading="submitting"
         @click="submitProjectResource"
       >
-        {{ creatorDialogMode === "create" ? "添加" : "保存" }}
+        {{ fieldLabel(creatorDialogMode === "create" ? "添加" : "保存") }}
       </el-button>
     </template>
   </el-dialog>
