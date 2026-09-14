@@ -2911,7 +2911,7 @@ onBeforeUnmount(() => {
           <div class="toolbar-actions">
             <el-button type="primary" @click="openCreateProjectResource">
               <IconifyIconOnline icon="ri:add-line" />
-              添加达人 / 媒体
+              {{ fieldLabel("添加达人 / 媒体") }}
             </el-button>
           </div>
         </div>
@@ -2927,12 +2927,12 @@ onBeforeUnmount(() => {
               }}
             </p>
           </div>
-          <span>{{ influencerRows.length }} 位达人</span>
+          <span>{{ locale === "en" ? `${influencerRows.length} KOL` : `${influencerRows.length} 位达人` }}</span>
         </div>
         <el-table :data="influencerRows" class="creator-table">
           <el-table-column
             type="expand"
-            :label="fieldLabel('展开')"
+            label=""
             width="72"
             align="center"
           >
@@ -3126,7 +3126,7 @@ onBeforeUnmount(() => {
           >
             <template #default="{ row }">
               <el-tag effect="plain">{{
-                row.collaboratorTier || "待同步"
+                fieldLabel(row.collaboratorTier || "待同步")
               }}</el-tag>
             </template>
           </el-table-column>
@@ -3192,12 +3192,12 @@ onBeforeUnmount(() => {
               月访问量；其他媒体采用月独立访客（UMV）。
             </p>
           </div>
-          <span>{{ mediaRows.length }} 家媒体</span>
+          <span>{{ locale === "en" ? `${mediaRows.length} Media` : `${mediaRows.length} 家媒体` }}</span>
         </div>
         <el-table :data="mediaRows" class="creator-table media-table">
           <el-table-column
             type="expand"
-            :label="fieldLabel('展开')"
+            label=""
             width="72"
             align="center"
           >
@@ -3349,7 +3349,7 @@ onBeforeUnmount(() => {
           >
             <template #default="{ row }"
               ><el-tag effect="plain">{{
-                row.collaboratorTier || "待同步"
+                fieldLabel(row.collaboratorTier || "待同步")
               }}</el-tag></template
             >
           </el-table-column>
