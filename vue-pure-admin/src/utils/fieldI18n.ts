@@ -1199,7 +1199,7 @@ const englishFieldLabels: Record<string, string> = {
   成本: "Cost",
   转赞藏评: "Shares, Likes, Saves, and Comments",
   "覆盖导入会以本次文件解析结果为准更新项目，并移除该项目中未出现在本次文件里的历史合作与项目关联；全局达人/媒体资料不会被删除。":
-    "Overwrite import updates the project from this file, removing collaboration history and project links not present in it. Global creator and media profiles are retained."
+    "Replace Filed Proiect will only kkeep the latest data, the historydata will be deleted"
 };
 
 export function fieldLabel(label: string): string {

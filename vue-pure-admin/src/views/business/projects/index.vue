@@ -2904,7 +2904,7 @@ onMounted(() => {
           show-icon
           :title="
             locale === 'en'
-              ? `Incremental import only shows and submits new data; ${duplicateImportRows.length} duplicate rows already in the file or project are hidden.`
+              ? 'Add data to filed project will not make adjustments to historry data but only make increments'
               : `增量导入仅展示并提交新增数据；已隐藏文件内或项目中已有的重复数据 ${duplicateImportRows.length} 条。`
           "
         />
@@ -3054,15 +3054,7 @@ onMounted(() => {
             "
             @click="submitImport"
           >
-            {{
-              importTargetMode === "incremental"
-                ? fieldLabel("确认增量导入")
-                : importTargetMode === "replace"
-                  ? fieldLabel("确认覆盖导入")
-                  : fieldLabel("确认导入")
-            }}
-            {{ rowsForImport.length }} {{ locale === "en" ? "rows (Content " : "行（内容 " }}
-            {{ linkedImportRows.length }} {{ locale === "en" ? "items)" : "条）" }}
+            {{ fieldLabel("确认") }}
           </el-button>
         </template>
       </el-dialog>
