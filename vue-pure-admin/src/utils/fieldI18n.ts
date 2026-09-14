@@ -527,9 +527,9 @@ const englishFieldLabels: Record<string, string> = {
   低: "Low",
   中: "Medium",
   高: "High",
-  头部: "Top-tier",
-  腰部: "Mid-tier",
-  尾部: "Long-tail",
+  头部: "Top Tier",
+  腰部: "Mid Tier",
+  尾部: "Long Tail",
   待同步: "Pending Sync",
   新增模板: "Add Template",
   "新增 Brief 模板": "Add Brief Template",
@@ -1180,7 +1180,7 @@ const englishFieldLabels: Record<string, string> = {
   "项目内该媒体全部平台总成本 / 总播放量 × 1000":
     "Total Cost Across This Media Outlet's Platforms / Total Views × 1,000",
   "项目内该达人全部平台总成本 / 总播放量 × 1000":
-    "Total Cost Across This Creator's Platforms / Total Views × 1,000",
+    "Total Cost Across This KOL's Platforms / Total Views × 1,000",
   默认汇总全部历史合作可从项目名称识别单独项目:
     "All collaboration history is aggregated by default; individual projects can be identified by project name.",
   "默认汇总全部历史合作，可从项目名称识别单独项目":

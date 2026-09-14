@@ -2906,7 +2906,7 @@ onBeforeUnmount(() => {
             <el-option
               v-for="tier in creatorTierOptions"
               :key="tier"
-              :label="tier"
+              :label="fieldLabel(tier)"
               :value="tier"
             />
           </el-select>
