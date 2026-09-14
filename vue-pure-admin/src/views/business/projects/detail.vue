@@ -2596,7 +2596,7 @@ onBeforeUnmount(() => {
                     size="small"
                     :title="fieldLabel('内容类型')"
                   >
-                    {{ contentTypeTag(contentDetailView) }}
+                    {{ fieldLabel(contentTypeTag(contentDetailView)) }}
                   </el-tag>
                 </div>
                 <el-button type="primary" @click="openPost(contentDetailView)">
@@ -3545,7 +3545,7 @@ onBeforeUnmount(() => {
                 size="small"
                 :title="fieldLabel('内容类型')"
               >
-                {{ contentTypeTag(post) }}
+                {{ fieldLabel(contentTypeTag(post)) }}
               </el-tag>
               <div class="content-card-metrics">
                 <span>
