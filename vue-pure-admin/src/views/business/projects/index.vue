@@ -777,9 +777,18 @@ function projectMarketItems(project: any) {
 function projectCycleText(project: any) {
   const start = String(project.cycleStartDate || "").trim();
   const end = String(project.cycleEndDate || "").trim();
-  if (start && end) return `${start} ${fieldLabel("至")} ${end}`;
-  if (start) return `${start} ${fieldLabel("起")}`;
-  if (end) return `${fieldLabel("截至")} ${end}`;
+  const formatDate = (value: string) => {
+    if (locale.value !== "en") return value;
+    const match = value.match(/^(\d{4})[-\/]?(\d{1,2})[-\/]?(\d{1,2})/);
+    return match
+      ? `${match[1].slice(-2)}/${String(match[2]).padStart(2, "0")}/${String(match[3]).padStart(2, "0")}`
+      : value;
+  };
+  const formattedStart = formatDate(start);
+  const formattedEnd = formatDate(end);
+  if (start && end) return `${formattedStart}-${formattedEnd}`;
+  if (start) return `${formattedStart} ${fieldLabel("起")}`;
+  if (end) return `${fieldLabel("截至")} ${formattedEnd}`;
   return fieldLabel("未设置");
 }
 
@@ -788,8 +797,10 @@ function projectCreatedDate(project: any) {
   if (!timestamp) return fieldLabel("创建日期未知");
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return fieldLabel("创建日期未知");
-  const localeCode = locale.value === "en" ? "en-US" : "zh-CN";
-  return `${fieldLabel("创建于")} ${date.toLocaleDateString(localeCode)}`;
+  const dateText = locale.value === "en"
+    ? `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`
+    : date.toLocaleDateString("zh-CN");
+  return `${fieldLabel("创建于")} ${dateText}`;
 }
 
 async function loadData() {
@@ -2232,10 +2243,10 @@ onMounted(() => {
             :type="importNotificationStatus.enabled ? 'success' : 'info'"
             effect="plain"
           >
-            {{ locale === "en" ? "Feishu Notifications: " : "飞书推送：" }}{{
-              importNotificationStatus.enabled
-                ? fieldLabel("已启用")
-                : fieldLabel("未启用")
+            {{
+              locale === "en"
+                ? "Lark: Connected · Push"
+                : `飞书推送：${importNotificationStatus.enabled ? "已启用" : "未启用"}`
             }}
           </el-tag>
           <el-button @click="downloadProjectImportTemplate">
@@ -2251,7 +2262,7 @@ onMounted(() => {
           >
             <el-button type="primary"
               ><IconifyIconOnline icon="ri:upload-2-line" />
-              {{ fieldLabel("导入项目数据") }}</el-button
+              {{ locale === "en" ? fieldLabel("上传") : fieldLabel("导入项目数据") }}</el-button
             >
           </el-upload>
         </div>
@@ -2291,7 +2302,13 @@ onMounted(() => {
               ><IconifyIconOnline icon="ri:search-line"
             /></template>
           </el-input>
-          <span>{{ fieldLabel("共") }} {{ visibleProjects.length }} {{ fieldLabel("个项目") }}</span>
+          <span>
+            {{
+              locale === "en"
+                ? `${fieldLabel("共")}: ${visibleProjects.length}`
+                : `${fieldLabel("共")}${visibleProjects.length}${fieldLabel("个项目")}`
+            }}
+          </span>
         </div>
         <el-table
           :data="pagedProjects"
@@ -2324,7 +2341,7 @@ onMounted(() => {
             }}</template>
           </el-table-column>
           <el-table-column
-            :label="fieldLabel('合作内容')"
+            :label="fieldLabel('内容')"
             width="120"
             align="center"
             sortable
@@ -2398,7 +2415,7 @@ onMounted(() => {
                       class="project-market-expand"
                       @click.stop
                     >
-                      {{ fieldLabel("展开全部") }}（{{ projectMarketItems(row).length }}）
+                      {{ locale === "en" ? fieldLabel("更多") : fieldLabel("展开全部") }}
                     </el-button>
                   </template>
                   <div class="project-market-popover-list" @click.stop>
@@ -2425,7 +2442,7 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            :label="fieldLabel('项目周期')"
+            :label="fieldLabel('项目日历')"
             width="210"
             align="center"
           >
@@ -2446,7 +2463,7 @@ onMounted(() => {
                 link
                 type="primary"
                 @click.stop="openCampaignDetail(row.id)"
-                >{{ fieldLabel("进入项目") }}</el-button
+                >{{ locale === "en" ? fieldLabel("项目详情") : fieldLabel("进入项目") }}</el-button
               >
               <el-button link @click.stop="openEditProject(row)"
                 >{{ fieldLabel("编辑") }}</el-button
