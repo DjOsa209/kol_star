@@ -2549,7 +2549,7 @@ onMounted(() => {
               v-model="projectCycleRange"
               type="daterange"
               unlink-panels
-              range-separator="至"
+              :range-separator="locale === 'en' ? 'to' : '至'"
               :start-placeholder="fieldLabel('开始日期')"
               :end-placeholder="fieldLabel('结束日期')"
               format="YYYY-MM-DD"
@@ -2661,10 +2661,10 @@ onMounted(() => {
           >
             <template #default="{ row }">
               <el-tag v-if="row.errors.length === 0" type="success"
-                >可导入</el-tag
+                >{{ fieldLabel("可导入") }}</el-tag
               >
               <el-tag v-if="row.duplicate" class="ml-2" type="warning"
-                >文件内重复</el-tag
+                >{{ fieldLabel("文件内重复") }}</el-tag
               >
               <el-tag v-if="row.errors.length" type="danger">{{
                 row.errors.join("；")
@@ -2756,7 +2756,7 @@ onMounted(() => {
               popper-class="import-project-select-popper"
               :loading="importProjectOptionsLoading"
               :no-data-text="
-                importProjectOptionsError || '暂无可选择的已有项目'
+                importProjectOptionsError || fieldLabel('暂无可选择的已有项目')
               "
               class="import-project-select"
               :placeholder="fieldLabel('搜索并选择已有项目')"
@@ -2794,7 +2794,7 @@ onMounted(() => {
                   <el-option
                     v-for="option in importProjectDivisionOptions"
                     :key="option"
-                    :label="option"
+                    :label="fieldLabel(option)"
                     :value="option"
                   />
                 </el-select>
@@ -2828,7 +2828,7 @@ onMounted(() => {
                 <el-option
                   v-for="option in importProjectProductLineOptions"
                   :key="option"
-                  :label="option"
+                    :label="fieldLabel(option)"
                   :value="option"
                 />
               </el-select>
@@ -3003,10 +3003,10 @@ onMounted(() => {
           >
             <template #default="{ row }">
               <el-tag v-if="row.errors.length === 0" type="success"
-                >可导入</el-tag
+                >{{ fieldLabel("可导入") }}</el-tag
               >
               <el-tag v-if="row.duplicate" class="ml-2" type="warning"
-                >疑似重复</el-tag
+                >{{ fieldLabel("疑似重复") }}</el-tag
               >
               <el-tag v-if="row.errors.length > 0" type="danger">
                 {{ row.errors.join("；") }}
@@ -3018,8 +3018,11 @@ onMounted(() => {
           v-if="visibleImportRows.length < previewImportRows.length"
           class="import-preview-more"
         >
-          当前仅预览前 {{ visibleImportRows.length }} 条，确认后将导入全部
-          {{ rowsForImport.length }} 条有效数据
+          {{
+            locale === "en"
+              ? `Showing the first ${visibleImportRows.length} items; ${rowsForImport.length} valid items will be imported after confirmation.`
+              : `当前仅预览前 ${visibleImportRows.length} 条，确认后将导入全部 ${rowsForImport.length} 条有效数据`
+          }}
         </p>
         <template #footer>
           <el-button @click="importDialog = false">{{
@@ -3040,13 +3043,13 @@ onMounted(() => {
           >
             {{
               importTargetMode === "incremental"
-                ? "确认增量导入"
+                ? fieldLabel("确认增量导入")
                 : importTargetMode === "replace"
-                  ? "确认覆盖导入"
-                  : "确认导入"
+                  ? fieldLabel("确认覆盖导入")
+                  : fieldLabel("确认导入")
             }}
-            {{ rowsForImport.length }} 行（内容
-            {{ linkedImportRows.length }} 条）
+            {{ rowsForImport.length }} {{ locale === "en" ? "rows (Content " : "行（内容 " }}
+            {{ linkedImportRows.length }} {{ locale === "en" ? "items)" : "条）" }}
           </el-button>
         </template>
       </el-dialog>
@@ -4613,7 +4616,7 @@ onMounted(() => {
             <el-date-picker
               v-model="projectCycleRange"
               type="daterange"
-              range-separator="至"
+                :range-separator="locale === 'en' ? 'to' : '至'"
               :start-placeholder="fieldLabel('开始日期')"
               :end-placeholder="fieldLabel('结束日期')"
               value-format="YYYY-MM-DD"
