@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, reactive, ref } from "vue";
 import dayjs from "dayjs";
 import { getProjectImportSyncJobs } from "@/api/system";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "ProjectImportSyncMonitor" });
 
@@ -88,40 +89,40 @@ onUnmounted(() => {
       <template #header>
         <div class="card-heading">
           <div>
-            <h2>导入同步监控</h2>
-            <p>集中查看项目导入后的后台同步结果、异常详情与上传人。</p>
+            <h2>{{ fieldLabel("导入同步监控") }}</h2>
+            <p>{{ fieldLabel("集中查看项目导入后的后台同步结果、异常详情与上传人。") }}</p>
           </div>
-          <el-button :loading="loading" @click="loadData">刷新</el-button>
+          <el-button :loading="loading" @click="loadData">{{ fieldLabel("刷新") }}</el-button>
         </div>
       </template>
 
       <el-form :inline="true" :model="query" class="filters">
-        <el-form-item label="同步状态">
+        <el-form-item :label="fieldLabel('同步状态')">
           <el-select
             v-model="query.status"
             clearable
-            placeholder="全部状态"
+            :placeholder="fieldLabel('全部状态')"
             class="status-filter"
           >
             <el-option
               v-for="status in statusOptions"
               :key="status"
-              :label="status"
+              :label="fieldLabel(status)"
               :value="status"
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="上传人">
+        <el-form-item :label="fieldLabel('上传人')">
           <el-input
             v-model="query.uploader"
             clearable
-            placeholder="输入上传人"
+            :placeholder="fieldLabel('输入上传人')"
             @keyup.enter="search"
           />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="search">查询</el-button>
-          <el-button @click="reset">重置</el-button>
+          <el-button type="primary" @click="search">{{ fieldLabel("查询") }}</el-button>
+          <el-button @click="reset">{{ fieldLabel("重置") }}</el-button>
         </el-form-item>
       </el-form>
 
@@ -130,40 +131,40 @@ onUnmounted(() => {
         :data="rows"
         border
         stripe
-        empty-text="暂无导入同步记录"
+        :empty-text="fieldLabel('暂无导入同步记录')"
       >
-        <el-table-column prop="id" label="任务 ID" width="90" align="center" />
-        <el-table-column label="状态" width="110" align="center">
+        <el-table-column prop="id" :label="fieldLabel('任务 ID')" width="90" align="center" />
+        <el-table-column :label="fieldLabel('状态')" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" effect="light">
-              {{ row.status }}
+              {{ fieldLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column
           prop="uploader"
-          label="上传人"
+          :label="fieldLabel('上传人')"
           width="140"
           align="center"
         />
-        <el-table-column label="同步进度" width="110" align="center">
+        <el-table-column :label="fieldLabel('同步进度')" width="110" align="center">
           <template #default="{ row }">{{ progressText(row) }}</template>
         </el-table-column>
         <el-table-column
           prop="currentStage"
-          label="当前阶段"
+          :label="fieldLabel('当前阶段')"
           width="120"
           align="center"
         />
-        <el-table-column label="同步详情" min-width="420">
+        <el-table-column :label="fieldLabel('同步详情')" min-width="420">
           <template #default="{ row }">
             <pre class="message-cell">{{ row.message || "-" }}</pre>
           </template>
         </el-table-column>
-        <el-table-column label="开始时间" width="180" align="center">
+        <el-table-column :label="fieldLabel('开始时间')" width="180" align="center">
           <template #default="{ row }">{{ timeText(row.startedAt) }}</template>
         </el-table-column>
-        <el-table-column label="完成时间" width="180" align="center">
+        <el-table-column :label="fieldLabel('完成时间')" width="180" align="center">
           <template #default="{ row }">{{ timeText(row.finishedAt) }}</template>
         </el-table-column>
       </el-table>

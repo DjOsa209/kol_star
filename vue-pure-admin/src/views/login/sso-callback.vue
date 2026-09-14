@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { useUserStoreHook } from "@/store/modules/user";
 import { getTopMenu, initRouter } from "@/router/utils";
 import { removeToken } from "@/utils/auth";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "SSOCallback" });
 
@@ -40,7 +41,7 @@ onMounted(async () => {
     await initRouter();
     const topMenu = getTopMenu(true);
     if (!topMenu?.path) {
-      throw new Error("当前账号没有可访问菜单，请联系管理员分配权限");
+      throw new Error(fieldLabel("当前账号没有可访问菜单，请联系管理员分配权限"));
     }
     window.location.replace(
       `${window.location.origin}${window.location.pathname}#${topMenu.path}`
@@ -54,7 +55,7 @@ onMounted(async () => {
         ? error
         : error instanceof Error
           ? error.message
-          : "统一身份认证失败，请重新登录");
+          : fieldLabel("统一身份认证失败，请重新登录"));
   }
 });
 </script>
@@ -66,11 +67,11 @@ onMounted(async () => {
         :icon="errorMessage ? 'ri:error-warning-line' : 'ri:loader-4-line'"
         :class="['callback-icon', { spinning: !errorMessage }]"
       />
-      <h1>{{ errorMessage ? "企业身份认证失败" : "正在完成企业身份认证" }}</h1>
+      <h1>{{ errorMessage ? fieldLabel("企业身份认证失败") : fieldLabel("正在完成企业身份认证") }}</h1>
       <p>
         {{
           errorMessage ||
-          "正在读取企业账号并进入 Infinix 全球资源运营系统，请稍候…"
+          fieldLabel("正在读取企业账号并进入 Infinix 全球资源运营系统，请稍候…")
         }}
       </p>
       <el-button
@@ -78,7 +79,7 @@ onMounted(async () => {
         type="primary"
         @click="router.replace('/login')"
       >
-        返回登录
+        {{ fieldLabel("返回登录") }}
       </el-button>
     </section>
   </main>

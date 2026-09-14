@@ -281,12 +281,12 @@ create table if not exists biz_brief_templates (
 );
 
 insert ignore into sys_menus (id, parent_id, menu_type, title, path, name, component, `rank`, icon, auths, show_link) values
-(900, 0, 0, '资源运营', '/business', '', '', 2, 'ri:global-line', '', 1),
-(901, 900, 0, '全球资源库', '/business/resources', 'BusinessResources', 'business/resources/index', null, 'ri:contacts-book-3-line', '', 1),
-(902, 900, 0, '标签体系', '/business/tags', 'BusinessTags', 'business/tags/index', null, 'ri:price-tag-3-line', '', 1),
-(903, 900, 0, '项目合作', '/business/projects', 'BusinessProjects', 'business/projects/index', null, 'ri:briefcase-4-line', '', 1),
-(904, 900, 0, 'Brief模板库', '/business/briefs', 'BusinessBriefs', 'business/briefs/index', null, 'ri:file-list-3-line', '', 1),
-(905, 900, 0, '数据看板', '/business/dashboard', 'BusinessDashboard', 'business/dashboard/index', null, 'ri:bar-chart-box-line', '', 1);
+(900, 0, 0, 'menus.businessOperations', '/business', '', '', 2, 'ri:global-line', '', 1),
+(901, 900, 0, 'menus.businessResources', '/business/resources', 'BusinessResources', 'business/resources/index', null, 'ri:contacts-book-3-line', '', 1),
+(902, 900, 0, 'menus.businessTags', '/business/tags', 'BusinessTags', 'business/tags/index', null, 'ri:price-tag-3-line', '', 1),
+(903, 900, 0, 'menus.businessProjects', '/business/projects', 'BusinessProjects', 'business/projects/index', null, 'ri:briefcase-4-line', '', 1),
+(904, 900, 0, 'menus.businessBriefs', '/business/briefs', 'BusinessBriefs', 'business/briefs/index', null, 'ri:file-list-3-line', '', 1),
+(905, 900, 0, 'menus.businessDashboard', '/business/dashboard', 'BusinessDashboard', 'business/dashboard/index', null, 'ri:bar-chart-box-line', '', 1);
 
 insert ignore into sys_role_menus (role_id, menu_id)
 select 1, id from sys_menus where id between 900 and 905;
@@ -1851,6 +1851,23 @@ on duplicate key update
 use kol_admin;
 
 drop procedure if exists add_cooperation_mode_columns;
+
+-- Store menu titles as locale keys so database-driven routes can be translated by the frontend.
+update sys_menus set title = case id
+  when 900 then 'menus.businessOperations'
+  when 901 then 'menus.businessResources'
+  when 902 then 'menus.businessTags'
+  when 903 then 'menus.businessProjects'
+  when 904 then 'menus.businessBriefs'
+  when 905 then 'menus.businessDashboard'
+  when 906 then 'menus.businessAssistant'
+  when 907 then 'menus.businessGovernance'
+  when 909 then 'menus.businessResourcePosts'
+  when 1005 then 'menus.systemCollectionControls'
+  when 1006 then 'menus.systemStandardFields'
+  when 1105 then 'menus.monitorImportSync'
+  else title end
+where id in (900,901,902,903,904,905,906,907,909,1005,1006,1105);
 
 delimiter $$
 

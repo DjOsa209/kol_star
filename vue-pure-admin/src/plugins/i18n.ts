@@ -34,6 +34,24 @@ export const localesConfigs = {
   }
 };
 
+// Dynamic routes are returned by the backend with their source-language title.
+// Keep these labels here so menus and browser titles also follow the language switch.
+const dynamicRouteLabels: Record<string, string> = {
+  "资源运营": "Resource Operations",
+  "智能资源助手": "Resource Intelligence Assistant",
+  "全球资源库": "Global Resource Library",
+  "标签体系": "Tag Taxonomy",
+  "项目合作": "Project Collaboration",
+  "Brief模板库": "Brief Template Library",
+  "数据看板": "Dashboard",
+  "治理规则": "Governance Rules",
+  "导入同步监控": "Import Sync Monitor",
+  "抓取控制": "Collection Controls",
+  "标准字段配置": "Standard Field Configuration",
+  "项目执行页": "Project Execution",
+  "企业身份认证": "Enterprise Authentication"
+};
+
 /** 获取对象中所有嵌套对象的key键，并将它们用点号分割组成字符串 */
 function getObjectKeys(obj) {
   const stack = [];
@@ -93,6 +111,13 @@ export function transformI18n(message: any = "") {
   } else if (!key && Object.hasOwn(siphonI18n("zh-CN"), message)) {
     // 兼容非嵌套形式的国际化写法
     return i18n.global.t.call(i18n.global.locale, message);
+  } else if (
+    typeof message === "string" &&
+    (typeof i18n.global.locale === "string"
+      ? i18n.global.locale
+      : i18n.global.locale.value) === "en"
+  ) {
+    return dynamicRouteLabels[message] ?? message;
   } else {
     return message;
   }

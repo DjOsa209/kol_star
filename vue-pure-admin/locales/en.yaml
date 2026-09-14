@@ -68,6 +68,18 @@ panel:
   pureHiddenFooter: Hidden Footer
   pureMultiTagsCache: MultiTags Cache
 menus:
+  businessOperations: Resource Operations
+  businessAssistant: Resource Intelligence Assistant
+  businessResources: Global Resource Library
+  businessTags: Tag Taxonomy
+  businessProjects: Project Collaboration
+  businessBriefs: Brief Template Library
+  businessDashboard: Dashboard
+  businessGovernance: Governance Rules
+  businessResourcePosts: Content Data
+  systemCollectionControls: Collection Controls
+  systemStandardFields: Standard Field Configuration
+  monitorImportSync: Import Sync Monitor
   pureHome: Home
   pureLogin: Login
   pureEmpty: Empty Page

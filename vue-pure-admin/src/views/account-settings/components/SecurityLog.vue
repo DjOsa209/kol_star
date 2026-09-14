@@ -4,6 +4,7 @@ import { getMineLogs } from "@/api/user";
 import { reactive, ref, onMounted } from "vue";
 import { deviceDetection } from "@pureadmin/utils";
 import type { PaginationProps } from "@pureadmin/table";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({
   name: "SecurityLog"
@@ -48,7 +49,7 @@ const columns: TableColumnList = [
     label: "状态",
     prop: "status",
     minWidth: 80,
-    formatter: ({ status }) => (Number(status) === 1 ? "成功" : "失败")
+    formatter: ({ status }) => fieldLabel(Number(status) === 1 ? "成功" : "失败")
   },
   {
     label: "时间",
@@ -95,7 +96,7 @@ onMounted(() => {
 
 <template>
   <div :class="['min-w-45', deviceDetection() ? 'max-w-full' : 'max-w-[70%]']">
-    <h3 class="my-8!">安全日志</h3>
+    <h3 class="my-8!">{{ fieldLabel("安全日志") }}</h3>
     <pure-table
       row-key="id"
       table-layout="auto"

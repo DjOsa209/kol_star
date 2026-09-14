@@ -159,7 +159,7 @@ async function save() {
   });
   saving.value = false;
   if (res.code === 0) {
-    ElMessage.success("抓取控制已保存");
+    ElMessage.success(fieldLabel("抓取控制已保存"));
     apiConfigDirty.value = false;
     feishuConfigDirty.value = false;
     await loadData();
@@ -180,7 +180,7 @@ async function confirmSync() {
     syncScope.value === "selected" &&
     selectedSyncPlatforms.value.length === 0
   ) {
-    ElMessage.warning("请至少选择一个平台");
+    ElMessage.warning(fieldLabel("请至少选择一个平台"));
     return;
   }
   const platforms =
@@ -189,12 +189,12 @@ async function confirmSync() {
   syncing.value = true;
   const res = await syncAllResources({ platforms });
   if (res.code === 0) {
-    ElMessage.success(res.data?.message || "同步任务已启动");
+    ElMessage.success(res.data?.message || fieldLabel("同步任务已启动"));
     await loadData();
     startPolling();
   } else {
     syncing.value = false;
-    ElMessage.warning(res.message || "启动失败");
+    ElMessage.warning(res.message || fieldLabel("启动失败"));
   }
 }
 
@@ -224,13 +224,13 @@ onUnmounted(stopPolling);
     <section class="page-hero">
       <div>
         <span>Platform Sync</span>
-        <h1>抓取控制</h1>
-        <p>控制平台数据同步开关、授权状态和全局异步同步任务。</p>
+        <h1>{{ fieldLabel("抓取控制") }}</h1>
+        <p>{{ fieldLabel("控制平台数据同步开关、授权状态和全局异步同步任务。") }}</p>
       </div>
       <div class="hero-actions">
         <el-button :loading="saving" type="primary" @click="save">
           <IconifyIconOnline icon="ri:save-3-line" class="mr-1" />
-          保存配置
+          {{ fieldLabel("保存配置") }}
         </el-button>
         <el-button
           :loading="syncing || syncRunning"
@@ -238,34 +238,34 @@ onUnmounted(stopPolling);
           @click="startSync"
         >
           <IconifyIconOnline icon="ri:cloud-line" class="mr-1" />
-          启动异步同步
+          {{ fieldLabel("启动异步同步") }}
         </el-button>
       </div>
     </section>
 
     <section class="status-grid">
       <div>
-        <span>最近同步</span>
+        <span>{{ fieldLabel("最近同步") }}</span>
         <strong>{{ formatDateTime(lastResourceSyncAt) }}</strong>
       </div>
       <div>
-        <span>任务状态</span>
-        <strong>{{ latestJob?.status || "未运行" }}</strong>
+        <span>{{ fieldLabel("任务状态") }}</span>
+        <strong>{{ fieldLabel(latestJob?.status || "未运行") }}</strong>
       </div>
       <div>
-        <span>成功/失败</span>
+        <span>{{ fieldLabel("成功/失败") }}</span>
         <strong>
           {{ latestJob?.successCount || 0 }}/{{ latestJob?.failedCount || 0 }}
         </strong>
       </div>
     </section>
 
-    <el-dialog v-model="syncDialogVisible" title="启动异步同步" width="480px">
+    <el-dialog v-model="syncDialogVisible" :title="fieldLabel('启动异步同步')" width="480px">
       <div class="sync-platform-dialog">
-        <p>选择本次需要同步的平台。已停用的平台仍会按抓取控制设置跳过。</p>
+        <p>{{ fieldLabel("选择本次需要同步的平台。已停用的平台仍会按抓取控制设置跳过。") }}</p>
         <el-radio-group v-model="syncScope">
-          <el-radio value="all">全部平台</el-radio>
-          <el-radio value="selected">指定平台</el-radio>
+          <el-radio value="all">{{ fieldLabel("全部平台") }}</el-radio>
+          <el-radio value="selected">{{ fieldLabel("指定平台") }}</el-radio>
         </el-radio-group>
         <el-checkbox-group
           v-if="syncScope === 'selected'"

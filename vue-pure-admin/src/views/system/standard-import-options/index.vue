@@ -117,7 +117,7 @@ function openEdit(row: any) {
 async function saveOption() {
   const value = form.value.trim();
   if (!value) {
-    ElMessage.warning("请输入选项值");
+    ElMessage.warning(fieldLabel("请输入选项值"));
     return;
   }
   saving.value = true;
@@ -134,10 +134,10 @@ async function saveOption() {
       });
   saving.value = false;
   if (res.code !== 0) {
-    ElMessage.warning(res.message || "保存失败");
+    ElMessage.warning(res.message || fieldLabel("保存失败"));
     return;
   }
-  ElMessage.success(editingId.value ? "选项已更新" : "选项已新增");
+  ElMessage.success(editingId.value ? fieldLabel("选项已更新") : fieldLabel("选项已新增"));
   dialogVisible.value = false;
   await loadData();
 }
@@ -146,18 +146,18 @@ async function removeOption(row: any) {
   try {
     await ElMessageBox.confirm(
       `确认删除选项「${row.value}」吗？删除后新下载的模板将不再提供该选项。`,
-      "删除标准选项",
-      { type: "warning", confirmButtonText: "删除", cancelButtonText: "取消" }
+      fieldLabel("删除标准选项"),
+      { type: "warning", confirmButtonText: fieldLabel("删除"), cancelButtonText: fieldLabel("取消") }
     );
   } catch {
     return;
   }
   const res = await deleteStandardImportOption({ id: row.id });
   if (res.code !== 0) {
-    ElMessage.warning(res.message || "删除失败");
+    ElMessage.warning(res.message || fieldLabel("删除失败"));
     return;
   }
-  ElMessage.success("选项已删除");
+  ElMessage.success(fieldLabel("选项已删除"));
   await loadData();
 }
 
@@ -169,9 +169,9 @@ onMounted(loadData);
     <section class="page-hero">
       <div>
         <span>Standard Fields</span>
-        <h1>标准字段配置</h1>
+        <h1>{{ fieldLabel("标准字段配置") }}</h1>
         <p>
-          维护项目统一模板和项目命名的预设选项。保存后，项目导入会立即使用最新配置。
+          {{ fieldLabel("维护项目统一模板和项目命名的预设选项。保存后，项目导入会立即使用最新配置。") }}
         </p>
       </div>
     </section>
@@ -193,7 +193,7 @@ onMounted(loadData);
             @click="openCreate(group.key)"
           >
             <IconifyIconOnline icon="ri:add-line" class="mr-1" />
-            新增
+            {{ fieldLabel("新增") }}
           </el-button>
         </header>
 
@@ -201,21 +201,21 @@ onMounted(loadData);
           <div v-for="item in group.options" :key="item.id" class="option-row">
             <div>
               <strong>{{ item.value }}</strong>
-              <span>{{ item.source }} · 排序 {{ item.sortOrder }}</span>
+                <span>{{ item.source }} · {{ fieldLabel("排序") }} {{ item.sortOrder }}</span>
             </div>
             <div v-if="!group.readonly">
               <el-button link type="primary" @click="openEdit(item)">
-                编辑
+                {{ fieldLabel("编辑") }}
               </el-button>
               <el-button link type="danger" @click="removeOption(item)">
-                删除
+                {{ fieldLabel("删除") }}
               </el-button>
             </div>
-            <el-tag v-else type="info" effect="plain">系统自动计算</el-tag>
+            <el-tag v-else type="info" effect="plain">{{ fieldLabel("系统自动计算") }}</el-tag>
           </div>
           <el-empty
             v-if="group.options.length === 0"
-            description="暂无可用选项"
+            :description="fieldLabel('暂无可用选项')"
             :image-size="70"
           />
         </div>
@@ -224,7 +224,7 @@ onMounted(loadData);
 
     <el-dialog
       v-model="dialogVisible"
-      :title="editingId ? '编辑标准选项' : '新增标准选项'"
+      :title="fieldLabel(editingId ? '编辑标准选项' : '新增标准选项')"
       width="460px"
     >
       <el-form label-position="top">
@@ -233,7 +233,7 @@ onMounted(loadData);
             <el-option
               v-for="field in fieldDefinitions"
               :key="field.key"
-              :label="field.label"
+              :label="fieldLabel(field.label)"
               :value="field.key"
             />
           </el-select>
@@ -243,7 +243,7 @@ onMounted(loadData);
             v-model="form.value"
             maxlength="128"
             show-word-limit
-            placeholder="请输入标准选项"
+            :placeholder="fieldLabel('请输入标准选项')"
             @keyup.enter="saveOption"
           />
         </el-form-item>
@@ -255,14 +255,14 @@ onMounted(loadData);
             class="w-full!"
           />
           <span class="form-tip"
-            >数字越小越靠前；填 0 时新增选项自动排在末尾。</span
+            >{{ fieldLabel("数字越小越靠前；填 0 时新增选项自动排在末尾。") }}</span
           >
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button @click="dialogVisible = false">{{ fieldLabel("取消") }}</el-button>
         <el-button type="primary" :loading="saving" @click="saveOption">
-          保存
+          {{ fieldLabel("保存") }}
         </el-button>
       </template>
     </el-dialog>

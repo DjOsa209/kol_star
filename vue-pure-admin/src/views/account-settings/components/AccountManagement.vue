@@ -2,6 +2,7 @@
 import { reactive, ref } from "vue";
 import { updateMinePassword } from "@/api/user";
 import { message } from "@/utils/message";
+import { fieldLabel } from "@/utils/fieldI18n";
 import { deviceDetection } from "@pureadmin/utils";
 import type { FormInstance, FormRules } from "element-plus";
 
@@ -75,7 +76,7 @@ function onClick(item) {
     passwordDialogVisible.value = true;
     return;
   }
-  message("请根据具体业务自行实现", { type: "success" });
+  message(fieldLabel("请根据具体业务自行实现"), { type: "success" });
 }
 
 function resetPasswordForm() {
@@ -94,10 +95,10 @@ async function submitPassword() {
       const { code, message: resultMessage } =
         await updateMinePassword(passwordForm);
       if (code !== 0) {
-        message(resultMessage || "修改密码失败", { type: "error" });
+        message(resultMessage || fieldLabel("修改密码失败"), { type: "error" });
         return;
       }
-      message("密码修改成功", { type: "success" });
+      message(fieldLabel("密码修改成功"), { type: "success" });
       passwordDialogVisible.value = false;
       resetPasswordForm();
     } finally {
@@ -109,7 +110,7 @@ async function submitPassword() {
 
 <template>
   <div :class="['min-w-45', deviceDetection() ? 'max-w-full' : 'max-w-[70%]']">
-    <h3 class="my-8!">账户管理</h3>
+    <h3 class="my-8!">{{ fieldLabel("账户管理") }}</h3>
     <div v-for="(item, index) in list" :key="index">
       <div class="flex items-center">
         <div class="flex-1">
@@ -124,7 +125,7 @@ async function submitPassword() {
     </div>
     <el-dialog
       v-model="passwordDialogVisible"
-      title="修改账户密码"
+      :title="fieldLabel('修改账户密码')"
       width="420px"
       :close-on-click-modal="false"
       @closed="resetPasswordForm"
@@ -135,48 +136,48 @@ async function submitPassword() {
         :rules="passwordRules"
         label-width="88px"
       >
-        <el-form-item label="当前密码" prop="oldPassword">
+        <el-form-item :label="fieldLabel('当前密码')" prop="oldPassword">
           <el-input
             v-model="passwordForm.oldPassword"
             clearable
             show-password
             type="password"
             autocomplete="current-password"
-            placeholder="请输入当前密码"
+            :placeholder="fieldLabel('请输入当前密码')"
           />
         </el-form-item>
-        <el-form-item label="新密码" prop="newPassword">
+        <el-form-item :label="fieldLabel('新密码')" prop="newPassword">
           <el-input
             v-model="passwordForm.newPassword"
             clearable
             show-password
             type="password"
             autocomplete="new-password"
-            placeholder="请输入新密码"
+            :placeholder="fieldLabel('请输入新密码')"
           />
         </el-form-item>
-        <el-form-item label="确认密码" prop="confirmPassword">
+        <el-form-item :label="fieldLabel('确认密码')" prop="confirmPassword">
           <el-input
             v-model="passwordForm.confirmPassword"
             clearable
             show-password
             type="password"
             autocomplete="new-password"
-            placeholder="请再次输入新密码"
+            :placeholder="fieldLabel('请再次输入新密码')"
           />
         </el-form-item>
         <el-text type="info" size="small">
-          密码需为 8-18 位，并包含数字、字母、符号中的任意两类。
+          {{ fieldLabel("密码需为 8-18 位，并包含数字、字母、符号中的任意两类。") }}
         </el-text>
       </el-form>
       <template #footer>
-        <el-button @click="passwordDialogVisible = false">取消</el-button>
+        <el-button @click="passwordDialogVisible = false">{{ fieldLabel("取消") }}</el-button>
         <el-button
           type="primary"
           :loading="passwordLoading"
           @click="submitPassword"
         >
-          保存
+          {{ fieldLabel("保存") }}
         </el-button>
       </template>
     </el-dialog>

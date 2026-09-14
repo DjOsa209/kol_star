@@ -19,6 +19,7 @@ import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { useTranslationLang } from "@/layout/hooks/useTranslationLang";
 import { useDataThemeChange } from "@/layout/hooks/useDataThemeChange";
 import { getAuthConfig } from "@/api/user";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 import dayIcon from "@/assets/svg/day.svg?component";
 import darkIcon from "@/assets/svg/dark.svg?component";
@@ -73,7 +74,7 @@ const onLogin = async (formEl: FormInstance | undefined) => {
           await initRouter();
           const topMenu = getTopMenu(true);
           if (!topMenu?.path) {
-            message("当前账号没有可访问菜单，请联系管理员分配权限", {
+            message(fieldLabel("当前账号没有可访问菜单，请联系管理员分配权限"), {
               type: "warning"
             });
             return;
@@ -168,7 +169,7 @@ watch(loginDay, value => {
                 class="check-zh"
                 :icon="Check"
               />
-              简体中文
+              {{ fieldLabel("简体中文") }}
             </el-dropdown-item>
             <el-dropdown-item
               :style="getDropdownItemStyle(locale, 'en')"
@@ -185,12 +186,12 @@ watch(loginDay, value => {
       </el-dropdown>
     </div>
 
-    <section class="login-brand" aria-label="产品介绍">
+    <section class="login-brand" :aria-label="fieldLabel('产品介绍')">
       <div class="brand-lockup">
         <img
           class="brand-logo"
           :src="brandMark"
-          alt="Infinix 全球资源运营系统"
+          :alt="fieldLabel('Infinix 全球资源运营系统')"
         />
         <div>
           <strong>INFINIX</strong>
@@ -201,23 +202,23 @@ watch(loginDay, value => {
         <span class="brand-eyebrow">
           INFINIX RESOURCE NETWORK · ENTERPRISE
         </span>
-        <h1>Infinix<br />全球资源运营系统</h1>
+        <h1>Infinix<br />{{ fieldLabel("全球资源运营系统") }}</h1>
         <p>
-          在一个工作台里发现创作者、推进合作、追踪内容表现，并让每一次海外投放都有清晰依据。
+          {{ fieldLabel("在一个工作台里发现创作者、推进合作、追踪内容表现，并让每一次海外投放都有清晰依据。") }}
         </p>
       </div>
-      <div class="brand-modules" aria-label="平台能力">
+      <div class="brand-modules" :aria-label="fieldLabel('平台能力')">
         <article>
           <strong>DISCOVER</strong>
-          <span>跨市场资源协同</span>
+          <span>{{ fieldLabel("跨市场资源协同") }}</span>
         </article>
         <article>
           <strong>OPERATE</strong>
-          <span>实时内容与项目进度</span>
+          <span>{{ fieldLabel("实时内容与项目进度") }}</span>
         </article>
         <article>
           <strong>INSIGHT</strong>
-          <span>智能推荐与复盘</span>
+          <span>{{ fieldLabel("智能推荐与复盘") }}</span>
         </article>
       </div>
       <p class="brand-note">INFINIX GLOBAL RESOURCES · SECURE WORKSPACE</p>
@@ -228,16 +229,16 @@ watch(loginDay, value => {
         <div class="login-form">
           <div class="auth-header">
             <span>SECURE SIGN-IN</span>
-            <h2>欢迎回来</h2>
+            <h2>{{ fieldLabel("欢迎回来") }}</h2>
             <p>
-              登录 <strong>Infinix 全球资源运营系统</strong>
-              继续管理全球创作者合作。
+              {{ fieldLabel("登录") }} <strong>Infinix {{ fieldLabel("全球资源运营系统") }}</strong>
+              {{ fieldLabel("继续管理全球创作者合作。") }}
             </p>
           </div>
           <Motion>
             <div class="auth-status">
               <i />
-              <span>企业级安全认证</span>
+              <span>{{ fieldLabel("企业级安全认证") }}</span>
               <em>{{ ssoEnabled ? "UAC CONNECTED" : "LOCAL ACCESS" }}</em>
             </div>
           </Motion>
@@ -253,17 +254,17 @@ watch(loginDay, value => {
                 @click="onSSOLogin"
               >
                 <IconifyIconOnline icon="ri:shield-user-line" class="mr-2" />
-                企业 SSO 登录
+                {{ fieldLabel("企业 SSO 登录") }}
               </el-button>
               <p>
                 {{
                   ssoEnabled
-                    ? "使用企业统一身份进入 Infinix 全球资源运营系统"
-                    : "当前环境暂未连接企业统一身份服务"
+                    ? fieldLabel("使用企业统一身份进入 Infinix 全球资源运营系统")
+                    : fieldLabel("当前环境暂未连接企业统一身份服务")
                 }}
               </p>
-              <el-divider>或</el-divider>
-              <span class="account-login-label">管理员账号登录</span>
+              <el-divider>{{ fieldLabel("或") }}</el-divider>
+              <span class="account-login-label">{{ fieldLabel("管理员账号登录") }}</span>
             </div>
           </Motion>
 
@@ -367,7 +368,7 @@ watch(loginDay, value => {
         </div>
       </div>
       <div class="login-copyright">
-        Copyright © 2026&nbsp;Infinix 全球资源运营系统
+        Copyright © 2026&nbsp;Infinix {{ fieldLabel("全球资源运营系统") }}
       </div>
     </main>
   </div>

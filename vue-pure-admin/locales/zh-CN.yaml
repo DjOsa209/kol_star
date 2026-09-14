@@ -68,6 +68,18 @@ panel:
   pureHiddenFooter: 隐藏页脚
   pureMultiTagsCache: 页签持久化
 menus:
+  businessOperations: 资源运营
+  businessAssistant: 智能资源助手
+  businessResources: 全球资源库
+  businessTags: 标签体系
+  businessProjects: 项目合作
+  businessBriefs: Brief模板库
+  businessDashboard: 数据看板
+  businessGovernance: 治理规则
+  businessResourcePosts: 作品数据
+  systemCollectionControls: 抓取控制
+  systemStandardFields: 标准字段配置
+  monitorImportSync: 导入同步监控
   pureHome: 首页
   pureLogin: 登录
   pureEmpty: 无Layout页

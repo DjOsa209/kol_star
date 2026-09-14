@@ -10,6 +10,7 @@ import { useGlobal, deviceDetection } from "@pureadmin/utils";
 import AccountManagement from "./components/AccountManagement.vue";
 import { useDataThemeChange } from "@/layout/hooks/useDataThemeChange";
 import LaySidebarTopCollapse from "@/layout/components/lay-sidebar/components/SidebarTopCollapse.vue";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 import leftLine from "~icons/ri/arrow-left-s-line";
 import ProfileIcon from "~icons/ri/user-3-line";
@@ -85,7 +86,7 @@ onMounted(async () => {
             class="h-full flex items-center px-(--el-menu-base-level-padding)"
           >
             <IconifyIconOffline :icon="leftLine" />
-            <span class="ml-2">返回</span>
+            <span class="ml-2">{{ fieldLabel("返回") }}</span>
           </div>
         </div>
         <div class="flex items-center ml-8 my-4">
@@ -114,7 +115,7 @@ onMounted(async () => {
         >
           <div class="flex items-center z-10">
             <el-icon><IconifyIconOffline :icon="item.icon" /></el-icon>
-            <span>{{ item.label }}</span>
+            <span>{{ fieldLabel(item.label) }}</span>
           </div>
         </el-menu-item>
       </el-menu>
