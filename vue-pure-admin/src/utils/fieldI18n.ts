@@ -790,6 +790,8 @@ const englishFieldLabels: Record<string, string> = {
   恢复项目: "Resume Project",
   暂停项目: "Pause Project",
   导出项目数据: "Export Project Data",
+  导出: "Export",
+  导出Excel: "Export Excel",
   "项目标准数据已导出": "Project standard data exported",
   "项目数据导出失败，请稍后重试": "Project data export failed. Please try again later.",
   个项目: "Projects",

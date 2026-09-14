@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { utils, writeFile } from "xlsx";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({
   name: "Excel"
@@ -77,7 +78,7 @@ const exportExcel = () => {
           target="_blank"
           style="margin: 0 5px 4px 0; font-size: 16px"
         >
-          导出Excel
+          {{ fieldLabel("导出Excel") }}
         </el-link>
       </div>
       <el-link
@@ -88,7 +89,7 @@ const exportExcel = () => {
         代码位置 src/views/able/excel.vue
       </el-link>
     </template>
-    <el-button type="primary" @click="exportExcel">导出Excel</el-button>
+    <el-button type="primary" @click="exportExcel">{{ fieldLabel("导出Excel") }}</el-button>
     <div class="h-100 mt-3">
       <el-auto-resizer>
         <template #default="{ height, width }">
