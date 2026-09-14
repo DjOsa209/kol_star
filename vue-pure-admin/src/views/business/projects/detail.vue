@@ -3809,7 +3809,9 @@ onBeforeUnmount(() => {
         <section class="creator-form-section">
           <header>
             <strong>{{ fieldLabel("合作信息") }}</strong>
-            <span>打包合作按整体价格均摊，项目总成本仅计算一次</span>
+            <span>{{
+              fieldLabel("打包合作按整体价格均摊，项目总成本仅计算一次")
+            }}</span>
           </header>
           <div class="creator-form-grid">
             <el-form-item :label="fieldLabel('合作模式')" required>
@@ -3817,8 +3819,12 @@ onBeforeUnmount(() => {
                 v-model="creatorForm.cooperationMode"
                 @change="handleCooperationModeChange"
               >
-                <el-radio-button value="single">单次合作</el-radio-button>
-                <el-radio-button value="package">打包合作</el-radio-button>
+                <el-radio-button value="single">{{
+                  fieldLabel("单次合作")
+                }}</el-radio-button>
+                <el-radio-button value="package">{{
+                  fieldLabel("打包合作")
+                }}</el-radio-button>
               </el-radio-group>
             </el-form-item>
             <el-form-item :label="fieldLabel('合作类型')" required>
@@ -3852,7 +3858,9 @@ onBeforeUnmount(() => {
         <section class="creator-form-section">
           <header>
             <strong>{{ fieldLabel("合作内容") }}</strong>
-            <span>系统将通过内容链接识别各平台主页并同步账号数据</span>
+            <span>{{
+              fieldLabel("系统将通过内容链接识别各平台主页并同步账号数据")
+            }}</span>
             <el-button
               v-if="creatorForm.cooperationMode === 'package'"
               link
@@ -3860,7 +3868,7 @@ onBeforeUnmount(() => {
               @click="addCreatorContentRow"
             >
               <IconifyIconOnline icon="ri:add-line" />
-              添加平台 / 内容
+              {{ fieldLabel("添加平台 / 内容") }}
             </el-button>
           </header>
           <div class="creator-content-form-list">
@@ -4748,7 +4756,7 @@ onBeforeUnmount(() => {
             v-model="projectCycleRange"
             type="daterange"
             unlink-panels
-            range-separator="至"
+            :range-separator="locale === 'en' ? 'till' : '至'"
             :start-placeholder="fieldLabel('开始日期')"
             :end-placeholder="fieldLabel('结束日期')"
             format="YYYY-MM-DD"

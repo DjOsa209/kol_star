@@ -321,6 +321,11 @@ const englishFieldLabels: Record<string, string> = {
   "粉丝数 / 访问量（系统自动）": "Followers / Visits (Automatic)",
   打包合作: "Package Collaboration",
   单次合作: "Single Collaboration",
+  "打包合作按整体价格均摊，项目总成本仅计算一次":
+    "Package collaboration costs are distributed across its content, while the project total is counted only once.",
+  "系统将通过内容链接识别各平台主页并同步账号数据":
+    "The system identifies platform profiles from content URLs and synchronizes account data.",
+  "添加平台 / 内容": "Add Platform / Content",
   "整体合作费用（USD）": "Package Cost (USD)",
   "单条内容费用（USD）": "Single Content Cost (USD)",
   "补充信息（非必填）": "Additional Information (Optional)",

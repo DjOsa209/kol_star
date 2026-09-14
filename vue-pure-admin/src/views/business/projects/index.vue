@@ -123,12 +123,23 @@ const isRegionalProjectDivision = computed(
 const normalizedImportProjectCustomName = computed(() =>
   importProjectCustomName.value.trim().replace(/_+/g, "-")
 );
+function localizedImportProjectCountry(value: string) {
+  if (locale.value !== "en") return value;
+  return (
+    worldCountryOptions.find(country => country.name === value)?.englishName ||
+    fieldLabel(value)
+  );
+}
 const standardizedImportProjectName = computed(() => {
   const division = isRegionalProjectDivision.value
     ? importProjectCountry.value
-      ? `区域_${importProjectCountry.value}`
+      ? `${fieldLabel("区域")}_${localizedImportProjectCountry(
+          importProjectCountry.value
+        )}`
       : ""
-    : importProjectDivision.value;
+    : locale.value === "en"
+      ? fieldLabel(importProjectDivision.value)
+      : importProjectDivision.value;
   return [
     division,
     importProjectProductLine.value,
@@ -2551,7 +2562,7 @@ onMounted(() => {
               v-model="projectCycleRange"
               type="daterange"
               unlink-panels
-              :range-separator="locale === 'en' ? 'to' : '至'"
+              :range-separator="locale === 'en' ? 'till' : '至'"
               :start-placeholder="fieldLabel('开始日期')"
               :end-placeholder="fieldLabel('结束日期')"
               format="YYYY-MM-DD"
@@ -2873,7 +2884,7 @@ onMounted(() => {
                 v-model="importProjectCycleRange"
                 type="daterange"
                 unlink-panels
-                range-separator="至"
+                :range-separator="locale === 'en' ? 'till' : '至'"
                 :start-placeholder="fieldLabel('开始日期')"
                 :end-placeholder="fieldLabel('结束日期')"
                 format="YYYY-MM-DD"
@@ -4618,7 +4629,7 @@ onMounted(() => {
             <el-date-picker
               v-model="projectCycleRange"
               type="daterange"
-                :range-separator="locale === 'en' ? 'to' : '至'"
+                :range-separator="locale === 'en' ? 'till' : '至'"
               :start-placeholder="fieldLabel('开始日期')"
               :end-placeholder="fieldLabel('结束日期')"
               value-format="YYYY-MM-DD"
