@@ -243,9 +243,7 @@ const creatorMarketOptions = computed(() =>
 
 function creatorMarketOptionLabel(item: any) {
   if (!item.code) {
-    return locale.value === "en"
-      ? item.englishName || item.name
-      : item.name;
+    return locale.value === "en" ? item.englishName || item.name : item.name;
   }
   if (locale.value !== "en") return item.label;
   if (item.code) return `${item.englishName} (${item.code})`;
@@ -447,6 +445,7 @@ const projectContentPosts = computed(() => {
         cooperationId: item.id,
         platform: item.contentPlatform || item.platform || "Website",
         cooperationType: item.cooperationType,
+        category: item.category,
         contentType: item.contentType,
         title: importedContentTitle(item),
         description: item.notes,
@@ -585,7 +584,8 @@ const filteredContentPosts = computed(() => {
       item.title,
       item.description,
       item.resourceName,
-      item.platformHandle
+      item.platformHandle,
+      contentNicheTag(item)
     ]
       .filter(Boolean)
       .some(value => String(value).toLowerCase().includes(keyword));
@@ -1150,7 +1150,9 @@ function handleContentCardCommand(command: string, post: any) {
 
 function contentResource(post: any) {
   return projectCreators.value.find(
-    item => Number(item.resourceId) === Number(post?.resourceId)
+    item =>
+      Number(item.resourceId) === Number(post?.resourceId) ||
+      item.resourceIds?.includes(Number(post?.resourceId))
   );
 }
 
@@ -1250,6 +1252,15 @@ function contentCooperationType(post: any) {
 function contentTypeTag(post: any) {
   return String(
     post?.contentType || contentCooperation(post)?.contentType || ""
+  ).trim();
+}
+
+function contentNicheTag(post: any) {
+  return String(
+    post?.category ||
+      contentResource(post)?.category ||
+      contentCooperation(post)?.category ||
+      ""
   ).trim();
 }
 
@@ -2164,9 +2175,11 @@ function renderPlatformPerformanceChart() {
   platformPerformanceChart.clear();
   if (!rows.length) {
     platformPerformanceChart.setOption(
-        emptyPlatformChartOption(
-          fieldLabel(metric === "exposure" ? "暂无平台曝光数据" : "暂无平台互动数据")
+      emptyPlatformChartOption(
+        fieldLabel(
+          metric === "exposure" ? "暂无平台曝光数据" : "暂无平台互动数据"
         )
+      )
     );
     return;
   }
@@ -2429,8 +2442,8 @@ onBeforeUnmount(() => {
               fieldLabel(project?.campaignType || "合作项目")
             }}</el-tag>
             <span
-              ><IconifyIconOnline icon="ri:checkbox-circle-fill" />
-              ✅ {{ fieldLabel("数据已同步") }}</span
+              ><IconifyIconOnline icon="ri:checkbox-circle-fill" /> ✅
+              {{ fieldLabel("数据已同步") }}</span
             >
           </div>
         </div>
@@ -2453,7 +2466,12 @@ onBeforeUnmount(() => {
         <span class="cycle-label"
           >{{ fieldLabel("创建于") }} {{ createdDateLabel }}</span
         >
-        <el-button circle text :aria-label="fieldLabel('编辑项目')" @click="openProjectDialog">
+        <el-button
+          circle
+          text
+          :aria-label="fieldLabel('编辑项目')"
+          @click="openProjectDialog"
+        >
           <IconifyIconOnline icon="ri:edit-line" />
         </el-button>
         <el-dropdown>
@@ -2465,9 +2483,9 @@ onBeforeUnmount(() => {
               <el-dropdown-item @click="toggleProjectStatus">
                 {{ fieldLabel(isPaused ? "恢复项目" : "暂停项目") }}
               </el-dropdown-item>
-              <el-dropdown-item @click="handleExportProjectData"
-                >{{ fieldLabel("导出项目数据") }}</el-dropdown-item
-              >
+              <el-dropdown-item @click="handleExportProjectData">{{
+                fieldLabel("导出项目数据")
+              }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -2589,6 +2607,16 @@ onBeforeUnmount(() => {
                     :value="contentCooperationType(contentDetailView)"
                   />
                   <el-tag
+                    v-if="contentNicheTag(contentDetailView)"
+                    class="content-niche-tag"
+                    type="info"
+                    effect="plain"
+                    size="small"
+                    :title="fieldLabel('领域')"
+                  >
+                    {{ fieldLabel(contentNicheTag(contentDetailView)) }}
+                  </el-tag>
+                  <el-tag
                     v-if="contentTypeTag(contentDetailView)"
                     class="content-type-tag content-detail-type-tag"
                     type="primary"
@@ -2620,7 +2648,8 @@ onBeforeUnmount(() => {
                   <span>
                     {{ formatCount(contentFollowers(contentDetailView)) }}
                     {{ fieldLabel(contentAudienceLabel(contentDetailView)) }} ·
-                    {{ fieldLabel("发布于") }} {{ dateText(contentDetailView.publishedAt) }}
+                    {{ fieldLabel("发布于") }}
+                    {{ dateText(contentDetailView.publishedAt) }}
                   </span>
                 </div>
               </div>
@@ -2633,7 +2662,9 @@ onBeforeUnmount(() => {
               <strong>{{
                 formatCount(postExposure(contentDetailView))
               }}</strong>
-              <small v-if="contentExposureHint(contentDetailView)">{{ contentExposureHint(contentDetailView) }}</small>
+              <small v-if="contentExposureHint(contentDetailView)">{{
+                contentExposureHint(contentDetailView)
+              }}</small>
             </article>
             <article>
               <span>{{ fieldLabel("点赞量") }}</span>
@@ -2761,7 +2792,9 @@ onBeforeUnmount(() => {
                 }}
               </p>
             </div>
-            <span>{{ platformPerformance.length }} {{ fieldLabel("个平台") }}</span>
+            <span
+              >{{ platformPerformance.length }} {{ fieldLabel("个平台") }}</span
+            >
           </div>
           <div class="platform-chart-grid">
             <article class="platform-chart-card">
@@ -2778,7 +2811,10 @@ onBeforeUnmount(() => {
                   role="img"
                   :aria-label="fieldLabel('各平台合作内容数量分布饼图')"
                 />
-                <div class="platform-legend" :aria-label="fieldLabel('平台内容图例')">
+                <div
+                  class="platform-legend"
+                  :aria-label="fieldLabel('平台内容图例')"
+                >
                   <div
                     v-for="item in platformPerformance"
                     :key="`content-${item.platform}`"
@@ -2790,7 +2826,10 @@ onBeforeUnmount(() => {
                     />
                     <PlatformIconBadge :platform="item.platform" />
                     <strong>{{ item.platform }}</strong>
-                    <span>{{ item.contentCount }} {{ locale === "en" ? "pcs." : fieldLabel("条") }}</span>
+                    <span
+                      >{{ item.contentCount }}
+                      {{ locale === "en" ? "pcs." : fieldLabel("条") }}</span
+                    >
                     <em>{{
                       ratioPercent(item.contentCount, platformTotals.content)
                     }}</em>
@@ -2810,7 +2849,10 @@ onBeforeUnmount(() => {
                   <h3>{{ fieldLabel("各平台效果占比") }}</h3>
                   <p>{{ fieldLabel("切换查看曝光量或互动量构成") }}</p>
                 </div>
-                <div class="platform-metric-switch" :aria-label="fieldLabel('平台效果指标')">
+                <div
+                  class="platform-metric-switch"
+                  :aria-label="fieldLabel('平台效果指标')"
+                >
                   <button
                     type="button"
                     :class="{ active: platformMetric === 'exposure' }"
@@ -2832,7 +2874,7 @@ onBeforeUnmount(() => {
                   ref="platformPerformanceChartRef"
                   class="platform-pie-chart"
                   role="img"
-                    :aria-label="
+                  :aria-label="
                     fieldLabel(
                       platformMetric === 'exposure'
                         ? '各平台曝光量占比饼图'
@@ -2840,7 +2882,10 @@ onBeforeUnmount(() => {
                     )
                   "
                 />
-                <div class="platform-legend" :aria-label="fieldLabel('平台效果图例')">
+                <div
+                  class="platform-legend"
+                  :aria-label="fieldLabel('平台效果图例')"
+                >
                   <div
                     v-for="item in platformPerformance"
                     :key="`performance-${item.platform}`"
@@ -2940,15 +2985,14 @@ onBeforeUnmount(() => {
               }}
             </p>
           </div>
-          <span>{{ locale === "en" ? `${influencerRows.length} KOL` : `${influencerRows.length} 位达人` }}</span>
+          <span>{{
+            locale === "en"
+              ? `${influencerRows.length} KOL`
+              : `${influencerRows.length} 位达人`
+          }}</span>
         </div>
         <el-table :data="influencerRows" class="creator-table">
-          <el-table-column
-            type="expand"
-            label=""
-            width="72"
-            align="center"
-          >
+          <el-table-column type="expand" label="" width="72" align="center">
             <template #default="{ row }">
               <div class="creator-content-detail">
                 <el-table
@@ -3205,15 +3249,14 @@ onBeforeUnmount(() => {
               月访问量；其他媒体采用月独立访客（UMV）。
             </p>
           </div>
-          <span>{{ locale === "en" ? `${mediaRows.length} Media` : `${mediaRows.length} 家媒体` }}</span>
+          <span>{{
+            locale === "en"
+              ? `${mediaRows.length} Media`
+              : `${mediaRows.length} 家媒体`
+          }}</span>
         </div>
         <el-table :data="mediaRows" class="creator-table media-table">
-          <el-table-column
-            type="expand"
-            label=""
-            width="72"
-            align="center"
-          >
+          <el-table-column type="expand" label="" width="72" align="center">
             <template #default="{ row }">
               <div class="creator-content-detail">
                 <el-table
@@ -3450,7 +3493,8 @@ onBeforeUnmount(() => {
             />
           </el-select>
           <span class="content-count"
-            >{{ fieldLabel("共") }} {{ filteredContentPosts.length }} {{ fieldLabel("条内容") }}</span
+            >{{ fieldLabel("共") }} {{ filteredContentPosts.length }}
+            {{ fieldLabel("条内容") }}</span
           >
         </div>
         <el-empty
@@ -3537,6 +3581,16 @@ onBeforeUnmount(() => {
                 class="content-card-cooperation-types"
                 :value="contentCooperationType(post)"
               />
+              <el-tag
+                v-if="contentNicheTag(post)"
+                class="content-niche-tag content-card-niche-tag"
+                type="info"
+                effect="plain"
+                size="small"
+                :title="fieldLabel('领域')"
+              >
+                {{ fieldLabel(contentNicheTag(post)) }}
+              </el-tag>
               <el-tag
                 v-if="contentTypeTag(post)"
                 class="content-type-tag content-card-type-tag"
@@ -3744,7 +3798,9 @@ onBeforeUnmount(() => {
           class="creator-form-grid__wide"
         >
           <el-input
-            :model-value="fieldLabel(creatorForm.collaboratorTier || '保存后自动计算')"
+            :model-value="
+              fieldLabel(creatorForm.collaboratorTier || '保存后自动计算')
+            "
             disabled
           />
         </el-form-item>
@@ -4216,7 +4272,7 @@ onBeforeUnmount(() => {
                     :class="{ active: detailTab === 'overview' }"
                     @click="detailTab = 'overview'"
                   >
-        {{ fieldLabel("概览") }}
+                    {{ fieldLabel("概览") }}
                   </button>
                   <button
                     type="button"
@@ -6421,10 +6477,19 @@ onBeforeUnmount(() => {
   font-weight: 600;
   border-radius: 0;
 }
+.content-niche-tag {
+  color: #475569;
+  font-weight: 600;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  border-radius: 0;
+}
+.content-card-niche-tag,
 .content-card-type-tag {
   margin-bottom: 9px;
   margin-left: 6px;
 }
+.content-card-niche-tag:first-child,
 .content-card-type-tag:first-child {
   margin-left: 0;
 }

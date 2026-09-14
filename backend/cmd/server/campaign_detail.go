@@ -101,7 +101,7 @@ func (a *app) businessProjectDetail(w http.ResponseWriter, r *http.Request) {
 	contentPosts, err := a.queryMaps(r.Context(),
 		`select distinct p.id, p.resource_id as resourceId, r.name as resourceName,
 		        r.avatar_url as resourceAvatarUrl, r.avatar_remote_url as resourceAvatarRemoteUrl,
-		        r.platform_handle as platformHandle,
+		        r.platform_handle as platformHandle, r.category,
 		        p.platform, p.platform_post_id as platformPostId, p.title, p.description,
 		        p.post_url as postUrl,
 		        coalesce(nullif(p.cover_url, ''), nullif(p.cover_remote_url, ''), '') as coverUrl,
