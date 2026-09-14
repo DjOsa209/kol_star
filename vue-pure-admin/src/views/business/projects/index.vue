@@ -777,18 +777,19 @@ function projectMarketItems(project: any) {
 function projectCycleText(project: any) {
   const start = String(project.cycleStartDate || "").trim();
   const end = String(project.cycleEndDate || "").trim();
-  if (start && end) return `${start} 至 ${end}`;
-  if (start) return `${start} 起`;
-  if (end) return `截至 ${end}`;
+  if (start && end) return `${start} ${fieldLabel("至")} ${end}`;
+  if (start) return `${start} ${fieldLabel("起")}`;
+  if (end) return `${fieldLabel("截至")} ${end}`;
   return fieldLabel("未设置");
 }
 
 function projectCreatedDate(project: any) {
   const timestamp = Number(project.createdAt || 0);
-  if (!timestamp) return "创建日期未知";
+  if (!timestamp) return fieldLabel("创建日期未知");
   const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return "创建日期未知";
-  return `创建于 ${date.toLocaleDateString("zh-CN")}`;
+  if (Number.isNaN(date.getTime())) return fieldLabel("创建日期未知");
+  const localeCode = locale.value === "en" ? "en-US" : "zh-CN";
+  return `${fieldLabel("创建于")} ${date.toLocaleDateString(localeCode)}`;
 }
 
 async function loadData() {
@@ -2468,9 +2469,9 @@ onMounted(() => {
         />
         <div v-else class="project-pagination-footer">
           <span>
-            第 {{ projectCurrentPage }} / {{
+            {{ fieldLabel("第") }} {{ projectCurrentPage }} / {{
               Math.ceil(visibleProjects.length / projectPageSize)
-            }} 页
+            }} {{ fieldLabel("页") }}
           </span>
           <el-pagination
             v-model:current-page="projectCurrentPage"
