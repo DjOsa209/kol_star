@@ -159,14 +159,14 @@
 /* Transsion Pulse global visual system: obsidian shell, warm workspace, neon action. */
 :root,
 html[data-theme] {
-  --el-color-primary: #cf0;
-  --el-color-primary-dark-2: #a8d400;
-  --el-color-primary-light-3: #d9ff42;
-  --el-color-primary-light-5: #e4ff73;
-  --el-color-primary-light-7: #efffa6;
-  --el-color-primary-light-8: #f5ffc7;
-  --el-color-primary-light-9: #faffdf;
-  --el-color-success: #00b96b;
+  --el-color-primary: #526600;
+  --el-color-primary-dark-2: #3f5000;
+  --el-color-primary-light-3: #7f913d;
+  --el-color-primary-light-5: #a8b37f;
+  --el-color-primary-light-7: #d1d9bc;
+  --el-color-primary-light-8: #e3e8d7;
+  --el-color-primary-light-9: #f3f5ed;
+  --el-color-success: #047857;
   --el-color-warning: #f59e0b;
   --el-color-danger: #ff4500;
   --el-bg-color: #fff;
@@ -186,7 +186,7 @@ html[data-theme] {
   --pure-theme-menu-hover: #1a1a24;
   --pure-theme-sub-menu-bg: #0e0e14;
   --pure-theme-menu-text: #a1a1aa;
-  --pure-theme-sub-menu-active-text: #111116;
+  --pure-theme-sub-menu-active-text: #fff;
   --pure-theme-sidebar-logo: #0e0e14;
   --pure-theme-menu-title-hover: #fff;
   --pure-theme-menu-active-before: #cf0;
@@ -384,12 +384,12 @@ body {
   .is-active > .el-sub-menu__title,
   .is-active > .el-sub-menu__title > * {
     font-weight: 800;
-    color: #111116 !important;
+    color: #fff !important;
   }
 
   .el-menu-item.is-active::before,
   .el-menu-item.is-active.nest-menu::before {
-    background: #cf0 !important;
+    background: #526600 !important;
     border-radius: 7px !important;
   }
 }
