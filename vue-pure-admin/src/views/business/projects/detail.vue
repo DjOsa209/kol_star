@@ -2027,7 +2027,7 @@ function platformTooltip(name: string) {
   );
   return [
     `<strong>${escapeHTML(row.platform)}</strong>`,
-    `${fieldLabel("内容")}：${row.contentCount} ${fieldLabel("条")}`,
+    `${fieldLabel("内容")}：${row.contentCount} ${locale.value === "en" ? "pcs." : fieldLabel("条")}`,
     `${fieldLabel("曝光 / 播放")}：${formatCount(row.exposure)}（${exposureShare}）`,
     `${fieldLabel("互动")}：${formatCount(row.engagement)}（${engagementShare}）`
   ].join("<br/>");
@@ -2417,7 +2417,7 @@ onBeforeUnmount(() => {
             }}</el-tag>
             <span
               ><IconifyIconOnline icon="ri:checkbox-circle-fill" />
-              {{ fieldLabel("数据已同步") }}</span
+              ✅ {{ fieldLabel("数据已同步") }}</span
             >
           </div>
         </div>
@@ -2777,7 +2777,7 @@ onBeforeUnmount(() => {
                     />
                     <PlatformIconBadge :platform="item.platform" />
                     <strong>{{ item.platform }}</strong>
-                    <span>{{ item.contentCount }} {{ fieldLabel("条") }}</span>
+                    <span>{{ item.contentCount }} {{ locale === "en" ? "pcs." : fieldLabel("条") }}</span>
                     <em>{{
                       ratioPercent(item.contentCount, platformTotals.content)
                     }}</em>
