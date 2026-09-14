@@ -123,7 +123,7 @@ const isRegionalProjectDivision = computed(
 const normalizedImportProjectCustomName = computed(() =>
   importProjectCustomName.value.trim().replace(/_+/g, "-")
 );
-function localizedImportProjectCountry(value: string) {
+function localizedCountryName(value: string) {
   if (locale.value !== "en") return value;
   return (
     worldCountryOptions.find(country => country.name === value)?.englishName ||
@@ -133,7 +133,7 @@ function localizedImportProjectCountry(value: string) {
 const standardizedImportProjectName = computed(() => {
   const division = isRegionalProjectDivision.value
     ? importProjectCountry.value
-      ? `${fieldLabel("区域")}_${localizedImportProjectCountry(
+      ? `${fieldLabel("区域")}_${localizedCountryName(
           importProjectCountry.value
         )}`
       : ""
@@ -2408,8 +2408,8 @@ onMounted(() => {
                     effect="plain"
                     type="info"
                   >
-                    {{ fieldLabel(market.name) }}
-                    <small>{{ market.outputCount }} 次</small>
+                    {{ localizedCountryName(market.name) }}
+                    <small>{{ market.outputCount }} {{ fieldLabel("次") }}</small>
                   </el-tag>
                 </div>
                 <el-popover
@@ -2440,9 +2440,9 @@ onMounted(() => {
                       class="project-market-popover-row"
                     >
                       <span
-                        ><b>{{ index + 1 }}</b> {{ fieldLabel(market.name) }}</span
+                        ><b>{{ index + 1 }}</b> {{ localizedCountryName(market.name) }}</span
                       >
-                      <em>{{ market.outputCount }} 次</em>
+                      <em>{{ market.outputCount }} {{ fieldLabel("次") }}</em>
                     </div>
                   </div>
                 </el-popover>
