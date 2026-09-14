@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { fieldLabel } from "@/utils/fieldI18n";
 
 const props = withDefaults(
   defineProps<{
@@ -43,10 +44,10 @@ function tagClass(value: string) {
       effect="light"
       size="small"
     >
-      {{ tag }}
+      {{ fieldLabel(tag) }}
     </el-tag>
   </span>
-  <span v-else class="cooperation-type-tags__empty">{{ emptyText }}</span>
+  <span v-else class="cooperation-type-tags__empty">{{ fieldLabel(emptyText) }}</span>
 </template>
 
 <style scoped>

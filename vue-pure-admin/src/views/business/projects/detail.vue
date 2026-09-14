@@ -1178,13 +1178,11 @@ function contentSecondaryMetricValue(post: any) {
 }
 
 function contentExposureHint(post: any) {
-  return isWebsiteContent(post)
-    ? "当前网页累计访问 / 曝光"
-    : "当前内容累计播放 / 曝光";
+  return "";
 }
 
 function contentOpenLabel(post: any) {
-  return isWebsiteContent(post) ? "打开网页" : "前往平台查看";
+  return fieldLabel(isWebsiteContent(post) ? "打开网页" : "前往平台查看");
 }
 
 function contentAvatar(post: any) {
@@ -1652,14 +1650,18 @@ function moneyText(
 function dateText(value: unknown) {
   if (!value) return "-";
   const raw = String(value);
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    const datePart = raw.slice(0, 10);
+    return locale.value === "en" ? datePart.replaceAll("-", "/") : datePart;
+  }
   const date = new Date(Number(value) || raw);
   if (Number.isNaN(date.getTime())) return "-";
-  return [
+  const result = [
     date.getFullYear(),
     String(date.getMonth() + 1).padStart(2, "0"),
     String(date.getDate()).padStart(2, "0")
-  ].join("-");
+  ].join(locale.value === "en" ? "/" : "-");
+  return result;
 }
 
 function isToday(value: unknown) {
@@ -2495,7 +2497,7 @@ onBeforeUnmount(() => {
               @click="closeContentDetail"
             >
               <IconifyIconOnline icon="ri:arrow-left-line" />
-              返回合作内容
+              {{ fieldLabel("返回合作内容") }}
             </button>
           </div>
 
@@ -2607,7 +2609,7 @@ onBeforeUnmount(() => {
                   <span>
                     {{ formatCount(contentFollowers(contentDetailView)) }}
                     {{ fieldLabel(contentAudienceLabel(contentDetailView)) }} ·
-                    {{ dateText(contentDetailView.publishedAt) }} 发布
+                    {{ fieldLabel("发布于") }} {{ dateText(contentDetailView.publishedAt) }}
                   </span>
                 </div>
               </div>
@@ -2620,7 +2622,7 @@ onBeforeUnmount(() => {
               <strong>{{
                 formatCount(postExposure(contentDetailView))
               }}</strong>
-              <small>{{ contentExposureHint(contentDetailView) }}</small>
+              <small v-if="contentExposureHint(contentDetailView)">{{ contentExposureHint(contentDetailView) }}</small>
             </article>
             <article>
               <span>{{ fieldLabel("点赞量") }}</span>
