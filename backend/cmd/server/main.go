@@ -358,27 +358,18 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) refreshToken(w http.ResponseWriter, r *http.Request) {
 	refreshToken := stringField(readBody(r), "refreshToken")
-	parts := strings.Split(refreshToken, ".")
-	if len(parts) < 4 || parts[0] != "kol" || parts[2] != "refresh" {
-		writeError(w, http.StatusUnauthorized, 401, "刷新令牌无效")
-		return
-	}
-	userID, err := strconv.Atoi(parts[1])
-	if err != nil || userID <= 0 {
-		writeError(w, http.StatusUnauthorized, 401, "刷新令牌无效")
+	now := time.Now()
+	tokenData, ok := parseRefreshToken(refreshToken, now)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "登录已超过 5 小时，请重新登录")
 		return
 	}
 	var status int
-	if err := a.DB().QueryRowContext(r.Context(), `select status from sys_users where id = ?`, userID).Scan(&status); err != nil || status != 1 {
+	if err := a.DB().QueryRowContext(r.Context(), `select status from sys_users where id = ?`, tokenData.UserID).Scan(&status); err != nil || status != 1 {
 		writeError(w, http.StatusUnauthorized, 401, "账号不存在或已停用")
 		return
 	}
-	now := time.Now()
-	writeOK(w, map[string]any{
-		"accessToken":  fmt.Sprintf("kol.%d.%d", userID, now.Unix()),
-		"refreshToken": fmt.Sprintf("kol.%d.refresh.%d", userID, now.Unix()),
-		"expires":      now.Add(2 * time.Hour).Format("2006/01/02 15:04:05"),
-	})
+	writeOK(w, newLoginTokenResponse(tokenData.UserID, tokenData.SessionStartedAt, now))
 }
 
 func (a *app) uploadImage(w http.ResponseWriter, r *http.Request) {
@@ -1119,12 +1110,11 @@ func (a *app) userPermissions(ctx context.Context, userID int) ([]string, error)
 func (a *app) currentUserID(r *http.Request) (int, bool) {
 	token := strings.TrimSpace(r.Header.Get("Authorization"))
 	token = strings.TrimPrefix(token, "Bearer ")
-	parts := strings.Split(token, ".")
-	if len(parts) < 3 || parts[0] != "kol" {
+	tokenData, ok := parseAccessToken(token, time.Now())
+	if !ok {
 		return 0, false
 	}
-	userID, err := strconv.Atoi(parts[1])
-	return userID, err == nil && userID > 0
+	return tokenData.UserID, true
 }
 
 func (a *app) requirePerm(permission string, next http.HandlerFunc) http.HandlerFunc {

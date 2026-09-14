@@ -83,10 +83,18 @@ class PureHttp {
         ];
         return whiteList.some(url => config.url.endsWith(url))
           ? config
-          : new Promise(resolve => {
+          : new Promise((resolve, reject) => {
               const data = getToken();
               if (data) {
                 const now = new Date().getTime();
+                if (data.sessionExpires - now <= 0) {
+                  useUserStoreHook().logOut();
+                  message(transformI18n($t("login.pureLoginExpired")), {
+                    type: "warning"
+                  });
+                  reject(new Error("Login session expired"));
+                  return;
+                }
                 const expired = parseInt(data.expires) - now <= 0;
                 if (expired) {
                   if (!PureHttp.isRefreshing) {

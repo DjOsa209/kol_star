@@ -7,6 +7,8 @@ export interface DataInfo<T> {
   accessToken: string;
   /** `accessToken`的过期时间（时间戳） */
   expires: T;
+  /** 登录会话的绝对过期时间（时间戳），最长为登录后 5 小时 */
+  sessionExpires: T;
   /** 用于调用刷新accessToken的接口时所需的token */
   refreshToken: string;
   /** 头像 */
@@ -31,12 +33,37 @@ export const TokenKey = "authorized-token";
  * */
 export const multipleTabsKey = "multiple-tabs";
 
+let sessionExpiryTimer: number | undefined;
+let scheduledSessionExpiry = 0;
+
+function scheduleSessionExpiry(sessionExpires: number) {
+  if (!Number.isFinite(sessionExpires) || sessionExpires <= 0) return;
+  if (scheduledSessionExpiry === sessionExpires && sessionExpiryTimer) return;
+  if (sessionExpiryTimer) window.clearTimeout(sessionExpiryTimer);
+  scheduledSessionExpiry = sessionExpires;
+  sessionExpiryTimer = window.setTimeout(
+    () => {
+      sessionExpiryTimer = undefined;
+      scheduledSessionExpiry = 0;
+      useUserStoreHook().logOut();
+    },
+    Math.max(0, sessionExpires - Date.now())
+  );
+}
+
 /** 获取`token` */
-export function getToken(): DataInfo<number> {
+export function getToken(): DataInfo<number> | null {
   // 此处与`TokenKey`相同，此写法解决初始化时`Cookies`中不存在`TokenKey`报错
-  return Cookies.get(TokenKey)
+  const data = Cookies.get(TokenKey)
     ? JSON.parse(Cookies.get(TokenKey))
     : storageLocal().getItem(userKey);
+  if (!data) return null;
+  if (data.sessionExpires && data.sessionExpires <= Date.now()) {
+    removeToken();
+    return null;
+  }
+  scheduleSessionExpiry(data.sessionExpires);
+  return data;
 }
 
 /**
@@ -47,10 +74,19 @@ export function getToken(): DataInfo<number> {
  */
 export function setToken(data: DataInfo<Date>) {
   let expires = 0;
+  let sessionExpires = 0;
   const { accessToken, refreshToken } = data;
   const { isRemembered, loginDay } = useUserStoreHook();
   expires = new Date(data.expires).getTime(); // 如果后端直接设置时间戳，将此处代码改为expires = data.expires，然后把上面的DataInfo<Date>改成DataInfo<number>即可
-  const cookieString = JSON.stringify({ accessToken, expires, refreshToken });
+  sessionExpires = new Date(data.sessionExpires).getTime();
+  const cookieString = JSON.stringify({
+    accessToken,
+    expires,
+    sessionExpires,
+    refreshToken
+  });
+
+  scheduleSessionExpiry(sessionExpires);
 
   expires > 0
     ? Cookies.set(TokenKey, cookieString, {
@@ -77,6 +113,7 @@ export function setToken(data: DataInfo<Date>) {
     storageLocal().setItem(userKey, {
       refreshToken,
       expires,
+      sessionExpires,
       avatar,
       username,
       nickname,
@@ -117,6 +154,9 @@ export function setToken(data: DataInfo<Date>) {
 
 /** 删除`token`以及key值为`user-info`的localStorage信息 */
 export function removeToken() {
+  if (sessionExpiryTimer) window.clearTimeout(sessionExpiryTimer);
+  sessionExpiryTimer = undefined;
+  scheduledSessionExpiry = 0;
   Cookies.remove(TokenKey);
   Cookies.remove(multipleTabsKey);
   storageLocal().removeItem(userKey);

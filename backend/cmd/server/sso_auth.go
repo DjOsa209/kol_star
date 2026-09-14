@@ -352,16 +352,17 @@ func (a *app) loginResponseData(ctx context.Context, userID int, avatar, usernam
 		permissions = []string{"*:*:*"}
 	}
 	now := time.Now()
-	return map[string]any{
-		"avatar":       avatar,
-		"username":     username,
-		"nickname":     nickname,
-		"roles":        roles,
-		"permissions":  permissions,
-		"accessToken":  fmt.Sprintf("kol.%d.%d", userID, now.Unix()),
-		"refreshToken": fmt.Sprintf("kol.%d.refresh.%d", userID, now.Unix()),
-		"expires":      now.Add(2 * time.Hour).Format("2006/01/02 15:04:05"),
-	}, nil
+	data := map[string]any{
+		"avatar":      avatar,
+		"username":    username,
+		"nickname":    nickname,
+		"roles":       roles,
+		"permissions": permissions,
+	}
+	for key, value := range newLoginTokenResponse(userID, now, now) {
+		data[key] = value
+	}
+	return data, nil
 }
 
 func ssoUsername(identity ssoIdentity) string {

@@ -33,6 +33,7 @@ import {
 import {
   type DataInfo,
   userKey,
+  getToken,
   removeToken,
   multipleTabsKey
 } from "@/utils/auth";
@@ -128,6 +129,7 @@ router.beforeEach((to: ToRouteType, _from) => {
     }
   }
   const userInfo = storageLocal().getItem<DataInfo<number>>(userKey);
+  const tokenInfo = getToken();
   const externalLink = isUrl(to?.name as string);
   if (!externalLink) {
     to.matched.some(item => {
@@ -142,7 +144,7 @@ router.beforeEach((to: ToRouteType, _from) => {
   function toCorrectRoute() {
     return whiteList.includes(to.fullPath) ? _from.fullPath : undefined;
   }
-  if (Cookies.get(multipleTabsKey) && userInfo) {
+  if (Cookies.get(multipleTabsKey) && userInfo && tokenInfo) {
     // 无权限跳转403页面
     if (to.meta?.roles && !isOneOfArray(to.meta?.roles, userInfo?.roles)) {
       return { path: "/error/403" };

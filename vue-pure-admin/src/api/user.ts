@@ -20,6 +20,8 @@ export type UserResult = {
     refreshToken: string;
     /** `accessToken`的过期时间（格式'xxxx/xx/xx xx:xx:xx'） */
     expires: Date;
+    /** 本次登录会话的绝对过期时间，达到后必须重新登录 */
+    sessionExpires: Date;
   };
 };
 
@@ -33,6 +35,8 @@ export type RefreshTokenResult = {
     refreshToken: string;
     /** `accessToken`的过期时间（格式'xxxx/xx/xx xx:xx:xx'） */
     expires: Date;
+    /** 本次登录会话的绝对过期时间，刷新 token 时不会延长 */
+    sessionExpires: Date;
   };
 };
 
