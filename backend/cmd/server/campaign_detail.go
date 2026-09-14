@@ -182,6 +182,12 @@ func aggregateProjectResourcesByName(resources, cooperations []map[string]any) [
 			groups[key] = group
 			order = append(order, key)
 		}
+		group := groups[key]
+		if strings.TrimSpace(stringValue(group["category"])) == "" {
+			if category := strings.TrimSpace(stringValue(resource["category"])); category != "" {
+				group["category"] = category
+			}
+		}
 		resourceID := intField(resource, "resourceId")
 		if resourceID > 0 {
 			resourceIDs[key] = append(resourceIDs[key], resourceID)

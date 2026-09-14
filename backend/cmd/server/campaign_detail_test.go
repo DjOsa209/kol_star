@@ -171,3 +171,28 @@ func TestBusinessProjectDetailDisablesHTTPResponseCaching(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAggregateProjectResourcesKeepsNicheFromGroupedProfiles(t *testing.T) {
+	resources := []map[string]any{
+		{
+			"resourceId":   11,
+			"resourceName": "Creator One",
+			"platform":     "Instagram",
+			"category":     "",
+		},
+		{
+			"resourceId":   12,
+			"resourceName": "Creator One",
+			"platform":     "TikTok",
+			"category":     "科技",
+		},
+	}
+
+	got := aggregateProjectResourcesByName(resources, nil)
+	if len(got) != 1 {
+		t.Fatalf("aggregateProjectResourcesByName() returned %d rows, want 1", len(got))
+	}
+	if got[0]["category"] != "科技" {
+		t.Fatalf("grouped project resource niche = %#v, want 科技", got[0]["category"])
+	}
+}
