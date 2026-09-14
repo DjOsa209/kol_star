@@ -360,7 +360,7 @@ const englishFieldLabels: Record<string, string> = {
   "媒体 / 账号名称": "Media / Account Name",
   对接人: "Contact",
   "对接人 / 供应商": "Contact Person / Vendor",
-  导入方式: "Import Mode",
+  导入方式: "Import Method",
   "添加达人 / 媒体": "Add KOL / Media",
   层级: "Tier",
   "层级（系统自动）": "Tier (System Generated)",
@@ -790,9 +790,9 @@ const englishFieldLabels: Record<string, string> = {
   "从 Excel 批量创建项目": "Create Projects from Excel",
   "必填：项目名称。重复的「项目名称 + 目标市场」会自动跳过。":
     "Required: project name. Duplicate project name and target market combinations are skipped automatically.",
-  新建项目并导入: "Create Project and Import",
-  覆盖已有项目: "Replace Existing Project",
-  增量追加: "Append Incrementally",
+  新建项目并导入: "Create",
+  覆盖已有项目: "Replace",
+  增量追加: "Add",
   "命名规则：总部/区域_产品线_项目名称":
     "Naming rule: HQ/Region_Product Line_Project Name",
   "示例：总部_公关_NOTE 60 Series_世界杯营销":

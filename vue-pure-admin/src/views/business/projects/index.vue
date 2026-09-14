@@ -2868,7 +2868,7 @@ onMounted(() => {
                 :disabled="importProjectCreating"
               />
             </el-form-item>
-            <el-form-item :label="fieldLabel('项目周期')">
+            <el-form-item :label="fieldLabel('项目日历')">
               <el-date-picker
                 v-model="importProjectCycleRange"
                 type="daterange"
@@ -2995,7 +2995,7 @@ onMounted(() => {
           />
           <el-table-column
             prop="quoteAmount"
-            :label="fieldLabel('合作费用')"
+            :label="fieldLabel('成本')"
             width="110"
           />
           <el-table-column
