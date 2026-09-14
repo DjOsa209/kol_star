@@ -2886,7 +2886,7 @@ onBeforeUnmount(() => {
             <el-option
               v-for="category in creatorCategoryOptions"
               :key="category"
-              :label="category"
+              :label="fieldLabel(category)"
               :value="category"
             />
           </el-select>
@@ -3052,6 +3052,7 @@ onBeforeUnmount(() => {
             :label="fieldLabel('领域')"
             min-width="120"
             align="center"
+            :formatter="({ row }) => fieldLabel(row.category || '-')"
           />
           <el-table-column
             :label="fieldLabel('粉丝量')"
@@ -3316,6 +3317,7 @@ onBeforeUnmount(() => {
             :label="fieldLabel('领域')"
             min-width="120"
             align="center"
+            :formatter="({ row }) => fieldLabel(row.category || '-')"
           />
           <el-table-column
             :label="fieldLabel('月独立访客（UMV）')"

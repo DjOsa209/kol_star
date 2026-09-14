@@ -348,11 +348,11 @@ function marketText(row: any) {
 }
 
 function domainText(row: any) {
-  return displayText(
+  return fieldLabel(displayText(
     row.category
       ? localizedText(row, "category")
       : localizedText(row, "industry")
-  );
+  ));
 }
 
 function tierText(row: any) {
@@ -2543,7 +2543,7 @@ onUnmounted(() => {
                     '设计'
                   ]"
                   :key="item"
-                  :label="item"
+                  :label="fieldLabel(item)"
                   :value="item" /></el-select></el-form-item
           ></el-col>
           <el-col :span="12"
@@ -2736,7 +2736,7 @@ onUnmounted(() => {
                     '设计'
                   ]"
                   :key="item"
-                  :label="item"
+                  :label="fieldLabel(item)"
                   :value="item"
                 />
               </el-select>
