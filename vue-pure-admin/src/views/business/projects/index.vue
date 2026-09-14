@@ -2486,9 +2486,11 @@ onMounted(() => {
         />
         <div v-else class="project-pagination-footer">
           <span>
-            {{ fieldLabel("第") }} {{ projectCurrentPage }} / {{
-              Math.ceil(visibleProjects.length / projectPageSize)
-            }} {{ fieldLabel("页") }}
+            {{
+              locale === "en"
+                ? `${projectCurrentPage}/${Math.ceil(visibleProjects.length / projectPageSize)}`
+                : `${fieldLabel("第")}${projectCurrentPage} / ${Math.ceil(visibleProjects.length / projectPageSize)}${fieldLabel("页")}`
+            }}
           </span>
           <el-pagination
             v-model:current-page="projectCurrentPage"
