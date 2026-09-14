@@ -2726,7 +2726,7 @@ onMounted(() => {
           :closable="false"
           :title="importParseError"
         />
-        <el-form label-width="96px" class="import-target-form mb-3">
+        <el-form label-width="130px" class="import-target-form mb-3">
           <el-form-item :label="fieldLabel('导入方式')" required>
             <el-radio-group
               v-model="importTargetMode"
@@ -6650,6 +6650,9 @@ onMounted(() => {
 .projects-table {
   width: 100%;
   border-top: 1px solid #e5e6e9;
+}
+.import-target-form :deep(.el-form-item__label) {
+  white-space: nowrap;
 }
 .project-action-cell {
   display: flex;
