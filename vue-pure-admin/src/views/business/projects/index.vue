@@ -2290,7 +2290,7 @@ onMounted(() => {
               ><IconifyIconOnline icon="ri:search-line"
             /></template>
           </el-input>
-          <span>共 {{ visibleProjects.length }} 个项目</span>
+          <span>{{ fieldLabel("共") }} {{ visibleProjects.length }} {{ fieldLabel("个项目") }}</span>
         </div>
         <el-table
           :data="pagedProjects"
@@ -2359,7 +2359,7 @@ onMounted(() => {
             width="130"
             align="center"
             ><template #default="{ row }">{{
-              row.owner || "未指定"
+              row.owner || fieldLabel("未指定对接人")
             }}</template></el-table-column
           >
           <el-table-column
@@ -2379,7 +2379,7 @@ onMounted(() => {
                     effect="plain"
                     type="info"
                   >
-                    {{ market.name }}
+                    {{ fieldLabel(market.name) }}
                     <small>{{ market.outputCount }} 次</small>
                   </el-tag>
                 </div>
@@ -2411,7 +2411,7 @@ onMounted(() => {
                       class="project-market-popover-row"
                     >
                       <span
-                        ><b>{{ index + 1 }}</b> {{ market.name }}</span
+                        ><b>{{ index + 1 }}</b> {{ fieldLabel(market.name) }}</span
                       >
                       <em>{{ market.outputCount }} 次</em>
                     </div>
@@ -2448,16 +2448,16 @@ onMounted(() => {
                 >{{ fieldLabel("进入项目") }}</el-button
               >
               <el-button link @click.stop="openEditProject(row)"
-                >编辑</el-button
+                >{{ fieldLabel("编辑") }}</el-button
               >
               <el-button
                 link
                 :loading="exportingProjectIds[row.id]"
                 @click.stop="exportProjectData(row)"
-                >导出</el-button
+                >{{ fieldLabel("导出") }}</el-button
               >
               <el-button link type="danger" @click.stop="removeProjects([row])"
-                >删除</el-button
+                >{{ fieldLabel("删除") }}</el-button
               >
             </template>
           </el-table-column>
@@ -2752,7 +2752,7 @@ onMounted(() => {
                 <div class="import-project-option">
                   <span>{{ project.name }}</span>
                   <small>
-                    {{ project.targetMarket || "未设置市场" }} ·
+                    {{ fieldLabel(project.targetMarket || "未设置市场") }} ·
                     {{ projectCycleText(project) }}
                   </small>
                 </div>
@@ -3111,12 +3111,12 @@ onMounted(() => {
                     />
                   </el-select>
                   <h2>{{ selectedProject?.name || "暂无营销项目" }}</h2>
-                  <p>
-                    目标：{{ selectedProject?.campaignType || "未设置" }}
+                    <p>
+                    {{ fieldLabel("目标") }}：{{ selectedProject?.campaignType || fieldLabel("未设置") }}
                     <span />
-                    市场：{{ selectedProject?.targetMarket || "未设置" }}
+                    {{ fieldLabel("市场") }}：{{ selectedProject?.targetMarket || fieldLabel("未设置") }}
                     <span />
-                    对接人：{{ selectedProject?.owner || "未指定" }}
+                    {{ fieldLabel("对接人") }}：{{ selectedProject?.owner || fieldLabel("未指定对接人") }}
                   </p>
                 </div>
                 <div class="overview-actions">
@@ -3135,7 +3135,7 @@ onMounted(() => {
                     :disabled="!selectedProject"
                     @click="openEditProject(selectedProject)"
                   >
-                    编辑项目
+                    {{ fieldLabel("编辑项目") }}
                   </el-button>
                 </div>
               </header>
@@ -3336,13 +3336,13 @@ onMounted(() => {
                       <h2>{{ selectedProject?.name || "暂无项目" }}</h2>
                       <p>
                         Objective:
-                        {{ selectedProject?.campaignType || "未设置合作目标" }}
+                        {{ selectedProject?.campaignType || fieldLabel("未设置合作目标") }}
                         <span />
                         Market:
-                        {{ selectedProject?.targetMarket || "未设置市场" }}
+                        {{ fieldLabel(selectedProject?.targetMarket || "未设置市场") }}
                         <span />
-                        对接人：
-                        {{ selectedProject?.owner || "未指定对接人" }}
+                        {{ fieldLabel("对接人") }}：
+                        {{ selectedProject?.owner || fieldLabel("未指定对接人") }}
                       </p>
                     </div>
                   </div>
@@ -3356,14 +3356,14 @@ onMounted(() => {
                       @click="openCampaignDetail()"
                     >
                       <IconifyIconOnline icon="ri:external-link-line" />
-                      进入执行页
+                      {{ fieldLabel("进入执行页") }}
                     </el-button>
                     <el-button
                       :disabled="!selectedProject"
                       @click="openEditProject(selectedProject)"
                     >
                       <IconifyIconOnline icon="ri:pause-line" />
-                      编辑
+                      {{ fieldLabel("编辑") }}
                     </el-button>
                     <el-button circle>
                       <IconifyIconOnline icon="ri:more-line" />
@@ -3920,9 +3920,9 @@ onMounted(() => {
                   <div>
                     <strong>{{ project.name }}</strong>
                     <span>
-                      {{ project.targetMarket || "-" }} ·
+                      {{ fieldLabel(project.targetMarket || "-") }} ·
                       {{ project.platform || "全平台" }} ·
-                      {{ project.owner || "未指定对接人" }}
+                      {{ project.owner || fieldLabel("未指定对接人") }}
                     </span>
                   </div>
                   <div class="project-card-actions">
@@ -3934,7 +3934,7 @@ onMounted(() => {
                       type="primary"
                       @click="openEditProject(project)"
                     >
-                      编辑
+                      {{ fieldLabel("编辑") }}
                     </el-button>
                   </div>
                 </div>

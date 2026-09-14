@@ -1085,7 +1085,7 @@ async function syncContentFromCard(post: any) {
     if (res.data?.previewWarning) {
       ElMessage.warning(res.data.previewWarning);
     } else {
-      ElMessage.success(res.data?.message || "内容数据已同步");
+      ElMessage.success(res.data?.message || fieldLabel("内容数据已同步"));
     }
   } finally {
     syncingContentIds[key] = false;
@@ -2412,11 +2412,11 @@ onBeforeUnmount(() => {
           <h1>{{ project?.name || "项目" }}</h1>
           <div class="campaign-meta">
             <el-tag size="small" effect="plain">{{
-              project?.campaignType || "合作项目"
+              fieldLabel(project?.campaignType || "合作项目")
             }}</el-tag>
             <span
               ><IconifyIconOnline icon="ri:checkbox-circle-fill" />
-              数据已同步</span
+              {{ fieldLabel("数据已同步") }}</span
             >
           </div>
         </div>
@@ -2439,20 +2439,20 @@ onBeforeUnmount(() => {
         <span class="cycle-label"
           >{{ fieldLabel("创建于") }} {{ createdDateLabel }}</span
         >
-        <el-button circle text aria-label="编辑项目" @click="openProjectDialog">
+        <el-button circle text :aria-label="fieldLabel('编辑项目')" @click="openProjectDialog">
           <IconifyIconOnline icon="ri:edit-line" />
         </el-button>
         <el-dropdown>
-          <el-button circle text aria-label="更多项目操作"
+          <el-button circle text :aria-label="fieldLabel('更多项目操作')"
             ><IconifyIconOnline icon="ri:more-2-fill"
           /></el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item @click="toggleProjectStatus">
-                {{ isPaused ? "恢复项目" : "暂停项目" }}
+                {{ fieldLabel(isPaused ? "恢复项目" : "暂停项目") }}
               </el-dropdown-item>
               <el-dropdown-item @click="handleExportProjectData"
-                >导出项目数据</el-dropdown-item
+                >{{ fieldLabel("导出项目数据") }}</el-dropdown-item
               >
             </el-dropdown-menu>
           </template>
@@ -2460,13 +2460,13 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <nav class="campaign-tabs" aria-label="项目详情导航">
+    <nav class="campaign-tabs" :aria-label="fieldLabel('项目详情导航')">
       <button
         type="button"
         :class="{ active: campaignTab === 'overview' }"
         @click="selectCampaignTab('overview')"
       >
-        概览
+        {{ fieldLabel("概览") }}
       </button>
       <button
         type="button"
@@ -3168,13 +3168,13 @@ onBeforeUnmount(() => {
                 link
                 type="primary"
                 @click.stop="openEditProjectResource(row)"
-                >编辑</el-button
+                >{{ fieldLabel("编辑") }}</el-button
               >
               <el-button
                 link
                 type="danger"
                 @click.stop="removeProjectResource(row)"
-                >删除</el-button
+                >{{ fieldLabel("删除") }}</el-button
               >
             </template>
           </el-table-column>
@@ -3389,13 +3389,13 @@ onBeforeUnmount(() => {
                 link
                 type="primary"
                 @click.stop="openEditProjectResource(row)"
-                >编辑</el-button
+                >{{ fieldLabel("编辑") }}</el-button
               >
               <el-button
                 link
                 type="danger"
                 @click.stop="removeProjectResource(row)"
-                >删除</el-button
+                >{{ fieldLabel("删除") }}</el-button
               >
             </template>
           </el-table-column>
@@ -4194,14 +4194,14 @@ onBeforeUnmount(() => {
                     :class="{ active: detailTab === 'overview' }"
                     @click="detailTab = 'overview'"
                   >
-                    概览
+        {{ fieldLabel("概览") }}
                   </button>
                   <button
                     type="button"
                     :class="{ active: detailTab === 'content' }"
                     @click="detailTab = 'content'"
                   >
-                    内容交付
+                    {{ fieldLabel("内容交付") }}
                   </button>
                   <button
                     type="button"
@@ -4594,7 +4594,7 @@ onBeforeUnmount(() => {
             </div>
             <div>
               <dt>{{ fieldLabel("市场") }}</dt>
-              <dd>{{ project?.targetMarket || "-" }}</dd>
+              <dd>{{ fieldLabel(project?.targetMarket || "-") }}</dd>
             </div>
             <div>
               <dt>{{ fieldLabel("语言") }}</dt>
