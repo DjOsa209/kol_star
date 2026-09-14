@@ -780,7 +780,7 @@ function projectCycleText(project: any) {
   if (start && end) return `${start} 至 ${end}`;
   if (start) return `${start} 起`;
   if (end) return `截至 ${end}`;
-  return "未设置";
+  return fieldLabel("未设置");
 }
 
 function projectCreatedDate(project: any) {
@@ -1561,9 +1561,9 @@ async function exportProjectData(row: any) {
     link.download = `${safeName || `project-${row.id}`}_标准项目数据.xlsx`;
     link.click();
     URL.revokeObjectURL(url);
-    ElMessage.success("项目标准数据已导出");
+    ElMessage.success(fieldLabel("项目标准数据已导出"));
   } catch {
-    ElMessage.error("项目数据导出失败，请稍后重试");
+    ElMessage.error(fieldLabel("项目数据导出失败，请稍后重试"));
   } finally {
     exportingProjectIds[row.id] = false;
   }

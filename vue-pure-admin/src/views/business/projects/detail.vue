@@ -2345,9 +2345,9 @@ async function handleExportProjectData() {
     link.download = `${safeName || `project-${project.value.id}`}_标准项目数据.xlsx`;
     link.click();
     URL.revokeObjectURL(url);
-    ElMessage.success("项目标准数据已导出");
+    ElMessage.success(fieldLabel("项目标准数据已导出"));
   } catch {
-    ElMessage.error("项目数据导出失败，请稍后重试");
+    ElMessage.error(fieldLabel("项目数据导出失败，请稍后重试"));
   }
 }
 
@@ -2473,14 +2473,14 @@ onBeforeUnmount(() => {
         :class="{ active: campaignTab === 'creators' }"
         @click="selectCampaignTab('creators')"
       >
-        达人/媒体 ({{ projectCreators.length }})
+        {{ fieldLabel("达人 / 媒体") }} ({{ projectCreators.length }})
       </button>
       <button
         type="button"
         :class="{ active: campaignTab === 'content' }"
         @click="selectCampaignTab('content')"
       >
-        内容 ({{ projectContentPosts.length }})
+        {{ fieldLabel("内容") }} ({{ projectContentPosts.length }})
       </button>
     </nav>
 
@@ -3370,7 +3370,7 @@ onBeforeUnmount(() => {
                 <span v-else
                   ><PlatformIconBadge
                     :platform="latestProjectPost(row).platform"
-                  /><small>查看内容</small></span
+                  /><small>{{ fieldLabel("查看内容") }}</small></span
                 >
               </button>
               <span v-else class="latest-content-empty">{{
@@ -3432,7 +3432,7 @@ onBeforeUnmount(() => {
             />
           </el-select>
           <span class="content-count"
-            >共 {{ filteredContentPosts.length }} 条内容</span
+            >{{ fieldLabel("共") }} {{ filteredContentPosts.length }} {{ fieldLabel("条内容") }}</span
           >
         </div>
         <el-empty
