@@ -445,7 +445,6 @@ const projectContentPosts = computed(() => {
         cooperationId: item.id,
         platform: item.contentPlatform || item.platform || "Website",
         cooperationType: item.cooperationType,
-        category: item.category,
         contentType: item.contentType,
         title: importedContentTitle(item),
         description: item.notes,
@@ -584,8 +583,7 @@ const filteredContentPosts = computed(() => {
       item.title,
       item.description,
       item.resourceName,
-      item.platformHandle,
-      contentNicheTag(item)
+      item.platformHandle
     ]
       .filter(Boolean)
       .some(value => String(value).toLowerCase().includes(keyword));
@@ -1252,15 +1250,6 @@ function contentCooperationType(post: any) {
 function contentTypeTag(post: any) {
   return String(
     post?.contentType || contentCooperation(post)?.contentType || ""
-  ).trim();
-}
-
-function contentNicheTag(post: any) {
-  return String(
-    post?.category ||
-      contentResource(post)?.category ||
-      contentCooperation(post)?.category ||
-      ""
   ).trim();
 }
 
@@ -2607,16 +2596,6 @@ onBeforeUnmount(() => {
                     :value="contentCooperationType(contentDetailView)"
                   />
                   <el-tag
-                    v-if="contentNicheTag(contentDetailView)"
-                    class="content-niche-tag"
-                    type="info"
-                    effect="plain"
-                    size="small"
-                    :title="fieldLabel('领域')"
-                  >
-                    {{ fieldLabel(contentNicheTag(contentDetailView)) }}
-                  </el-tag>
-                  <el-tag
                     v-if="contentTypeTag(contentDetailView)"
                     class="content-type-tag content-detail-type-tag"
                     type="primary"
@@ -3581,16 +3560,6 @@ onBeforeUnmount(() => {
                 class="content-card-cooperation-types"
                 :value="contentCooperationType(post)"
               />
-              <el-tag
-                v-if="contentNicheTag(post)"
-                class="content-niche-tag content-card-niche-tag"
-                type="info"
-                effect="plain"
-                size="small"
-                :title="fieldLabel('领域')"
-              >
-                {{ fieldLabel(contentNicheTag(post)) }}
-              </el-tag>
               <el-tag
                 v-if="contentTypeTag(post)"
                 class="content-type-tag content-card-type-tag"
@@ -6485,19 +6454,10 @@ onBeforeUnmount(() => {
   font-weight: 600;
   border-radius: 0;
 }
-.content-niche-tag {
-  color: #475569;
-  font-weight: 600;
-  background: #f8fafc;
-  border-color: #cbd5e1;
-  border-radius: 0;
-}
-.content-card-niche-tag,
 .content-card-type-tag {
   margin-bottom: 9px;
   margin-left: 6px;
 }
-.content-card-niche-tag:first-child,
 .content-card-type-tag:first-child {
   margin-left: 0;
 }
