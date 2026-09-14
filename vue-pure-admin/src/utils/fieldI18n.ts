@@ -163,6 +163,25 @@ const englishFieldLabels: Record<string, string> = {
   按当前筛选条件展示资源规模最高的市场:
     "Markets with the most resources under the current filters",
   未填写市场: "Market Not Provided",
+  已启用: "Enabled",
+  未启用: "Disabled",
+  导入项目数据: "Import Project Data",
+  展开全部: "Show All",
+  进入项目: "Open Project",
+  "飞书通知已启用：导入后将在后台同步，完成后自动推送结果。":
+    "Feishu notifications are enabled: imports sync in the background and results are pushed when complete.",
+  "飞书通知未启用：导入后仍会后台同步，但不会发送完成消息。":
+    "Feishu notifications are disabled: imports still sync in the background, but no completion message will be sent.",
+  完成分类后自动生成: "Generated automatically after classification",
+  "确认后将创建新项目；模板未填写市场，目标市场将保持为空。":
+    "A new project will be created after confirmation. No market was provided in the template, so the target market will remain empty.",
+  "没有可导入的有效项目": "No valid projects to import",
+  "项目导入失败": "Project import failed",
+  增量导入完成: "Incremental import completed",
+  覆盖导入完成: "Overwrite import completed",
+  导入完成: "Import completed",
+  "项目已导入，但后台同步任务未能启动，请稍后手动同步资源":
+    "Project imported, but the background sync could not start. Please sync resources manually later.",
   个资源: "resources",
   当前筛选范围暂无市场数据: "No Market Data for the Current Filters",
   内容发布与转化节奏: "Publishing and Conversion Trends",

@@ -4302,6 +4302,10 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 	}
 	incremental := boolField(body, "incremental")
 	replaceExisting := boolField(body, "replaceExisting")
+	locale := strings.TrimSpace(str(body, "locale"))
+	if locale != "en" {
+		locale = "zh"
+	}
 	if incremental && replaceExisting {
 		writeError(w, http.StatusOK, 10001, "增量导入与覆盖导入不能同时启用")
 		return
@@ -4491,6 +4495,7 @@ func (a *app) importBusinessCooperations(w http.ResponseWriter, r *http.Request)
 				UpdatedCooperations: updatedCooperations,
 				SkippedCooperations: skippedCooperations,
 				Failed:              len(errors),
+				Locale:              locale,
 			}
 			backgroundSyncStarted = true
 			backgroundSyncJobID = jobID

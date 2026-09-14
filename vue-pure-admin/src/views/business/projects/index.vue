@@ -1595,14 +1595,14 @@ async function handleProjectImportFile(file: any) {
 
 async function submitProjectImport() {
   if (!validProjectImportRows.value.length) {
-    ElMessage.warning("没有可导入的有效项目");
+    ElMessage.warning(fieldLabel("没有可导入的有效项目"));
     return;
   }
   projectImportLoading.value = true;
   try {
     const res = await importProjects({ rows: validProjectImportRows.value });
     if (res.code !== 0) {
-      ElMessage.warning(res.message || "项目导入失败");
+      ElMessage.warning(res.message || fieldLabel("项目导入失败"));
       return;
     }
     ElMessage.success(
@@ -2148,6 +2148,7 @@ async function submitImport() {
   importLoading.value = true;
   const res = await importCooperations({
     projectId: importProjectId.value,
+    locale: locale.value,
     incremental: importTargetMode.value === "incremental",
     replaceExisting: importTargetMode.value === "replace",
     rows: rowsForImport.value
@@ -2163,10 +2164,16 @@ async function submitImport() {
     const backgroundText = !res.data.backgroundSyncStarted
       ? ""
       : res.data.feishuNotificationEnabled
-        ? "；平台数据将在后台同步，完成后通过飞书通知"
-        : "；平台数据将在后台同步";
+        ? locale.value === "en"
+          ? "; platform data will sync in the background and results will be sent via Feishu"
+          : "；平台数据将在后台同步，完成后通过飞书通知"
+        : locale.value === "en"
+          ? "; platform data will sync in the background"
+          : "；平台数据将在后台同步";
     ElMessage.success(
-      `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，移除旧内容 ${res.data.removedContent || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条${backgroundText}`
+      locale.value === "en"
+        ? `${fieldLabel(modeText)}: ${res.data.createdResources || 0} creators/media added, ${res.data.matchedResources || 0} existing matches, ${res.data.createdCooperations || 0} collaborations added, ${res.data.removedContent || 0} old content removed, and ${res.data.skippedCooperations || 0} duplicate collaborations skipped${backgroundText}`
+        : `${modeText}：新增达人/媒体 ${res.data.createdResources || 0} 个，匹配已有达人/媒体 ${res.data.matchedResources || 0} 个，新增合作 ${res.data.createdCooperations || 0} 条，移除旧内容 ${res.data.removedContent || 0} 条，跳过重复合作 ${res.data.skippedCooperations || 0} 条${backgroundText}`
     );
     if (res.data.failed) {
       const failures = (res.data.errors || [])
@@ -2177,7 +2184,9 @@ async function submitImport() {
         )
         .join("；");
       ElMessage.warning(
-        `另有 ${res.data.failed} 行未导入${failures ? `：${failures}` : ""}`
+        locale.value === "en"
+          ? `${res.data.failed} rows were not imported${failures ? `: ${failures}` : ""}`
+          : `另有 ${res.data.failed} 行未导入${failures ? `：${failures}` : ""}`
       );
     }
     importDialog.value = false;
@@ -2185,7 +2194,7 @@ async function submitImport() {
     await loadData();
     if (!res.data.backgroundSyncStarted && res.data.imported) {
       ElMessage.warning(
-        "项目已导入，但后台同步任务未能启动，请稍后手动同步资源"
+        fieldLabel("项目已导入，但后台同步任务未能启动，请稍后手动同步资源")
       );
     }
   }
@@ -2222,8 +2231,10 @@ onMounted(() => {
             :type="importNotificationStatus.enabled ? 'success' : 'info'"
             effect="plain"
           >
-            飞书推送：{{
-              importNotificationStatus.enabled ? "已启用" : "未启用"
+            {{ locale === "en" ? "Feishu Notifications: " : "飞书推送：" }}{{
+              importNotificationStatus.enabled
+                ? fieldLabel("已启用")
+                : fieldLabel("未启用")
             }}
           </el-tag>
           <el-button @click="downloadProjectImportTemplate">
@@ -2239,7 +2250,7 @@ onMounted(() => {
           >
             <el-button type="primary"
               ><IconifyIconOnline icon="ri:upload-2-line" />
-              导入项目数据</el-button
+              {{ fieldLabel("导入项目数据") }}</el-button
             >
           </el-upload>
         </div>
@@ -2261,7 +2272,7 @@ onMounted(() => {
             :disabled="selectedProjectRows.length === 0"
             @click="removeProjects(selectedProjectRows)"
           >
-            删除所选{{
+            {{ fieldLabel("删除所选") }}{{
               selectedProjectRows.length
                 ? ` (${selectedProjectRows.length})`
                 : ""
@@ -2386,7 +2397,7 @@ onMounted(() => {
                       class="project-market-expand"
                       @click.stop
                     >
-                      展开全部（{{ projectMarketItems(row).length }}）
+                      {{ fieldLabel("展开全部") }}（{{ projectMarketItems(row).length }}）
                     </el-button>
                   </template>
                   <div class="project-market-popover-list" @click.stop>
@@ -2434,7 +2445,7 @@ onMounted(() => {
                 link
                 type="primary"
                 @click.stop="openCampaignDetail(row.id)"
-                >进入项目</el-button
+                >{{ fieldLabel("进入项目") }}</el-button
               >
               <el-button link @click.stop="openEditProject(row)"
                 >编辑</el-button
@@ -2675,8 +2686,8 @@ onMounted(() => {
           show-icon
           :title="
             importNotificationStatus.enabled
-              ? '飞书通知已启用：导入后将在后台同步，完成后自动推送结果。'
-              : '飞书通知未启用：导入后仍会后台同步，但不会发送完成消息。'
+              ? fieldLabel('飞书通知已启用：导入后将在后台同步，完成后自动推送结果。')
+              : fieldLabel('飞书通知未启用：导入后仍会后台同步，但不会发送完成消息。')
           "
         />
         <el-alert
@@ -2816,7 +2827,7 @@ onMounted(() => {
             <el-form-item :label="fieldLabel('规范名称')">
               <div class="standard-project-name-preview-wrap">
                 <div class="standard-project-name-preview">
-                  {{ standardizedImportProjectName || "完成分类后自动生成" }}
+                  {{ standardizedImportProjectName || fieldLabel("完成分类后自动生成") }}
                 </div>
                 <small>{{
                   fieldLabel("命名规则：总部/区域_产品线_项目名称")
@@ -2883,9 +2894,11 @@ onMounted(() => {
           :closable="false"
           show-icon
           :title="
-            importedTargetMarkets.length
-              ? `确认后将创建新项目，并自动采用模板中的目标市场：${importedTargetMarkets.join('、')}。`
-              : '确认后将创建新项目；模板未填写市场，目标市场将保持为空。'
+              importedTargetMarkets.length
+              ? locale === 'en'
+                ? `A new project will be created and the template markets will be used: ${importedTargetMarkets.join(', ')}.`
+                : `确认后将创建新项目，并自动采用模板中的目标市场：${importedTargetMarkets.join('、')}。`
+              : fieldLabel('确认后将创建新项目；模板未填写市场，目标市场将保持为空。')
           "
         />
         <el-alert

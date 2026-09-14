@@ -42,6 +42,7 @@ type projectImportNotification struct {
 	UpdatedCooperations int
 	SkippedCooperations int
 	Failed              int
+	Locale              string
 }
 
 type projectImportSyncResult struct {
@@ -351,7 +352,32 @@ func (a *app) notifyProjectImportCompletion(notification projectImportNotificati
 func buildProjectImportFeishuMessage(cfg FeishuConfig, notification projectImportNotification, result projectImportSyncResult) string {
 	projectName := strings.TrimSpace(notification.ProjectName)
 	if projectName == "" {
-		projectName = fmt.Sprintf("项目 #%d", notification.ProjectID)
+		if notification.Locale == "en" {
+			projectName = fmt.Sprintf("Project #%d", notification.ProjectID)
+		} else {
+			projectName = fmt.Sprintf("项目 #%d", notification.ProjectID)
+		}
+	}
+	if notification.Locale == "en" {
+		status := map[string]string{"成功": "Succeeded", "失败": "Failed", "部分失败": "Partially Failed"}[result.Status]
+		if status == "" {
+			status = result.Status
+		}
+		lines := []string{
+			fmt.Sprintf("XMP project import background sync: %s", status),
+			fmt.Sprintf("Project: %s", projectName),
+			fmt.Sprintf("Import batch: %s", notification.BatchID),
+			fmt.Sprintf("Import details: valid %d (profiles %d, content %d)", notification.Imported, notification.ImportedProfiles, notification.ImportedContent),
+			fmt.Sprintf("Import results: %d creators/media added, %d existing matches, %d collaborations added, %d collaborations updated, %d skipped, %d failed", notification.CreatedResources, notification.MatchedResources, notification.CreatedCooperations, notification.UpdatedCooperations, notification.SkippedCooperations, notification.Failed),
+			fmt.Sprintf("Sync results: %d profiles, %d content items, %d screenshots, %d warnings", result.ProfileSynced, result.ContentSynced, result.Screenshots, result.WarningCount),
+		}
+		if message := strings.TrimSpace(result.Message); message != "" {
+			lines = append(lines, "Notes: "+message)
+		}
+		if frontendURL := strings.TrimRight(strings.TrimSpace(cfg.FrontendURL), "/"); frontendURL != "" && notification.ProjectID > 0 {
+			lines = append(lines, fmt.Sprintf("View project: %s/business/projects/detail?id=%d", frontendURL, notification.ProjectID))
+		}
+		return strings.Join(lines, "\n")
 	}
 	lines := []string{
 		fmt.Sprintf("XMP 项目导入后台同步%s", result.Status),
