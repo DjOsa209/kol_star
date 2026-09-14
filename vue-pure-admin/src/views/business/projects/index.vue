@@ -2454,11 +2454,12 @@ onMounted(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('操作')"
-            width="240"
+            width="300"
             fixed="right"
             align="center"
           >
             <template #default="{ row }">
+              <div class="project-action-cell">
               <el-button
                 link
                 type="primary"
@@ -2477,6 +2478,7 @@ onMounted(() => {
               <el-button link type="danger" @click.stop="removeProjects([row])"
                 >{{ fieldLabel("删除") }}</el-button
               >
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -6648,6 +6650,14 @@ onMounted(() => {
 .projects-table {
   width: 100%;
   border-top: 1px solid #e5e6e9;
+}
+.project-action-cell {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  white-space: nowrap;
 }
 .project-pagination-footer {
   display: flex;
