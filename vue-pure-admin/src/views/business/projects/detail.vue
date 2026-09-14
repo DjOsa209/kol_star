@@ -242,9 +242,14 @@ const creatorMarketOptions = computed(() =>
 );
 
 function creatorMarketOptionLabel(item: any) {
+  if (!item.code) {
+    return locale.value === "en"
+      ? item.englishName || item.name
+      : item.name;
+  }
   if (locale.value !== "en") return item.label;
   if (item.code) return `${item.englishName} (${item.code})`;
-  return `${item.englishName || item.name} (Historical Data)`;
+  return item.englishName || item.name;
 }
 const navItems = [
   { key: "collaboration", label: "协作执行", icon: "ri:team-line" },
