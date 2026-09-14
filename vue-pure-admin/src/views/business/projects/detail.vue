@@ -2027,9 +2027,9 @@ function platformTooltip(name: string) {
   );
   return [
     `<strong>${escapeHTML(row.platform)}</strong>`,
-    `内容：${row.contentCount} 条`,
-    `曝光 / 播放：${formatCount(row.exposure)}（${exposureShare}）`,
-    `互动：${formatCount(row.engagement)}（${engagementShare}）`
+    `${fieldLabel("内容")}：${row.contentCount} ${fieldLabel("条")}`,
+    `${fieldLabel("曝光 / 播放")}：${formatCount(row.exposure)}（${exposureShare}）`,
+    `${fieldLabel("互动")}：${formatCount(row.engagement)}（${engagementShare}）`
   ].join("<br/>");
 }
 
@@ -2071,13 +2071,13 @@ function renderPlatformDistributionChart() {
   platformDistributionChart.clear();
   if (!rows.length) {
     platformDistributionChart.setOption(
-      emptyPlatformChartOption("暂无可统计的发布内容")
+      emptyPlatformChartOption(fieldLabel("暂无可统计的发布内容"))
     );
     return;
   }
   platformDistributionChart.setOption({
     color: rows.map(item => item.color),
-    aria: { enabled: true, description: "各平台合作内容数量分布" },
+    aria: { enabled: true, description: fieldLabel("各平台合作内容数量分布") },
     tooltip: {
       trigger: "item",
       confine: true,
@@ -2089,7 +2089,7 @@ function renderPlatformDistributionChart() {
         left: "center",
         top: "42%",
         style: {
-          text: "内容总数",
+          text: fieldLabel("内容总数"),
           fill: "#7a808a",
           fontSize: 12,
           textAlign: "center"
@@ -2110,7 +2110,7 @@ function renderPlatformDistributionChart() {
     ],
     series: [
       {
-        name: "平台内容分布",
+        name: fieldLabel("平台内容分布"),
         type: "pie",
         radius: ["56%", "78%"],
         center: ["50%", "50%"],
@@ -2151,9 +2151,9 @@ function renderPlatformPerformanceChart() {
   platformPerformanceChart.clear();
   if (!rows.length) {
     platformPerformanceChart.setOption(
-      emptyPlatformChartOption(
-        metric === "exposure" ? "暂无平台曝光数据" : "暂无平台互动数据"
-      )
+        emptyPlatformChartOption(
+          fieldLabel(metric === "exposure" ? "暂无平台曝光数据" : "暂无平台互动数据")
+        )
     );
     return;
   }
@@ -2165,8 +2165,9 @@ function renderPlatformPerformanceChart() {
     color: rows.map(item => item.color),
     aria: {
       enabled: true,
-      description:
+      description: fieldLabel(
         metric === "exposure" ? "各平台曝光量占比" : "各平台互动量占比"
+      )
     },
     tooltip: {
       trigger: "item",
@@ -2179,7 +2180,7 @@ function renderPlatformPerformanceChart() {
         left: "center",
         top: "42%",
         style: {
-          text: metric === "exposure" ? "曝光量" : "总互动",
+          text: fieldLabel(metric === "exposure" ? "曝光量" : "总互动"),
           fill: "#7a808a",
           fontSize: 12,
           textAlign: "center"
@@ -2200,7 +2201,7 @@ function renderPlatformPerformanceChart() {
     ],
     series: [
       {
-        name: metric === "exposure" ? "平台曝光" : "平台互动",
+        name: fieldLabel(metric === "exposure" ? "平台曝光" : "平台互动"),
         type: "pie",
         radius: ["56%", "78%"],
         center: ["50%", "50%"],
@@ -2747,7 +2748,7 @@ onBeforeUnmount(() => {
                 }}
               </p>
             </div>
-            <span>{{ platformPerformance.length }} 个平台</span>
+            <span>{{ platformPerformance.length }} {{ fieldLabel("个平台") }}</span>
           </div>
           <div class="platform-chart-grid">
             <article class="platform-chart-card">
@@ -2762,9 +2763,9 @@ onBeforeUnmount(() => {
                   ref="platformDistributionChartRef"
                   class="platform-pie-chart"
                   role="img"
-                  aria-label="各平台合作内容数量分布饼图"
+                  :aria-label="fieldLabel('各平台合作内容数量分布饼图')"
                 />
-                <div class="platform-legend" aria-label="平台内容图例">
+                <div class="platform-legend" :aria-label="fieldLabel('平台内容图例')">
                   <div
                     v-for="item in platformPerformance"
                     :key="`content-${item.platform}`"
@@ -2776,7 +2777,7 @@ onBeforeUnmount(() => {
                     />
                     <PlatformIconBadge :platform="item.platform" />
                     <strong>{{ item.platform }}</strong>
-                    <span>{{ item.contentCount }} 条</span>
+                    <span>{{ item.contentCount }} {{ fieldLabel("条") }}</span>
                     <em>{{
                       ratioPercent(item.contentCount, platformTotals.content)
                     }}</em>
@@ -2796,20 +2797,20 @@ onBeforeUnmount(() => {
                   <h3>{{ fieldLabel("各平台效果占比") }}</h3>
                   <p>{{ fieldLabel("切换查看曝光量或互动量构成") }}</p>
                 </div>
-                <div class="platform-metric-switch" aria-label="平台效果指标">
+                <div class="platform-metric-switch" :aria-label="fieldLabel('平台效果指标')">
                   <button
                     type="button"
                     :class="{ active: platformMetric === 'exposure' }"
                     @click="platformMetric = 'exposure'"
                   >
-                    曝光量
+                    {{ fieldLabel("曝光量") }}
                   </button>
                   <button
                     type="button"
                     :class="{ active: platformMetric === 'engagement' }"
                     @click="platformMetric = 'engagement'"
                   >
-                    互动量
+                    {{ fieldLabel("互动量") }}
                   </button>
                 </div>
               </header>
@@ -2818,13 +2819,15 @@ onBeforeUnmount(() => {
                   ref="platformPerformanceChartRef"
                   class="platform-pie-chart"
                   role="img"
-                  :aria-label="
-                    platformMetric === 'exposure'
-                      ? '各平台曝光量占比饼图'
-                      : '各平台互动量占比饼图'
+                    :aria-label="
+                    fieldLabel(
+                      platformMetric === 'exposure'
+                        ? '各平台曝光量占比饼图'
+                        : '各平台互动量占比饼图'
+                    )
                   "
                 />
-                <div class="platform-legend" aria-label="平台效果图例">
+                <div class="platform-legend" :aria-label="fieldLabel('平台效果图例')">
                   <div
                     v-for="item in platformPerformance"
                     :key="`performance-${item.platform}`"
