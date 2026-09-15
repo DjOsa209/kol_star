@@ -355,12 +355,20 @@ func tikTokProfileURL(username string) string {
 }
 
 func tikTokVideoURL(username, postID string) string {
+	return tikTokPostURL(username, postID, "VIDEO")
+}
+
+func tikTokPostURL(username, postID, mediaType string) string {
 	username = sanitizeTikTokHandle(username)
 	postID = strings.TrimSpace(postID)
 	if username == "" || postID == "" {
 		return ""
 	}
-	return "https://www.tiktok.com/@" + username + "/video/" + postID
+	path := "video"
+	if mediaType == "IMAGE" {
+		path = "photo"
+	}
+	return "https://www.tiktok.com/@" + username + "/" + path + "/" + postID
 }
 
 func isNoRows(err error) bool {

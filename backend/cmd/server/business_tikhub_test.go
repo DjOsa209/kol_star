@@ -179,6 +179,28 @@ func TestNormalizeTikHubTikTokFlatMetrics(t *testing.T) {
 	}
 }
 
+func TestNormalizeTikHubTikTokPhotoPost(t *testing.T) {
+	data := map[string]any{
+		"data": map[string]any{
+			"aweme_list": []any{map[string]any{
+				"aweme_id": "7635673203905400086",
+				"desc":     "Photo post",
+				"author":   map[string]any{"unique_id": "bengeskin"},
+				"image_post_info": map[string]any{
+					"images": []any{map[string]any{"display_image": map[string]any{"url_list": []any{"https://example.com/photo.jpg"}}}},
+				},
+			}},
+		},
+	}
+	posts := normalizeTikHubTikTokPosts(data, "")
+	if len(posts) != 1 || posts[0].MediaType != "IMAGE" || posts[0].CoverURL != "https://example.com/photo.jpg" {
+		t.Fatalf("unexpected photo post: %#v", posts)
+	}
+	if posts[0].PostURL != "https://www.tiktok.com/@bengeskin/photo/7635673203905400086" {
+		t.Fatalf("unexpected photo URL: %q", posts[0].PostURL)
+	}
+}
+
 func TestPlatformPostEngagementRateIncludesSaves(t *testing.T) {
 	rate := platformPostEngagementRate([]platformPost{{
 		LikeCount:    10,

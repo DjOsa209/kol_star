@@ -12,9 +12,10 @@ import (
 )
 
 type cooperationPostLink struct {
-	Platform string
-	PostID   string
-	URL      string
+	Platform  string
+	PostID    string
+	URL       string
+	MediaType string
 }
 
 type cooperationPostSyncResult struct {
@@ -587,6 +588,8 @@ func (a *app) syncImportedResources(ctx context.Context, resourceIDs []int, rowN
 func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 	for _, field := range strings.Fields(value) {
 		candidate := strings.Trim(field, "，,;；")
+		// Links copied from some localized clients may contain full-width URL punctuation.
+		candidate = strings.NewReplacer("？", "?", "＆", "&").Replace(candidate)
 		if index := strings.Index(candidate, "http"); index >= 0 {
 			candidate = candidate[index:]
 		}
@@ -609,8 +612,12 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 			}
 		case strings.HasSuffix(host, "tiktok.com"):
 			for index, segment := range segments {
-				if segment == "video" && index+1 < len(segments) {
-					return cooperationPostLink{Platform: "TikTok", PostID: segments[index+1], URL: candidate}, nil
+				if (segment == "video" || segment == "photo") && index+1 < len(segments) {
+					mediaType := "VIDEO"
+					if segment == "photo" {
+						mediaType = "IMAGE"
+					}
+					return cooperationPostLink{Platform: "TikTok", PostID: segments[index+1], URL: candidate, MediaType: mediaType}, nil
 				}
 			}
 			if host == "vt.tiktok.com" || host == "vm.tiktok.com" || (len(segments) > 0 && strings.EqualFold(segments[0], "t")) {
@@ -1114,7 +1121,7 @@ func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, 
 	case "YouTube":
 		return a.fetchYouTubePostByID(ctx, resourceID, link.PostID)
 	case "TikTok":
-		if strings.TrimSpace(link.PostID) == "" {
+		if link.MediaType == "IMAGE" || strings.TrimSpace(link.PostID) == "" {
 			return a.fetchTikTokPostByShareURL(ctx, resourceID, link.URL)
 		}
 		return a.fetchTikTokPostByID(ctx, resourceID, link.PostID)

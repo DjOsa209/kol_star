@@ -1889,6 +1889,10 @@ func normalizeTikHubTikTokPosts(data map[string]any, username string) []platform
 		}
 		stats := firstMapAt(item, "stats", "statsV2", "statistics")
 		video := mapAt(item, "video")
+		imagePost := mapAt(item, "image_post_info")
+		if len(imagePost) == 0 {
+			imagePost = mapAt(item, "imagePostInfo")
+		}
 		author := mapAt(item, "author")
 		shareInfo := mapAt(item, "share_info")
 		postID := firstNonEmpty(anyString(item["id"]), anyString(item["aweme_id"]), anyString(item["awemeId"]))
@@ -1902,13 +1906,30 @@ func normalizeTikHubTikTokPosts(data map[string]any, username string) []platform
 			duration = duration / 1000
 		}
 		description := firstNonEmpty(anyString(item["desc"]), anyString(item["description"]), anyString(item["video_description"]))
+		mediaType := "VIDEO"
+		coverURL := firstNonEmpty(imageURL(video["cover"]), imageURL(video["dynamicCover"]), imageURL(video["dynamic_cover"]), imageURL(video["originCover"]), imageURL(video["origin_cover"]), imageURL(item["cover_image_url"]))
+		if len(imagePost) > 0 {
+			mediaType = "IMAGE"
+			coverURL = firstNonEmpty(
+				imageURL(imagePost["cover"]),
+				imageURL(imagePost["cover_image"]),
+				imageURL(imagePost["images"]),
+				imageURL(imagePost["image_list"]),
+				coverURL,
+			)
+			duration = 0
+		}
+		postURL := firstNonEmpty(anyString(item["shareUrl"]), anyString(item["share_url"]), anyString(shareInfo["share_url"]))
+		if postURL == "" {
+			postURL = tikTokPostURL(postUsername, postID, mediaType)
+		}
 		posts = append(posts, platformPost{
 			PlatformPostID: postID,
 			Title:          firstNonEmpty(anyString(item["title"]), truncateText(description, 120)),
 			Description:    description,
-			PostURL:        firstNonEmpty(anyString(item["shareUrl"]), anyString(item["share_url"]), anyString(shareInfo["share_url"]), tikTokVideoURL(postUsername, postID)),
-			CoverURL:       firstNonEmpty(imageURL(video["cover"]), imageURL(video["dynamicCover"]), imageURL(video["dynamic_cover"]), imageURL(video["originCover"]), imageURL(video["origin_cover"]), imageURL(item["cover_image_url"])),
-			MediaType:      "VIDEO",
+			PostURL:        postURL,
+			CoverURL:       coverURL,
+			MediaType:      mediaType,
 			PublishedAt:    publishedAt,
 			Duration:       duration,
 			ViewCount:      firstNonZeroInt64(stats["playCount"], stats["play_count"], stats["viewCount"], stats["view_count"], item["playCount"], item["play_count"], item["viewCount"], item["view_count"]),
@@ -2519,7 +2540,7 @@ func imageURL(value any) string {
 			}
 		}
 	case map[string]any:
-		for _, key := range []string{"url", "display_url", "thumbnail_src", "profile_pic_url", "url_list", "candidates", "image_versions2", "video_versions", "uri"} {
+		for _, key := range []string{"url", "display_url", "display_image", "image", "thumbnail_src", "profile_pic_url", "url_list", "candidates", "image_versions2", "video_versions", "uri"} {
 			if url := imageURL(v[key]); url != "" {
 				return url
 			}

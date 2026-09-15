@@ -24,6 +24,7 @@ func TestParseCooperationPostLink(t *testing.T) {
 		{name: "youtube short", value: "https://youtu.be/51dNGqLoM00?t=2", platform: "YouTube", postID: "51dNGqLoM00"},
 		{name: "youtube shorts", value: "https://youtube.com/shorts/51dNGqLoM00", platform: "YouTube", postID: "51dNGqLoM00"},
 		{name: "tiktok", value: "https://www.tiktok.com/@creator/video/7350810998023949599", platform: "TikTok", postID: "7350810998023949599"},
+		{name: "tiktok photo with full-width question mark", value: "https://www.tiktok.com/@creator/photo/7350810998023949599？_r=1＆image_index=2", platform: "TikTok", postID: "7350810998023949599"},
 		{name: "tiktok short link", value: "https://vt.tiktok.com/ZSxE6MpGg/", platform: "TikTok"},
 		{name: "instagram", value: "https://www.instagram.com/reel/DPwhVB-jo9k/", platform: "Instagram", postID: "DPwhVB-jo9k"},
 		{name: "xiaohongshu", value: "https://www.xiaohongshu.com/explore/68a123456789abcdef012345", platform: "小红书", postID: "68a123456789abcdef012345"},
