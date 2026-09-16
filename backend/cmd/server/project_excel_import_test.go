@@ -56,6 +56,97 @@ func TestParseExcelContentSheetAcceptsLockedTwoRowStandardHeader(t *testing.T) {
 	}
 }
 
+func TestParseExcelContentSheetInheritsOptionalCooperationFieldsForRepeatedCreator(t *testing.T) {
+	book := excelize.NewFile()
+	sheet := book.GetSheetName(0)
+	writeStandardImportHeaders(t, book, sheet)
+	first := []any{
+		"", "Creator One", "https://youtube.com/@creatorone", "KOL", "科技", "美国", "", "", "YouTube",
+		"付费合作", "https://youtube.com/watch?v=one", "兴趣圈层类", "100", "", "",
+		"creator@example.com", "Mia", "Vendor A", "首条内容", "",
+	}
+	second := []any{
+		"", "", "", "", "", "", "", "", "",
+		"付费合作", "https://youtube.com/watch?v=two", "兴趣圈层类", "200", "", "",
+		"", "", "", "", "",
+	}
+	for rowOffset, values := range [][]any{first, second} {
+		for column, value := range values {
+			cell, _ := excelize.CoordinatesToCellName(column+1, rowOffset+5)
+			_ = book.SetCellValue(sheet, cell, value)
+		}
+	}
+
+	rows, err := parseExcelContentSheet(book, sheet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("parsed rows = %d, want 2: %#v", len(rows), rows)
+	}
+	if rows[1]["owner"] != "Mia" || rows[1]["vendor"] != "Vendor A" || rows[1]["primaryContact"] != "creator@example.com" {
+		t.Fatalf("repeated creator must inherit optional fields: %#v", rows[1])
+	}
+}
+
+func TestParseExcelContentSheetClassifiesMissingRequiredAndOptionalFields(t *testing.T) {
+	book := excelize.NewFile()
+	sheet := book.GetSheetName(0)
+	writeStandardImportHeaders(t, book, sheet)
+	values := []any{
+		"", "Creator One", "https://youtube.com/@creatorone", "", "", "", "", "", "",
+		"", "", "", "", "", "",
+		"", "", "", "", "",
+	}
+	for column, value := range values {
+		cell, _ := excelize.CoordinatesToCellName(column+1, 5)
+		_ = book.SetCellValue(sheet, cell, value)
+	}
+
+	rows, err := parseExcelContentSheet(book, sheet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("parsed rows = %d, want 1: %#v", len(rows), rows)
+	}
+	errors, _ := rows[0]["errors"].([]string)
+	warnings, _ := rows[0]["warnings"].([]string)
+	for _, expected := range []string{"类型为必填项", "领域为必填项", "市场为必填项", "平台为必填项", "合作类型为必填项", "内容链接为必填项", "内容类型为必填项", "合作费用为必填项"} {
+		if !containsString(errors, expected) {
+			t.Fatalf("missing required error %q in %#v", expected, errors)
+		}
+	}
+	for _, expected := range []string{"联系方式未填写", "对接人未填写", "供应商未填写", "备注未填写"} {
+		if !containsString(warnings, expected) {
+			t.Fatalf("missing optional warning %q in %#v", expected, warnings)
+		}
+	}
+	for _, systemOwned := range []string{"粉丝数", "合作方层级", "曝光量", "互动量", "CPM"} {
+		if containsSubstring(errors, systemOwned) || containsSubstring(warnings, systemOwned) {
+			t.Fatalf("system-owned field %q must not require user input: errors=%#v warnings=%#v", systemOwned, errors, warnings)
+		}
+	}
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSubstring(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.Contains(value, expected) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestParseExcelContentSheetRejectsOneRowLegacyTemplate(t *testing.T) {
 	book := excelize.NewFile()
 	sheet := book.GetSheetName(0)
@@ -268,7 +359,9 @@ func TestBuildEnglishStandardProjectImportTemplateMatchesReferenceAndReimports(t
 		"F5": "United States",
 		"I5": "Website",
 		"J5": "Paid Collaboration",
+		"K5": "https://example.com/article/launch",
 		"L5": "Branded Content",
+		"M5": "1000",
 	} {
 		if err := book.SetCellValue(sheet, cell, value); err != nil {
 			t.Fatal(err)
@@ -456,9 +549,15 @@ func TestDynamicStandardOptionsDriveTemplateAndParser(t *testing.T) {
 		t.Fatal("dynamic category must be included in the template drop-down")
 	}
 	_ = book.SetCellValue("标准模板", "C5", "https://youtube.com/@creator")
+	_ = book.SetCellValue("标准模板", "B5", "Creator")
 	_ = book.SetCellValue("标准模板", "D5", "KOL")
 	_ = book.SetCellValue("标准模板", "E5", "新能源")
+	_ = book.SetCellValue("标准模板", "F5", "美国")
 	_ = book.SetCellValue("标准模板", "I5", "YouTube")
+	_ = book.SetCellValue("标准模板", "J5", "付费合作")
+	_ = book.SetCellValue("标准模板", "K5", "https://youtube.com/watch?v=launch")
+	_ = book.SetCellValue("标准模板", "L5", "商业/品牌类")
+	_ = book.SetCellValue("标准模板", "M5", "1000")
 	rows, err := parseExcelContentSheetWithOptions(book, "标准模板", options)
 	if err != nil {
 		t.Fatal(err)

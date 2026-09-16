@@ -737,7 +737,7 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 		if len(contentLinks) > 0 {
 			row["deliverableLinks"] = contentLinks[0]
 		}
-		if excelCellString(row["influencer"]) == "" && excelCellString(row["deliverableLinks"]) == "" && excelCellString(row["platform"]) == "" && excelCellString(row["category"]) == "" {
+		if excelCellString(row["resourceName"]) == "" && excelCellString(row["influencer"]) == "" && excelCellString(row["deliverableLinks"]) == "" && excelCellString(row["resourceType"]) == "" && excelCellString(row["category"]) == "" && excelCellString(row["country"]) == "" && excelCellString(row["platform"]) == "" && excelCellString(row["cooperationType"]) == "" && excelCellString(row["contentType"]) == "" && excelCellString(row["primaryContact"]) == "" && excelCellString(row["owner"]) == "" && excelCellString(row["vendor"]) == "" && excelCellString(row["notes"]) == "" {
 			continue // 汇总行
 		}
 		inheritedInfluencer := excelCellString(row["influencer"]) == ""
@@ -755,6 +755,15 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 			if excelCellString(row["primaryContact"]) == "" {
 				row["primaryContact"] = previous["primaryContact"]
 			}
+			if excelCellString(row["owner"]) == "" {
+				row["owner"] = previous["owner"]
+			}
+			if excelCellString(row["vendor"]) == "" {
+				row["vendor"] = previous["vendor"]
+			}
+			if excelCellString(row["notes"]) == "" {
+				row["notes"] = previous["notes"]
+			}
 		}
 		if excelCellString(row["category"]) == "" {
 			row["category"] = previous["category"]
@@ -770,8 +779,13 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 				row["country"] = previous["country"]
 			}
 		}
-		if excelCellString(row["influencer"]) == "" {
-			continue
+		requiredFields := []string{
+			"resourceName", "influencer", "resourceType", "category", "country",
+			"platform", "cooperationType", "deliverableLinks", "contentType",
+		}
+		missingRequiredFields := make(map[string]bool, len(requiredFields))
+		for _, field := range requiredFields {
+			missingRequiredFields[field] = excelCellString(row[field]) == ""
 		}
 		errors := make([]string, 0)
 		profileURL, profileErr := normalizeImportedProfileLink(excelCellString(row["influencer"]))
@@ -791,7 +805,22 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 				errors = append(errors, fmt.Sprintf("%s 必须使用平台预设选项", headerForImportField(field)))
 			}
 		}
+		for _, field := range requiredFields {
+			if missingRequiredFields[field] {
+				errors = append(errors, fmt.Sprintf("%s为必填项", importFieldLabel(field)))
+			}
+		}
+		if _, exists := row["quoteAmount"]; !exists {
+			errors = append(errors, "合作费用为必填项")
+		}
+		warnings := make([]string, 0)
+		for _, field := range []string{"primaryContact", "owner", "vendor", "notes"} {
+			if excelCellString(row[field]) == "" {
+				warnings = append(warnings, fmt.Sprintf("%s未填写", importFieldLabel(field)))
+			}
+		}
 		row["errors"] = errors
+		row["warnings"] = warnings
 		row["country"] = normalizeImportedMarket(excelCellString(row["country"]))
 		row["rowNo"] = rowIndex + 1
 		row["sourceSheet"] = sheet
@@ -877,6 +906,29 @@ func headerForImportField(field string) string {
 		}
 	}
 	return field
+}
+
+func importFieldLabel(field string) string {
+	labels := map[string]string{
+		"resourceName":     "名称",
+		"influencer":       "合作方主页",
+		"resourceType":     "类型",
+		"category":         "领域",
+		"country":          "市场",
+		"platform":         "平台",
+		"cooperationType":  "合作类型",
+		"deliverableLinks": "内容链接",
+		"contentType":      "内容类型",
+		"quoteAmount":      "合作费用",
+		"primaryContact":   "联系方式",
+		"owner":            "对接人",
+		"vendor":           "供应商",
+		"notes":            "备注",
+	}
+	if label := labels[field]; label != "" {
+		return label
+	}
+	return headerForImportField(field)
 }
 
 func standardImportRowMatches(values, expected []string) bool {
@@ -974,6 +1026,7 @@ func httpExcelURLs(value string) []string {
 			if next >= 0 {
 				candidate = candidate[:next+4]
 			}
+			candidate = cleanCopiedURLCandidate(candidate)
 			if isHTTPExcelURL(candidate) {
 				links = append(links, candidate)
 			}

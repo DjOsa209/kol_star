@@ -132,7 +132,7 @@ func TestBuildProjectImportFeishuMessage(t *testing.T) {
 		},
 	)
 	for _, expected := range []string{
-		"XMP 项目导入后台同步部分失败",
+		"XMP 项目导入后台同步结果",
 		"项目：新品发布",
 		"导入批次：IMP123",
 		"新增达人/媒体 3",

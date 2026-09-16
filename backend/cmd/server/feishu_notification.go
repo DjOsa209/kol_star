@@ -380,7 +380,7 @@ func buildProjectImportFeishuMessage(cfg FeishuConfig, notification projectImpor
 		return strings.Join(lines, "\n")
 	}
 	lines := []string{
-		fmt.Sprintf("XMP 项目导入后台同步%s", result.Status),
+		"XMP 项目导入后台同步结果",
 		fmt.Sprintf("项目：%s", projectName),
 		fmt.Sprintf("导入批次：%s", notification.BatchID),
 		fmt.Sprintf("导入明细：有效 %d（资料 %d，内容 %d）", notification.Imported, notification.ImportedProfiles, notification.ImportedContent),

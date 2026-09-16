@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -26,6 +27,7 @@ func TestParseCooperationPostLink(t *testing.T) {
 		{name: "tiktok", value: "https://www.tiktok.com/@creator/video/7350810998023949599", platform: "TikTok", postID: "7350810998023949599"},
 		{name: "tiktok photo with full-width question mark", value: "https://www.tiktok.com/@creator/photo/7350810998023949599？_r=1＆image_index=2", platform: "TikTok", postID: "7350810998023949599"},
 		{name: "tiktok short link", value: "https://vt.tiktok.com/ZSxE6MpGg/", platform: "TikTok"},
+		{name: "tiktok vm short link", value: "https://vm.tiktok.com/ZNRHrsUas/", platform: "TikTok"},
 		{name: "instagram", value: "https://www.instagram.com/reel/DPwhVB-jo9k/", platform: "Instagram", postID: "DPwhVB-jo9k"},
 		{name: "xiaohongshu", value: "https://www.xiaohongshu.com/explore/68a123456789abcdef012345", platform: "小红书", postID: "68a123456789abcdef012345"},
 		{name: "xiaohongshu short link", value: "https://xhslink.com/m/3ZSCJZAMz0a", platform: "小红书"},
@@ -53,6 +55,54 @@ func TestParseCooperationPostLinkUsesWebsiteFallback(t *testing.T) {
 	}
 	if link.Platform != "Website" || link.URL == "" {
 		t.Fatalf("unexpected Website link: %#v", link)
+	}
+}
+
+func TestParseCooperationPostLinkCleansMarkdownWrappedTikTokURL(t *testing.T) {
+	const shortURL = "https://vm.tiktok.com/ZNRHrsUas/"
+	link, err := parseCooperationPostLink("tiktok [" + shortURL + "](" + shortURL + ")")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.Platform != "TikTok" || link.URL != shortURL {
+		t.Fatalf("parsed markdown link = %#v", link)
+	}
+}
+
+func TestResolveTikTokShareURLFindsCanonicalPost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/short":
+			http.Redirect(w, r, "/@creator/video/7350810998023949599?_r=1", http.StatusFound)
+		case "/@creator/video/7350810998023949599":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	link, err := resolveTikTokShareURL(context.Background(), server.Client(), server.URL+"/short")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.PostID != "7350810998023949599" {
+		t.Fatalf("resolved link = %#v", link)
+	}
+}
+
+func TestResolveTikTokShareURLRejectsHomepageRedirect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/short" {
+			http.Redirect(w, r, "/?_r=1", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if _, err := resolveTikTokShareURL(context.Background(), server.Client(), server.URL+"/short"); err == nil || !strings.Contains(err.Error(), "短链已失效") {
+		t.Fatalf("expected an expired short-link error, got %v", err)
 	}
 }
 

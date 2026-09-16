@@ -593,6 +593,7 @@ func parseCooperationPostLink(value string) (cooperationPostLink, error) {
 		if index := strings.Index(candidate, "http"); index >= 0 {
 			candidate = candidate[index:]
 		}
+		candidate = cleanCopiedURLCandidate(candidate)
 		parsed, err := url.Parse(candidate)
 		if err != nil || parsed.Host == "" {
 			continue
@@ -1116,6 +1117,14 @@ func tikTokHandleFromContentURL(value string) string {
 	return strings.TrimPrefix(segments[0], "@")
 }
 
+func cleanCopiedURLCandidate(value string) string {
+	value = strings.TrimSpace(value)
+	if index := strings.Index(value, "]("); index >= 0 {
+		value = value[:index]
+	}
+	return strings.Trim(value, "<>[]()\"'，,;；。！!？?")
+}
+
 func (a *app) fetchCooperationPlatformPost(ctx context.Context, resourceID int, link cooperationPostLink) (platformPost, error) {
 	switch link.Platform {
 	case "YouTube":
@@ -1145,15 +1154,16 @@ func (a *app) fetchTikTokPostByShareURL(ctx context.Context, resourceID int, pos
 	if apiKey == "" {
 		return platformPost{}, fmt.Errorf("未配置 TikHub API Key")
 	}
-	data, err := tikhubGETWithTransientRetry(ctx, &http.Client{Timeout: 45 * time.Second}, apiKey,
+	client := &http.Client{Timeout: 45 * time.Second}
+	data, err := tikhubGETWithTransientRetry(ctx, client, apiKey,
 		"/tiktok/app/v3/fetch_one_video_by_share_url", url.Values{"share_url": []string{postURL}})
 	if err != nil {
-		return platformPost{}, err
+		return a.fetchTikTokPostByResolvedShareURL(ctx, client, resourceID, postURL, err)
 	}
 	item := findSinglePlatformItem(data)
 	posts := normalizeTikHubTikTokPosts(map[string]any{"items": []any{item}}, "")
 	if len(posts) == 0 {
-		return platformPost{}, fmt.Errorf("TikHub 未返回 TikTok 作品数据")
+		return a.fetchTikTokPostByResolvedShareURL(ctx, client, resourceID, postURL, fmt.Errorf("TikHub 未返回 TikTok 作品数据"))
 	}
 	post := posts[0]
 	if post.PostURL == "" {
@@ -1163,6 +1173,67 @@ func (a *app) fetchTikTokPostByShareURL(ctx context.Context, resourceID int, pos
 		return platformPost{}, err
 	}
 	return post, nil
+}
+
+func (a *app) fetchTikTokPostByResolvedShareURL(ctx context.Context, client *http.Client, resourceID int, postURL string, shareErr error) (platformPost, error) {
+	resolved, err := resolveTikTokShareURL(ctx, client, postURL)
+	if err != nil {
+		return platformPost{}, fmt.Errorf("%w；%v", shareErr, err)
+	}
+	return a.fetchTikTokPostByID(ctx, resourceID, resolved.PostID)
+}
+
+func resolveTikTokShareURL(ctx context.Context, client *http.Client, shareURL string) (cooperationPostLink, error) {
+	initial, err := url.Parse(strings.TrimSpace(shareURL))
+	if err != nil || initial.Scheme == "" || initial.Hostname() == "" {
+		return cooperationPostLink{}, fmt.Errorf("TikTok 分享链接格式无效")
+	}
+	initialHost := strings.ToLower(initial.Hostname())
+	redirectClient := *client
+	redirectClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 6 {
+			return fmt.Errorf("TikTok 短链跳转次数过多")
+		}
+		host := strings.ToLower(request.URL.Hostname())
+		if host != initialHost && !strings.HasSuffix(host, ".tiktok.com") && host != "tiktok.com" {
+			return fmt.Errorf("TikTok 短链跳转到了非 TikTok 域名")
+		}
+		return nil
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, initial.String(), nil)
+	if err != nil {
+		return cooperationPostLink{}, fmt.Errorf("TikTok 分享链接格式无效")
+	}
+	request.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148")
+	response, err := redirectClient.Do(request)
+	if err != nil {
+		return cooperationPostLink{}, fmt.Errorf("TikTok 短链解析失败：%v", err)
+	}
+	response.Body.Close()
+	resolved := tikTokPostLinkFromURL(response.Request.URL.String())
+	if resolved.PostID == "" {
+		return cooperationPostLink{}, fmt.Errorf("TikTok 短链已失效或未指向具体作品，请重新复制分享链接或填写完整作品链接")
+	}
+	return resolved, nil
+}
+
+func tikTokPostLinkFromURL(value string) cooperationPostLink {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return cooperationPostLink{}
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for index, segment := range segments {
+		if index+1 >= len(segments) || (segment != "video" && segment != "photo") {
+			continue
+		}
+		mediaType := "VIDEO"
+		if segment == "photo" {
+			mediaType = "IMAGE"
+		}
+		return cooperationPostLink{Platform: "TikTok", PostID: segments[index+1], URL: parsed.String(), MediaType: mediaType}
+	}
+	return cooperationPostLink{}
 }
 
 func (a *app) fetchTikTokPostByID(ctx context.Context, resourceID int, postID string) (platformPost, error) {

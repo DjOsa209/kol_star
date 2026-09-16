@@ -58,6 +58,7 @@ const importDialog = ref(false);
 const importLoading = ref(false);
 const importParsing = ref(false);
 const importParseError = ref("");
+const importOptionalWarningsConfirmed = ref(false);
 const contentUploadKey = ref(0);
 const editingProjectId = ref<number | null>(null);
 const editingCooperationId = ref<number | null>(null);
@@ -2009,10 +2010,86 @@ function normalizeImportPreviewSheet(sheet: any) {
           .map(row => ({
             ...row,
             errors: Array.isArray(row.errors) ? row.errors : [],
+            warnings: Array.isArray(row.warnings) ? row.warnings : [],
             duplicate: Boolean(row.duplicate)
           }))
       : []
   };
+}
+
+function importValidationSummary(rows: any[], key: "errors" | "warnings") {
+  const shown = rows.slice(0, 8).map(row => {
+    const messages = Array.isArray(row[key]) ? row[key] : [];
+    return `${row.sourceSheet || "Sheet"} 第 ${row.rowNo || "-"} 行：${messages.join("、")}`;
+  });
+  if (rows.length > shown.length) {
+    shown.push(`另有 ${rows.length - shown.length} 行未展示`);
+  }
+  return shown.join("\n");
+}
+
+async function raiseImportValidationMessageBox() {
+  await nextTick();
+  const overlays = Array.from(
+    document.querySelectorAll<HTMLElement>(".el-overlay")
+  );
+  const overlay = overlays.find(item =>
+    item.querySelector(".project-import-validation-message-box")
+  );
+  if (overlay) overlay.style.zIndex = "10010";
+  const box = overlay?.querySelector<HTMLElement>(
+    ".project-import-validation-message-box"
+  );
+  if (box) box.style.zIndex = "10012";
+}
+
+async function confirmImportValidation() {
+  const requiredRows = invalidImportRows.value;
+  if (requiredRows.length > 0) {
+    try {
+      const alertPromise = ElMessageBox.alert(
+        `以下数据存在必填项或格式错误，请修改 Excel 后重新上传：\n${importValidationSummary(requiredRows, "errors")}`,
+        "导入已拦截",
+        {
+          type: "warning",
+          confirmButtonText: "返回修改",
+          appendTo: document.body,
+          customClass: "project-import-validation-message-box"
+        }
+      );
+      await raiseImportValidationMessageBox();
+      await alertPromise;
+    } catch {
+      // Alert dismissal still keeps this import blocked.
+    }
+    return false;
+  }
+
+  const optionalRows = importRows.value.filter(
+    row => Array.isArray(row.warnings) && row.warnings.length > 0
+  );
+  if (optionalRows.length === 0 || importOptionalWarningsConfirmed.value) {
+    return true;
+  }
+  try {
+    const confirmPromise = ElMessageBox.confirm(
+      `以下选填项尚未填写，仍可继续导入：\n${importValidationSummary(optionalRows, "warnings")}`,
+      "选填项提醒",
+      {
+        type: "warning",
+        confirmButtonText: "确认继续",
+        cancelButtonText: "暂不导入",
+        appendTo: document.body,
+        customClass: "project-import-validation-message-box"
+      }
+    );
+    await raiseImportValidationMessageBox();
+    await confirmPromise;
+    importOptionalWarningsConfirmed.value = true;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureImportProject() {
@@ -2124,6 +2201,7 @@ async function handleUploadFile(file: any) {
   await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
   importParsing.value = true;
   importParseError.value = "";
+  importOptionalWarningsConfirmed.value = false;
   importRows.value = [];
   try {
     projectImportDialog.value = false;
@@ -2149,6 +2227,8 @@ async function handleUploadFile(file: any) {
       : [];
     refreshImportRows();
     await refreshImportProjectOptions(false);
+    await nextTick();
+    await confirmImportValidation();
   } catch {
     importParseError.value = "Excel 解析失败，请确认文件未损坏后重试。";
     ElMessage.error(importParseError.value);
@@ -2163,6 +2243,7 @@ async function submitImport() {
     ElMessage.warning("项目正在创建，请稍候");
     return;
   }
+  if (!(await confirmImportValidation())) return;
   if (!(await ensureImportProject())) return;
   if (rowsForImport.value.length === 0) {
     ElMessage.warning("没有可导入的有效行");
@@ -3010,14 +3091,33 @@ onMounted(() => {
             width="110"
           />
           <el-table-column
+            prop="owner"
+            :label="fieldLabel('对接人')"
+            width="130"
+            show-overflow-tooltip
+          />
+          <el-table-column
             :label="fieldLabel('状态')"
             min-width="180"
             fixed="right"
           >
             <template #default="{ row }">
-              <el-tag v-if="row.errors.length === 0" type="success"
-                >{{ fieldLabel("可导入") }}</el-tag
+              <el-tag
+                v-if="
+                  row.errors.length === 0 && (row.warnings || []).length === 0
+                "
+                type="success"
               >
+                {{ fieldLabel("可导入") }}
+              </el-tag>
+              <el-tag
+                v-if="
+                  row.errors.length === 0 && (row.warnings || []).length > 0
+                "
+                type="warning"
+              >
+                {{ (row.warnings || []).join("；") }}
+              </el-tag>
               <el-tag v-if="row.duplicate" class="ml-2" type="warning"
                 >{{ fieldLabel("疑似重复") }}</el-tag
               >
@@ -3047,6 +3147,7 @@ onMounted(() => {
             :disabled="
               importParsing ||
               Boolean(importParseError) ||
+              invalidImportRows.length > 0 ||
               rowsForImport.length === 0 ||
               importProjectCreating ||
               (importTargetMode !== 'new' && !importProjectId) ||
@@ -6390,11 +6491,29 @@ onMounted(() => {
 }
 
 :global(.import-project-select-popper) {
-  z-index: 6001 !important;
+  z-index: 10005 !important;
 }
 
 :global(.import-project-date-popper) {
-  z-index: 6001 !important;
+  z-index: 10005 !important;
+}
+
+:global(.el-overlay.is-message-box) {
+  z-index: 10010 !important;
+}
+
+:global(.el-overlay.is-message-box .el-message-box) {
+  z-index: 10011 !important;
+}
+
+:global(.el-message),
+:global(.el-notification) {
+  z-index: 10020 !important;
+}
+
+:global(.project-import-validation-message-box) {
+  z-index: 10012 !important;
+  white-space: pre-line;
 }
 
 .import-preview-more {
