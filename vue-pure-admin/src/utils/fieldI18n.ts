@@ -807,6 +807,8 @@ const englishFieldLabels: Record<string, string> = {
     "Naming rule: HQ/Region_Product Line_Project Name",
   "示例：总部_公关_NOTE 60 Series_世界杯营销":
     "Example: HQ_PR_NOTE 60 Series_World Cup Campaign",
+  "项目名称允许重复，系统以最终规范名称识别项目":
+    "Project names may repeat; projects are identified by the final standardized name.",
   项目运营工作台: "Project Operations Workspace",
   总体合作资源: "Total Collaboration Resources",
   "总体曝光 / 播放": "Total Impressions / Views",

@@ -2116,9 +2116,11 @@ async function ensureImportProject() {
     ElMessage.warning("请选择总部/区域、产品线并填写项目名称");
     return false;
   }
-  const existing = projects.value.find(project => project.name === name);
-  if (existing) {
-    ElMessage.warning("已存在同名项目，请切换到“已有项目增量导入”");
+  const existingStandardName = projects.value.find(
+    project => String(project.name || "").trim() === name
+  );
+  if (existingStandardName) {
+    ElMessage.warning("已存在相同规范名称，请切换到“已有项目增量导入”");
     return false;
   }
   importProjectCreating.value = true;
@@ -2948,6 +2950,9 @@ onMounted(() => {
                 }}</small>
                 <small>{{
                   fieldLabel("示例：总部_公关_NOTE 60 Series_世界杯营销")
+                }}</small>
+                <small>{{
+                  fieldLabel("项目名称允许重复，系统以最终规范名称识别项目")
                 }}</small>
               </div>
             </el-form-item>
