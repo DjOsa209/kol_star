@@ -2426,7 +2426,7 @@ onMounted(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('合作达人 / 媒体')"
-            width="150"
+            width="180"
             align="center"
             sortable
           >
@@ -3989,7 +3989,7 @@ onMounted(() => {
                 />
                 <el-table-column
                   :label="fieldLabel('合作达人 / 媒体')"
-                  width="140"
+                  width="180"
                 >
                   <template #default="{ row }">
                     {{ row.review.resourceCount }}

@@ -583,6 +583,11 @@ body {
   justify-content: center;
   width: 100%;
   line-height: 22px;
+  white-space: nowrap;
+}
+
+.el-table th.el-table__cell .caret-wrapper {
+  flex: 0 0 auto;
 }
 
 .el-empty__description p,
