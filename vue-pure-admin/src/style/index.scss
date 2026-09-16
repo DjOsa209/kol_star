@@ -569,10 +569,20 @@ body {
 }
 
 .el-table th.el-table__cell {
-  font-family: "JetBrains Mono", "PingFang SC", monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.03em;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0;
+}
+
+.el-table th.el-table__cell > .cell {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  line-height: 22px;
 }
 
 .el-empty__description p,
