@@ -1,10 +1,10 @@
 # Design QA
 
-- Source visual truth: the earlier overview/import references plus `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-b677ab31-c88c-4717-b2e0-197b1b857e34.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-37db8791-c2a2-49bf-90d5-01fb6aaaf4b9.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-cd4bcd29-fd8d-4de1-96d3-9c8da3b44dbd.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-78932f01-a583-417f-9610-eae9fed7b0fa.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-883c0105-dd1e-4b45-b2c0-5fccb13aa981.png`, and `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-df841b3a-f5f0-439f-851d-f402c49d8408.png`
+- Source visual truth: the earlier overview/import references plus `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-b677ab31-c88c-4717-b2e0-197b1b857e34.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-37db8791-c2a2-49bf-90d5-01fb6aaaf4b9.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-cd4bcd29-fd8d-4de1-96d3-9c8da3b44dbd.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-78932f01-a583-417f-9610-eae9fed7b0fa.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-883c0105-dd1e-4b45-b2c0-5fccb13aa981.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-df841b3a-f5f0-439f-851d-f402c49d8408.png`, and `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-6689be11-8b70-4db2-8627-140852882e93.png`
 - Implementation: `http://localhost:8848/#/business/projects/detail?id=24` and `http://localhost:8848/#/business/projects`
-- Implementation screenshot: Codex in-app Browser tab 3 capture (inline browser evidence; the browser backend did not expose a filesystem path)
-- Viewport: 1280 × 720 CSS px for the latest project-table header check; 795 × 782 for the top-navigation contrast and sidebar-brand checks; 795 × 750 for the Tier-column check; 1518 × 1000 for the earlier KOL / Media comparison.
-- Latest source pixels: 1114 × 322; latest implementation capture: 1280 × 720 CSS px at device scale factor 1, with the table horizontally positioned to show Content, Impressions / Views, Engagement Rate, and Contact together.
+- Implementation screenshot: Codex in-app Browser tab 3 capture with the metric-description tooltip open (inline browser evidence; the browser backend did not expose a filesystem path)
+- Viewport: 842 × 750 CSS px for the latest metric-tooltip interaction check; 1280 × 720 for the project-table header check; 795 × 782 for the top-navigation contrast and sidebar-brand checks; 795 × 750 for the Tier-column check; 1518 × 1000 for the earlier KOL / Media comparison.
+- Latest source pixels: 918 × 320; latest implementation capture: 842 × 750 CSS px at device scale factor 1, with the Exposure & Engagement cards and the hovered description visible.
 - State: English locale, light theme, authenticated local admin session, existing project id 24.
 
 ## Findings
@@ -22,6 +22,7 @@
 - In English mode, the configured product name now renders as `Infinix Global Resource Operations` in the sidebar logo, document title, and footer. Chinese mode continues to use the configured Chinese brand name.
 - The first-level breadcrumb is now `#e4e4e7` at weight 500 against the `#111116` header. Before the fix it computed to `rgb(22,22,26)`, nearly matching the background; the second/current level retains its muted styling for hierarchy.
 - The project-list `Impressions / Views` and `Engagement Rate` columns now measure 210px and 180px respectively, up from 150px and 120px. Their English labels and sort affordances render independently without colliding with adjacent headings.
+- Every secondary description in the Exposure & Engagement metric cards now uses an Element Plus tooltip. Hovering an ellipsized description immediately exposes the complete localized copy instead of relying on a delayed native browser title.
 
 ## Required fidelity surfaces
 
@@ -41,6 +42,7 @@
 - The sidebar-brand comparison used the supplied expanded-sidebar crop and the refreshed English project-list view. The logo asset, typography, spacing, and ellipsis behavior are unchanged; only the localized title changed from mixed Chinese/English to English.
 - The latest focused comparison checked the supplied dark-header crop against the updated project-list header. The first-level `Resource Operations` breadcrumb is now immediately legible while the separator and current page remain visually secondary; spacing, icons, and header height are unchanged.
 - The newest focused comparison paired the supplied project-table crop with the horizontally positioned 1280 × 720 browser render. `Impressions / Views` and `Engagement Rate` are fully separated, and Content, Contact, values, and the fixed `Discover More` column retain their alignment. A focused region was required because the source is a cropped, horizontally scrolled table state.
+- The latest focused comparison paired the supplied metric-card crop with the browser-rendered Exposure & Engagement section. The card layout, typography, color, and truncation remain unchanged; the hovered description now displays a dark tooltip containing the complete text. A focused interaction capture was required because tooltip behavior cannot be judged from a static full-page view.
 - The import preview's populated state was not opened because doing so requires selecting a local spreadsheet; its widths and Element Plus overflow-tooltip behavior were validated from the rendered column configuration and type/build checks.
 
 ## Interaction and console checks
@@ -70,6 +72,9 @@
 - Latest issue: fixed widths of 150px and 120px caused the English `Impressions / Views` and `Engagement Rate` headings to crowd each other and their sort icon.
 - Latest fix: widened the two project-list columns to 210px and 180px while preserving the table's horizontal scrolling and fixed action column.
 - Latest post-fix evidence: browser-measured header widths of 210px and 180px, focused 1280 × 720 capture with clear inter-column spacing, zero console errors, and passing typecheck/build.
+- Latest issue: ellipsized metric descriptions used native `title` attributes, which did not provide a reliable visible hover response.
+- Latest fix: replaced the six native titles with consistent `el-tooltip` triggers while preserving the existing ellipsis and card dimensions.
+- Latest post-fix evidence: CDP mouse hover over the first and second metric descriptions rendered the full tooltip copy (`所有合作内容累计数据` and `点赞 + 评论 + 分享 + 收藏`), with zero console errors and passing typecheck/build.
 
 ## Follow-up polish
 

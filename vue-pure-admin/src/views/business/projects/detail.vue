@@ -2726,44 +2726,64 @@ onBeforeUnmount(() => {
             <article class="overview-metric-card primary-metric-card">
               <span>{{ fieldLabel("曝光量") }}</span>
               <strong>{{ formatCount(campaignOverview.views) }}</strong>
-              <small :title="fieldLabel('所有合作内容累计数据')">{{
-                fieldLabel("所有合作内容累计数据")
-              }}</small>
+              <el-tooltip
+                :content="fieldLabel('所有合作内容累计数据')"
+                placement="top"
+              >
+                <small>{{ fieldLabel("所有合作内容累计数据") }}</small>
+              </el-tooltip>
             </article>
             <article class="overview-metric-card">
               <span>{{ fieldLabel("总互动量") }}</span>
               <strong>{{ formatCount(campaignOverview.engagements) }}</strong>
-              <small :title="fieldLabel('点赞 + 评论 + 分享 + 收藏')">{{
-                fieldLabel("点赞 + 评论 + 分享 + 收藏")
-              }}</small>
+              <el-tooltip
+                :content="fieldLabel('点赞 + 评论 + 分享 + 收藏')"
+                placement="top"
+              >
+                <small>{{ fieldLabel("点赞 + 评论 + 分享 + 收藏") }}</small>
+              </el-tooltip>
             </article>
             <article class="overview-metric-card">
               <span>{{ fieldLabel("平均互动率") }}</span>
               <strong>{{ campaignOverview.engagementRate }}</strong>
-              <small :title="fieldLabel('总互动量 / 总曝光量')">{{
-                fieldLabel("总互动量 / 总曝光量")
-              }}</small>
+              <el-tooltip
+                :content="fieldLabel('总互动量 / 总曝光量')"
+                placement="top"
+              >
+                <small>{{ fieldLabel("总互动量 / 总曝光量") }}</small>
+              </el-tooltip>
             </article>
             <article class="overview-metric-card">
               <span>{{ fieldLabel("付费 KOL 成本") }}</span>
               <strong>{{ moneyText(campaignOverview.paidCost) }}</strong>
-              <small :title="fieldLabel('仅统计有实际合作费用的非媒体资源')">{{
-                fieldLabel("仅统计有实际合作费用的非媒体资源")
-              }}</small>
+              <el-tooltip
+                :content="fieldLabel('仅统计有实际合作费用的非媒体资源')"
+                placement="top"
+              >
+                <small>{{
+                  fieldLabel("仅统计有实际合作费用的非媒体资源")
+                }}</small>
+              </el-tooltip>
             </article>
             <article class="overview-metric-card">
               <span>CPM</span>
               <strong>{{ moneyText(campaignOverview.cpm) }}</strong>
-              <small :title="fieldLabel('付费成本 / 曝光 × 1000')">{{
-                fieldLabel("付费成本 / 曝光 × 1000")
-              }}</small>
+              <el-tooltip
+                :content="fieldLabel('付费成本 / 曝光 × 1000')"
+                placement="top"
+              >
+                <small>{{ fieldLabel("付费成本 / 曝光 × 1000") }}</small>
+              </el-tooltip>
             </article>
             <article class="overview-metric-card">
               <span>CPE</span>
               <strong>{{ moneyText(campaignOverview.cpe) }}</strong>
-              <small :title="fieldLabel('付费成本 / 互动量')">{{
-                fieldLabel("付费成本 / 互动量")
-              }}</small>
+              <el-tooltip
+                :content="fieldLabel('付费成本 / 互动量')"
+                placement="top"
+              >
+                <small>{{ fieldLabel("付费成本 / 互动量") }}</small>
+              </el-tooltip>
             </article>
           </div>
         </section>
