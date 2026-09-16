@@ -1444,12 +1444,18 @@ func captureRequestBody(r *http.Request) string {
 	if strings.Contains(contentType, "multipart/form-data") {
 		return "[multipart form data omitted]"
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	originalBody := r.Body
+	body, err := io.ReadAll(io.LimitReader(originalBody, 64<<10))
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.MultiReader(bytes.NewReader(body), originalBody),
+		Closer: originalBody,
+	}
 	if err != nil {
 		return "[request body read failed: " + err.Error() + "]"
 	}
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(body))
 	if len(body) == 64<<10 {
 		return truncateLogText(string(body), 64<<10) + "...[truncated]"
 	}
