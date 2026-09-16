@@ -856,7 +856,7 @@ const englishFieldLabels: Record<string, string> = {
   截至: "Until",
   创建日期未知: "Creation date unknown",
   条内容: "content items",
-  未指定对接人: "Contact Person Not Specified",
+  未指定对接人: "/",
   未设置合作目标: "Objective Not Set",
   未设置市场: "Market Not Set",
   进入执行页: "Open Execution",
