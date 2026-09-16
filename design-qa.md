@@ -1,10 +1,10 @@
 # Design QA
 
-- Source visual truth: the earlier overview/import references plus `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-b677ab31-c88c-4717-b2e0-197b1b857e34.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-37db8791-c2a2-49bf-90d5-01fb6aaaf4b9.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-cd4bcd29-fd8d-4de1-96d3-9c8da3b44dbd.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-78932f01-a583-417f-9610-eae9fed7b0fa.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-883c0105-dd1e-4b45-b2c0-5fccb13aa981.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-df841b3a-f5f0-439f-851d-f402c49d8408.png`, and `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-6689be11-8b70-4db2-8627-140852882e93.png`
+- Source visual truth: the earlier overview/import references plus `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-b677ab31-c88c-4717-b2e0-197b1b857e34.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-37db8791-c2a2-49bf-90d5-01fb6aaaf4b9.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-cd4bcd29-fd8d-4de1-96d3-9c8da3b44dbd.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-78932f01-a583-417f-9610-eae9fed7b0fa.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-883c0105-dd1e-4b45-b2c0-5fccb13aa981.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-df841b3a-f5f0-439f-851d-f402c49d8408.png`, `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-6689be11-8b70-4db2-8627-140852882e93.png`, and `/var/folders/2b/z81n4myx7k765ws80j1fgvc00000gn/T/codex-clipboard-03e11059-ae8f-49ec-815b-bc55a234a54f.png`
 - Implementation: `http://localhost:8848/#/business/projects/detail?id=24` and `http://localhost:8848/#/business/projects`
-- Implementation screenshot: Codex in-app Browser tab 3 capture with the metric-description tooltip open (inline browser evidence; the browser backend did not expose a filesystem path)
-- Viewport: 842 × 750 CSS px for the latest metric-tooltip interaction check; 1280 × 720 for the project-table header check; 795 × 782 for the top-navigation contrast and sidebar-brand checks; 795 × 750 for the Tier-column check; 1518 × 1000 for the earlier KOL / Media comparison.
-- Latest source pixels: 918 × 320; latest implementation capture: 842 × 750 CSS px at device scale factor 1, with the Exposure & Engagement cards and the hovered description visible.
+- Implementation screenshot: Codex in-app Browser tab 3 capture with the Upload Project Content dialog open (inline browser evidence; the browser backend did not expose a filesystem path)
+- Viewport: 842 × 782 CSS px for the latest upload-dialog copy check; 842 × 750 for the metric-tooltip interaction check; 1280 × 720 for the project-table header check; 795 × 782 for the top-navigation contrast and sidebar-brand checks; 795 × 750 for the Tier-column check; 1518 × 1000 for the earlier KOL / Media comparison.
+- Latest source pixels: 1220 × 424; latest implementation capture: 842 × 782 CSS px at device scale factor 1, with Replace mode selected and the project selector visible.
 - State: English locale, light theme, authenticated local admin session, existing project id 24.
 
 ## Findings
@@ -23,6 +23,7 @@
 - The first-level breadcrumb is now `#e4e4e7` at weight 500 against the `#111116` header. Before the fix it computed to `rgb(22,22,26)`, nearly matching the background; the second/current level retains its muted styling for hierarchy.
 - The project-list `Impressions / Views` and `Engagement Rate` columns now measure 210px and 180px respectively, up from 150px and 120px. Their English labels and sort affordances render independently without colliding with adjacent headings.
 - Every secondary description in the Exposure & Engagement metric cards now uses an Element Plus tooltip. Hovering an ellipsized description immediately exposes the complete localized copy instead of relying on a delayed native browser title.
+- The Replace/Add upload flow now labels the selector `Filed Project`; its search placeholder and empty-state copy use the same terminology.
 
 ## Required fidelity surfaces
 
@@ -43,6 +44,7 @@
 - The latest focused comparison checked the supplied dark-header crop against the updated project-list header. The first-level `Resource Operations` breadcrumb is now immediately legible while the separator and current page remain visually secondary; spacing, icons, and header height are unchanged.
 - The newest focused comparison paired the supplied project-table crop with the horizontally positioned 1280 × 720 browser render. `Impressions / Views` and `Engagement Rate` are fully separated, and Content, Contact, values, and the fixed `Discover More` column retain their alignment. A focused region was required because the source is a cropped, horizontally scrolled table state.
 - The latest focused comparison paired the supplied metric-card crop with the browser-rendered Exposure & Engagement section. The card layout, typography, color, and truncation remain unchanged; the hovered description now displays a dark tooltip containing the complete text. A focused interaction capture was required because tooltip behavior cannot be judged from a static full-page view.
+- The latest focused comparison paired the supplied Upload Project Content crop with the rendered Replace-mode dialog. The requested copy now reads `Filed Project`, the placeholder reads `Search and Select a Filed Project`, and the form spacing, radio state, selector width, and surrounding alerts remain unchanged.
 - The import preview's populated state was not opened because doing so requires selecting a local spreadsheet; its widths and Element Plus overflow-tooltip behavior were validated from the rendered column configuration and type/build checks.
 
 ## Interaction and console checks
@@ -75,6 +77,9 @@
 - Latest issue: ellipsized metric descriptions used native `title` attributes, which did not provide a reliable visible hover response.
 - Latest fix: replaced the six native titles with consistent `el-tooltip` triggers while preserving the existing ellipsis and card dimensions.
 - Latest post-fix evidence: CDP mouse hover over the first and second metric descriptions rendered the full tooltip copy (`所有合作内容累计数据` and `点赞 + 评论 + 分享 + 收藏`), with zero console errors and passing typecheck/build.
+- Latest issue: the upload dialog used `Existing Project` terminology in the field label, search placeholder, and empty state.
+- Latest fix: updated the three English localization strings to use `Filed Project` consistently.
+- Latest post-fix evidence: browser-rendered Replace-mode dialog shows `Filed Project` and `Search and Select a Filed Project`, with unchanged layout, zero console errors, and passing typecheck/build.
 
 ## Follow-up polish
 
