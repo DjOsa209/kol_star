@@ -3133,7 +3133,7 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column
               :label="fieldLabel('操作')"
-              width="140"
+              width="160"
               fixed="right"
             >
               <template #default="{ row }">
@@ -3597,7 +3597,7 @@ onUnmounted(() => {
           />
           <el-table-column
             :label="fieldLabel('操作')"
-            width="100"
+            width="160"
             fixed="right"
           >
             <template #default="{ row }">

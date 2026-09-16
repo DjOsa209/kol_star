@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { getConfig } from "@/config";
+import { fieldLabel } from "@/utils/fieldI18n";
 
-const TITLE = getConfig("Title");
+const title = computed(() => fieldLabel(String(getConfig("Title") || "")));
 </script>
 
 <template>
@@ -9,7 +11,7 @@ const TITLE = getConfig("Title");
     class="layout-footer text-[rgba(0,0,0,0.6)] dark:text-[rgba(220,220,242,0.8)]"
   >
     Copyright © 2026
-    <span>&nbsp;{{ TITLE }}</span>
+    <span>&nbsp;{{ title }}</span>
   </footer>
 </template>
 

@@ -400,7 +400,7 @@ const englishFieldLabels: Record<string, string> = {
   播放量: "Views",
   播放量从高到低: "Views: High to Low",
   阅读量: "Views",
-  操作: "Actions",
+  操作: "Discover More",
   效果分数: "Performance Score",
   效果复盘: "Performance Review",
   数据来源: "Data Source",

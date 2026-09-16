@@ -2446,7 +2446,7 @@ onMounted(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('曝光 / 播放')"
-            width="150"
+            width="210"
             align="center"
             sortable
           >
@@ -2456,7 +2456,7 @@ onMounted(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('互动率')"
-            width="120"
+            width="180"
             align="center"
           >
             <template #default="{ row }">{{
@@ -3062,33 +3062,38 @@ onMounted(() => {
           <el-table-column
             prop="category"
             :label="fieldLabel('领域')"
-            min-width="120"
+            min-width="170"
+            show-overflow-tooltip
           />
           <el-table-column
             prop="country"
             :label="fieldLabel('市场')"
-            width="110"
+            min-width="150"
+            show-overflow-tooltip
           />
           <el-table-column
             prop="platform"
             :label="fieldLabel('平台')"
-            width="110"
+            min-width="150"
+            show-overflow-tooltip
           />
           <el-table-column
             prop="cooperationType"
             :label="fieldLabel('合作类型')"
-            width="150"
+            min-width="210"
+            show-overflow-tooltip
           />
           <el-table-column
             prop="deliverableLinks"
             :label="fieldLabel('内容链接')"
-            min-width="220"
+            min-width="360"
             show-overflow-tooltip
           />
           <el-table-column
             prop="contentType"
             :label="fieldLabel('内容类型')"
-            width="140"
+            min-width="180"
+            show-overflow-tooltip
           />
           <el-table-column
             prop="quoteAmount"
@@ -3098,12 +3103,12 @@ onMounted(() => {
           <el-table-column
             prop="owner"
             :label="fieldLabel('对接人')"
-            width="130"
+            min-width="180"
             show-overflow-tooltip
           />
           <el-table-column
             :label="fieldLabel('状态')"
-            min-width="180"
+            min-width="280"
             fixed="right"
           >
             <template #default="{ row }">
@@ -3405,7 +3410,7 @@ onMounted(() => {
                         {{ moneyText(row.quoteAmount, row.currency) }}
                       </template>
                     </el-table-column>
-                    <el-table-column :label="fieldLabel('操作')" width="110">
+                    <el-table-column :label="fieldLabel('操作')" width="160">
                       <template #default="{ row }">
                         <el-button
                           link
@@ -3695,8 +3700,8 @@ onMounted(() => {
                           </template>
                         </el-table-column>
                         <el-table-column
-                          label="Actions"
-                          width="110"
+                          label="Discover More"
+                          width="160"
                           fixed="right"
                         >
                           <template #default="{ row }">
@@ -3935,7 +3940,7 @@ onMounted(() => {
               />
               <el-table-column
                 :label="fieldLabel('操作')"
-                width="150"
+                width="160"
                 fixed="right"
               >
                 <template #default="{ row }">
@@ -4245,7 +4250,7 @@ onMounted(() => {
               />
               <el-table-column
                 :label="fieldLabel('操作')"
-                width="150"
+                width="160"
                 fixed="right"
               >
                 <template #default="{ row }">

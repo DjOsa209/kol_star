@@ -2,6 +2,7 @@ import Cookies from "js-cookie";
 import { getConfig } from "@/config";
 import NProgress from "@/utils/progress";
 import { transformI18n } from "@/plugins/i18n";
+import { fieldLabel } from "@/utils/fieldI18n";
 import { buildHierarchyTree } from "@/utils/tree";
 import remainingRouter from "./modules/remaining";
 import { useMultiTagsStoreHook } from "@/store/modules/multiTags";
@@ -136,7 +137,7 @@ router.beforeEach((to: ToRouteType, _from) => {
       if (!item.meta.title) return "";
       const Title = getConfig().Title;
       if (Title)
-        document.title = `${transformI18n(item.meta.title)} | ${Title}`;
+        document.title = `${transformI18n(item.meta.title)} | ${fieldLabel(Title)}`;
       else document.title = transformI18n(item.meta.title);
     });
   }

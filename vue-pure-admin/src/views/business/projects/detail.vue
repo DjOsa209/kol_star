@@ -2427,9 +2427,6 @@ onBeforeUnmount(() => {
         <div class="campaign-name">
           <h1>{{ project?.name || "项目" }}</h1>
           <div class="campaign-meta">
-            <el-tag size="small" effect="plain">{{
-              fieldLabel(project?.campaignType || "合作项目")
-            }}</el-tag>
             <span
               ><IconifyIconOnline icon="ri:checkbox-circle-fill" /> ✅
               {{ fieldLabel("数据已同步") }}</span
@@ -2729,34 +2726,44 @@ onBeforeUnmount(() => {
             <article class="overview-metric-card primary-metric-card">
               <span>{{ fieldLabel("曝光量") }}</span>
               <strong>{{ formatCount(campaignOverview.views) }}</strong>
-              <small>{{ fieldLabel("所有合作内容累计数据") }}</small>
+              <small :title="fieldLabel('所有合作内容累计数据')">{{
+                fieldLabel("所有合作内容累计数据")
+              }}</small>
             </article>
             <article class="overview-metric-card">
               <span>{{ fieldLabel("总互动量") }}</span>
               <strong>{{ formatCount(campaignOverview.engagements) }}</strong>
-              <small>{{ fieldLabel("点赞 + 评论 + 分享 + 收藏") }}</small>
+              <small :title="fieldLabel('点赞 + 评论 + 分享 + 收藏')">{{
+                fieldLabel("点赞 + 评论 + 分享 + 收藏")
+              }}</small>
             </article>
             <article class="overview-metric-card">
               <span>{{ fieldLabel("平均互动率") }}</span>
               <strong>{{ campaignOverview.engagementRate }}</strong>
-              <small>{{ fieldLabel("总互动量 / 总曝光量") }}</small>
+              <small :title="fieldLabel('总互动量 / 总曝光量')">{{
+                fieldLabel("总互动量 / 总曝光量")
+              }}</small>
             </article>
             <article class="overview-metric-card">
               <span>{{ fieldLabel("付费 KOL 成本") }}</span>
               <strong>{{ moneyText(campaignOverview.paidCost) }}</strong>
-              <small>{{
+              <small :title="fieldLabel('仅统计有实际合作费用的非媒体资源')">{{
                 fieldLabel("仅统计有实际合作费用的非媒体资源")
               }}</small>
             </article>
             <article class="overview-metric-card">
               <span>CPM</span>
               <strong>{{ moneyText(campaignOverview.cpm) }}</strong>
-              <small>{{ fieldLabel("付费成本 / 曝光 × 1000") }}</small>
+              <small :title="fieldLabel('付费成本 / 曝光 × 1000')">{{
+                fieldLabel("付费成本 / 曝光 × 1000")
+              }}</small>
             </article>
             <article class="overview-metric-card">
               <span>CPE</span>
               <strong>{{ moneyText(campaignOverview.cpe) }}</strong>
-              <small>{{ fieldLabel("付费成本 / 互动量") }}</small>
+              <small :title="fieldLabel('付费成本 / 互动量')">{{
+                fieldLabel("付费成本 / 互动量")
+              }}</small>
             </article>
           </div>
         </section>
@@ -2771,9 +2778,11 @@ onBeforeUnmount(() => {
                 }}
               </p>
             </div>
-            <span
-              >{{ platformPerformance.length }} {{ fieldLabel("个平台") }}</span
-            >
+            <span>{{
+              locale === "en"
+                ? `platforms:${platformPerformance.length}`
+                : `${platformPerformance.length}${fieldLabel("个平台")}`
+            }}</span>
           </div>
           <div class="platform-chart-grid">
             <article class="platform-chart-card">
@@ -2964,11 +2973,7 @@ onBeforeUnmount(() => {
               }}
             </p>
           </div>
-          <span>{{
-            locale === "en"
-              ? `${influencerRows.length} KOL`
-              : `${influencerRows.length} 位达人`
-          }}</span>
+          <span>{{ `KOL: ${influencerRows.length}` }}</span>
         </div>
         <el-table :data="influencerRows" class="creator-table">
           <el-table-column type="expand" label="" width="72" align="center">
@@ -2988,6 +2993,7 @@ onBeforeUnmount(() => {
                       <button
                         class="expanded-content-cell"
                         type="button"
+                        :title="post.title || post.postUrl || '未命名内容'"
                         @click="openContentDetail(post)"
                       >
                         <img
@@ -3054,14 +3060,16 @@ onBeforeUnmount(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('达人')"
-            min-width="250"
+            min-width="280"
             align="center"
             sortable
+            show-overflow-tooltip
           >
             <template #default="{ row }">
               <button
                 type="button"
                 class="creator-cell creator-profile-link"
+                :title="row.resourceName || '未命名达人'"
                 @click="openResourceProfile(row)"
               >
                 <el-avatar :src="row.resourceAvatarUrl" :size="34">{{
@@ -3089,6 +3097,7 @@ onBeforeUnmount(() => {
             min-width="120"
             align="center"
             :formatter="row => fieldLabel(row.category || '-')"
+            show-overflow-tooltip
           />
           <el-table-column
             :label="fieldLabel('粉丝量')"
@@ -3157,7 +3166,7 @@ onBeforeUnmount(() => {
           <el-table-column
             prop="collaboratorTier"
             :label="fieldLabel('层级')"
-            width="100"
+            width="150"
             align="center"
           >
             <template #default="{ row }">
@@ -3199,7 +3208,7 @@ onBeforeUnmount(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('操作')"
-            width="120"
+            width="160"
             fixed="right"
             align="center"
           >
@@ -3228,11 +3237,7 @@ onBeforeUnmount(() => {
               月访问量；其他媒体采用月独立访客（UMV）。
             </p>
           </div>
-          <span>{{
-            locale === "en"
-              ? `${mediaRows.length} Media`
-              : `${mediaRows.length} 家媒体`
-          }}</span>
+          <span>{{ `Media: ${mediaRows.length}` }}</span>
         </div>
         <el-table :data="mediaRows" class="creator-table media-table">
           <el-table-column type="expand" label="" width="72" align="center">
@@ -3252,6 +3257,7 @@ onBeforeUnmount(() => {
                       <button
                         class="expanded-content-cell"
                         type="button"
+                        :title="post.title || post.postUrl || '未命名内容'"
                         @click="openContentDetail(post)"
                       >
                         <img
@@ -3318,14 +3324,16 @@ onBeforeUnmount(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('媒体')"
-            min-width="250"
+            min-width="280"
             align="center"
             sortable
+            show-overflow-tooltip
           >
             <template #default="{ row }">
               <button
                 type="button"
                 class="creator-cell creator-profile-link"
+                :title="row.resourceName || '未命名媒体'"
                 @click="openResourceProfile(row)"
               >
                 <el-avatar :src="row.resourceAvatarUrl" :size="34">{{
@@ -3353,13 +3361,15 @@ onBeforeUnmount(() => {
             min-width="120"
             align="center"
             :formatter="row => fieldLabel(row.category || '-')"
+            show-overflow-tooltip
           />
           <el-table-column
             :label="fieldLabel('月独立访客（UMV）')"
-            width="200"
+            min-width="280"
             align="center"
             sortable
             :sort-method="sortByAudience"
+            show-overflow-tooltip
           >
             <template #default="{ row }">{{
               formatCount(projectAudience(row))
@@ -3379,7 +3389,7 @@ onBeforeUnmount(() => {
           <el-table-column
             prop="collaboratorTier"
             :label="fieldLabel('层级')"
-            width="100"
+            width="150"
             align="center"
           >
             <template #default="{ row }"
@@ -3420,7 +3430,7 @@ onBeforeUnmount(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('操作')"
-            width="120"
+            width="160"
             fixed="right"
             align="center"
           >
@@ -5834,6 +5844,11 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
+}
+.performance-overview-grid {
+  grid-template-columns:
+    minmax(140px, 0.9fr) minmax(160px, 1fr) minmax(240px, 1.45fr)
+    minmax(260px, 1.55fr) minmax(160px, 1fr) minmax(160px, 1fr);
 }
 .overview-metric-card {
   box-sizing: border-box;

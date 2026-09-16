@@ -410,6 +410,15 @@ body {
     color: #d4d4d8 !important;
   }
 
+  .el-breadcrumb__item:not(:last-child) .el-breadcrumb__inner a {
+    color: #e4e4e7 !important;
+    font-weight: 500 !important;
+  }
+
+  .el-breadcrumb__item:last-child .el-breadcrumb__inner {
+    color: #a1a1aa !important;
+  }
+
   .navbar-bg-hover:hover {
     background: #23232e !important;
   }

@@ -15,6 +15,7 @@ import { useUserStoreHook } from "@/store/modules/user";
 import { useGlobal, isAllEmpty } from "@pureadmin/utils";
 import { useEpThemeStoreHook } from "@/store/modules/epTheme";
 import { usePermissionStoreHook } from "@/store/modules/permission";
+import { fieldLabel } from "@/utils/fieldI18n";
 import ExitFullscreen from "~icons/ri/fullscreen-exit-fill";
 import Fullscreen from "~icons/ri/fullscreen-fill";
 
@@ -87,13 +88,14 @@ export function useNav() {
   });
 
   const title = computed(() => {
-    return $config.Title;
+    return fieldLabel($config.Title);
   });
 
   /** 动态title */
   function changeTitle(meta: routeMetaType) {
     const Title = getConfig().Title;
-    if (Title) document.title = `${transformI18n(meta.title)} | ${Title}`;
+    if (Title)
+      document.title = `${transformI18n(meta.title)} | ${fieldLabel(Title)}`;
     else document.title = transformI18n(meta.title);
   }
 
