@@ -2147,9 +2147,8 @@ async function confirmImportValidation() {
         locale.value === "en"
           ? `The following rows contain missing required fields or formatting errors. Update the Excel file and upload it again:\n${importValidationSummary(requiredRows, "errors")}`
           : `以下数据存在必填项或格式错误，请修改 Excel 后重新上传：\n${importValidationSummary(requiredRows, "errors")}`,
-        locale.value === "en" ? "Import blocked" : "导入已拦截",
+        locale.value === "en" ? "⚠️ Import blocked" : "⚠️ 导入已拦截",
         {
-          type: "warning",
           confirmButtonText:
             locale.value === "en" ? "Back to edit" : "返回修改",
           appendTo: document.body,
@@ -2175,9 +2174,8 @@ async function confirmImportValidation() {
       locale.value === "en"
         ? `The following optional fields are empty. You can still continue the import:\n${importValidationSummary(optionalRows, "warnings")}`
         : `以下选填项尚未填写，仍可继续导入：\n${importValidationSummary(optionalRows, "warnings")}`,
-      locale.value === "en" ? "Optional fields" : "选填项提醒",
+      locale.value === "en" ? "⚠️ Optional fields" : "⚠️ 选填项提醒",
       {
-        type: "warning",
         confirmButtonText: locale.value === "en" ? "Continue" : "确认继续",
         cancelButtonText: locale.value === "en" ? "Not now" : "暂不导入",
         appendTo: document.body,
