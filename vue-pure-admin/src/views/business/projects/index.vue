@@ -2221,14 +2221,13 @@ async function confirmImportPrivacyNotice() {
   try {
     const alertPromise = ElMessageBox.alert(
       locale.value === "en" ? englishMessage : chineseMessage,
-      locale.value === "en"
-        ? "⚠️ Platform privacy notice"
-        : "⚠️ 平台隐私提醒",
+      locale.value === "en" ? "⚠️ Platform privacy notice" : "⚠️ 平台隐私提醒",
       {
         confirmButtonText: locale.value === "en" ? "Got it" : "我知道了",
         dangerouslyUseHTMLString: true,
         appendTo: document.body,
-        customClass: "project-import-validation-message-box"
+        customClass:
+          "project-import-validation-message-box project-import-privacy-message-box"
       }
     );
     await raiseImportValidationMessageBox();
@@ -6686,6 +6685,36 @@ onMounted(() => {
 :global(.project-import-validation-message-box) {
   z-index: 10012 !important;
   white-space: pre-line;
+}
+
+:global(.project-import-privacy-message-box) {
+  width: min(600px, calc(100vw - 32px));
+}
+
+:global(.project-import-privacy-message-box .el-message-box__header) {
+  padding: 22px 28px 12px;
+}
+
+:global(.project-import-privacy-message-box .el-message-box__content) {
+  padding: 12px 28px 16px;
+}
+
+:global(.project-import-privacy-message-box .el-message-box__message) {
+  line-height: 1.75;
+}
+
+:global(.project-import-privacy-message-box .el-message-box__message p) {
+  margin: 0 0 14px;
+}
+
+:global(
+  .project-import-privacy-message-box .el-message-box__message p:last-child
+) {
+  margin-bottom: 0;
+}
+
+:global(.project-import-privacy-message-box .el-message-box__btns) {
+  padding: 10px 28px 22px;
 }
 
 .import-preview-more {
