@@ -12,6 +12,8 @@ import (
 func TestNormalizeEditableContentPlatform(t *testing.T) {
 	tests := map[string]string{
 		"RedNote":  "小红书",
+		"Facebook": "Facebook",
+		"fb":       "Facebook",
 		"tiktok":   "TikTok",
 		"INS":      "Instagram",
 		"twitter":  "X",
@@ -74,7 +76,7 @@ func TestAggregateProjectResourcesByName(t *testing.T) {
 	}
 }
 
-func TestUpdateBusinessProjectContentReturnsAllLinkedFields(t *testing.T) {
+func TestUpdateBusinessProjectContentAllowsFacebookManualExposure(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -93,13 +95,16 @@ func TestUpdateBusinessProjectContentReturnsAllLinkedFields(t *testing.T) {
 	mock.ExpectExec("update biz_resources").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
+	mock.ExpectExec("update biz_cooperations").
+		WithArgs(4321, 4321, 22, 11, 33).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("select coalesce\\(r.platform_url").
 		WithArgs(22, 33).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"platform_url", "avatar_remote_url", "final_link", "deliverable_links",
 			"content_cover_url", "content_cover_remote_url",
 		}).AddRow(
-			"https://www.linkedin.com/in/new",
+			"https://www.facebook.com/creator",
 			"https://cdn.example.com/avatar.jpg",
 			postURL,
 			postURL,
@@ -111,8 +116,9 @@ func TestUpdateBusinessProjectContentReturnsAllLinkedFields(t *testing.T) {
 		"projectId":     11,
 		"cooperationId": 22,
 		"resourceId":    33,
-		"platform":      "LinkedIn",
+		"platform":      "Facebook",
 		"postUrl":       postURL,
+		"exposure":      4321,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -132,8 +138,8 @@ func TestUpdateBusinessProjectContentReturnsAllLinkedFields(t *testing.T) {
 		t.Fatalf("unexpected response: %s", recorder.Body.String())
 	}
 	expected := map[string]string{
-		"platform":                "LinkedIn",
-		"platformUrl":             "https://www.linkedin.com/in/new",
+		"platform":                "Facebook",
+		"platformUrl":             "https://www.facebook.com/creator",
 		"finalLink":               postURL,
 		"deliverableLinks":        postURL,
 		"resourceAvatarRemoteUrl": "https://cdn.example.com/avatar.jpg",

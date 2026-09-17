@@ -484,6 +484,9 @@ func TestNormalizeImportedProfileLogic(t *testing.T) {
 	if got := normalizeImportedPlatform("RedNote", "https://xhslink.com/m/3ZSCJZAMz0a"); got != "小红书" {
 		t.Fatalf("platform = %q, want 小红书", got)
 	}
+	if got := normalizeImportedPlatform("Website", "https://www.facebook.com/creator/"); got != "Facebook" {
+		t.Fatalf("platform = %q, want Facebook", got)
+	}
 	if got := importedProfilePlaceholderName(profile); got != "example" {
 		t.Fatalf("placeholder = %q, want example", got)
 	}

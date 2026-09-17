@@ -59,6 +59,7 @@ const importLoading = ref(false);
 const importParsing = ref(false);
 const importParseError = ref("");
 const importOptionalWarningsConfirmed = ref(false);
+const importPrivacyNoticeConfirmed = ref(false);
 const contentUploadKey = ref(0);
 const editingProjectId = ref<number | null>(null);
 const editingCooperationId = ref<number | null>(null);
@@ -420,6 +421,38 @@ const validImportRows = computed(() =>
 const invalidImportRows = computed(() =>
   importRows.value.filter(row => (row.errors || []).length > 0)
 );
+
+type ImportPrivacyPlatform = "Facebook" | "小红书";
+
+function importPrivacyPlatform(row: any): ImportPrivacyPlatform | "" {
+  const identity = [row?.platform, row?.influencer, row?.deliverableLinks]
+    .map(value =>
+      String(value || "")
+        .trim()
+        .toLowerCase()
+    )
+    .join(" ");
+  if (/facebook|(?:^|\W)fb(?:\W|$)|fb\.com/.test(identity)) {
+    return "Facebook";
+  }
+  if (
+    /小红书|xiaohongshu|red\s?note|(?:^|\W)xhs(?:\W|$)|xhslink/.test(identity)
+  ) {
+    return "小红书";
+  }
+  return "";
+}
+
+const importPrivacyPlatforms = computed<ImportPrivacyPlatform[]>(() => {
+  const platforms = new Set<ImportPrivacyPlatform>();
+  importRows.value.forEach(row => {
+    const platform = importPrivacyPlatform(row);
+    if (platform) platforms.add(platform);
+  });
+  return ["小红书", "Facebook"].filter(platform =>
+    platforms.has(platform as ImportPrivacyPlatform)
+  ) as ImportPrivacyPlatform[];
+});
 
 const fileDuplicateImportRows = computed(() =>
   importRows.value.filter(row => row.duplicate)
@@ -2092,6 +2125,63 @@ async function confirmImportValidation() {
   }
 }
 
+async function confirmImportPrivacyNotice() {
+  const platforms = importPrivacyPlatforms.value;
+  if (platforms.length === 0 || importPrivacyNoticeConfirmed.value) {
+    return true;
+  }
+
+  const platformText = platforms.join("、");
+  const chineseMessage = [
+    `检测到 ${platformText} 平台数据。`,
+    platforms.includes("Facebook")
+      ? "Facebook 受平台隐私及接口限制，系统无法自动读取粉丝数、内容曝光量等数据。"
+      : "",
+    platforms.includes("小红书")
+      ? "小红书受平台隐私设置限制，系统无法自动读取内容曝光量。"
+      : "",
+    "导入完成后，请前往「资源管理 > 编辑资源」补充粉丝数；前往「项目详情 > 内容」，点击对应内容右上角「… > 编辑」补充或修改曝光量。Facebook 与小红书均支持手动编辑。"
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const englishMessage = [
+    `${platformText} data was detected.`,
+    platforms.includes("Facebook")
+      ? "Due to Facebook privacy and API restrictions, follower counts and content exposure cannot be read automatically."
+      : "",
+    platforms.includes("小红书")
+      ? "Due to RedNote privacy restrictions, content exposure cannot be read automatically."
+      : "",
+    "After import, update follower counts under Resources > Edit Resource, and update exposure under Project Details > Content > … > Edit. Both Facebook and RedNote support manual editing."
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const alertPromise = ElMessageBox.alert(
+      locale.value === "en" ? englishMessage : chineseMessage,
+      locale.value === "en" ? "Platform privacy notice" : "平台隐私提醒",
+      {
+        type: "warning",
+        confirmButtonText: locale.value === "en" ? "Got it" : "我知道了",
+        appendTo: document.body,
+        customClass: "project-import-validation-message-box"
+      }
+    );
+    await raiseImportValidationMessageBox();
+    await alertPromise;
+    importPrivacyNoticeConfirmed.value = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function confirmImportPrerequisites() {
+  if (!(await confirmImportValidation())) return false;
+  return confirmImportPrivacyNotice();
+}
+
 async function ensureImportProject() {
   if (importTargetMode.value !== "new") {
     const projectId = Number(importProjectId.value || 0);
@@ -2204,6 +2294,7 @@ async function handleUploadFile(file: any) {
   importParsing.value = true;
   importParseError.value = "";
   importOptionalWarningsConfirmed.value = false;
+  importPrivacyNoticeConfirmed.value = false;
   importRows.value = [];
   try {
     projectImportDialog.value = false;
@@ -2230,7 +2321,7 @@ async function handleUploadFile(file: any) {
     refreshImportRows();
     await refreshImportProjectOptions(false);
     await nextTick();
-    await confirmImportValidation();
+    await confirmImportPrerequisites();
   } catch {
     importParseError.value = "Excel 解析失败，请确认文件未损坏后重试。";
     ElMessage.error(importParseError.value);
@@ -2245,7 +2336,7 @@ async function submitImport() {
     ElMessage.warning("项目正在创建，请稍候");
     return;
   }
-  if (!(await confirmImportValidation())) return;
+  if (!(await confirmImportPrerequisites())) return;
   if (!(await ensureImportProject())) return;
   if (rowsForImport.value.length === 0) {
     ElMessage.warning("没有可导入的有效行");
