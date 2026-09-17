@@ -2201,20 +2201,20 @@ async function confirmImportPrivacyNotice() {
 
   const chineseMessage = [
     platforms.includes("Facebook")
-      ? "<p><strong>FB：</strong>因 Facebook 平台隐私设置，达人粉丝量及内容数据系统无法调用，请分别前往 <strong>【项目管理-进入项目-达人-编辑】及【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
+      ? "<p>因 Facebook 平台隐私设置，达人粉丝量及内容数据系统无法调用，请分别前往 <strong>【项目管理-进入项目-达人-编辑】及【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
       : "",
     platforms.includes("小红书")
-      ? "<p><strong>小红书：</strong>因小红书平台隐私设置，达人内容阅读数系统无法调用，请前往 <strong>【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
+      ? "<p>因小红书平台隐私设置，达人内容阅读数系统无法调用，请前往 <strong>【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
       : ""
   ]
     .filter(Boolean)
     .join("");
   const englishMessage = [
     platforms.includes("Facebook")
-      ? "<p><strong>Facebook:</strong> Due to Facebook's privacy settings, the system cannot retrieve creator follower counts or content metrics. Update them under <strong>[Project Management - Open Project - Creators - Edit]</strong> and <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
+      ? "<p>Due to Facebook's privacy settings, the system cannot retrieve creator follower counts or content metrics. Update them under <strong>[Project Management - Open Project - Creators - Edit]</strong> and <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
       : "",
     platforms.includes("小红书")
-      ? "<p><strong>RedNote:</strong> Due to RedNote's privacy settings, the system cannot retrieve content view counts. Update them under <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
+      ? "<p>Due to RedNote's privacy settings, the system cannot retrieve content view counts. Update them under <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
       : ""
   ]
     .filter(Boolean)
@@ -2223,9 +2223,10 @@ async function confirmImportPrivacyNotice() {
   try {
     const alertPromise = ElMessageBox.alert(
       locale.value === "en" ? englishMessage : chineseMessage,
-      locale.value === "en" ? "Platform privacy notice" : "平台隐私提醒",
+      locale.value === "en"
+        ? "⚠️ Platform privacy notice"
+        : "⚠️ 平台隐私提醒",
       {
-        type: "warning",
         confirmButtonText: locale.value === "en" ? "Got it" : "我知道了",
         dangerouslyUseHTMLString: true,
         appendTo: document.body,
