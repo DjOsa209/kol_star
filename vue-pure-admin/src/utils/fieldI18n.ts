@@ -912,6 +912,7 @@ const englishFieldLabels: Record<string, string> = {
   点赞量: "Likes",
   评论量: "Comments",
   分享量: "Shares",
+  转发量: "Shares",
   收藏量: "Saves",
   展开: "Expand",
   曝光量从高到低: "Impressions: High to Low",

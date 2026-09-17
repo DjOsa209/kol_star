@@ -100,8 +100,14 @@ const contentEditForm = reactive({
   resourceId: 0,
   platform: "Website",
   postUrl: "",
-  exposure: 0
+  exposure: 0,
+  likeCount: 0,
+  commentCount: 0,
+  shareCount: 0
 });
+const editingFacebookContent = computed(
+  () => normalizePlatformName(contentEditForm.platform) === "Facebook"
+);
 const editableContentPlatformOptions = [
   "小红书",
   "TikTok",
@@ -920,7 +926,10 @@ function prepareContentEdit(post: any) {
     resourceId: Number(post.resourceId),
     platform: normalizePlatformName(post.platform),
     postUrl: String(post.postUrl || "").trim(),
-    exposure: Math.max(0, Math.trunc(postExposure(post)))
+    exposure: Math.max(0, Math.trunc(postExposure(post))),
+    likeCount: Math.max(0, Math.trunc(postLikeCount(post))),
+    commentCount: Math.max(0, Math.trunc(postCommentCount(post))),
+    shareCount: Math.max(0, Math.trunc(postShareCount(post)))
   });
   editingContentPost.value = post;
   contentEditing.value = true;
@@ -951,11 +960,39 @@ async function saveContentEdit() {
   }
   contentSaving.value = true;
   try {
+    const metrics = editingFacebookContent.value
+      ? {
+          exposure: Math.max(
+            0,
+            Math.trunc(Number(contentEditForm.exposure) || 0)
+          ),
+          likeCount: Math.max(
+            0,
+            Math.trunc(Number(contentEditForm.likeCount) || 0)
+          ),
+          commentCount: Math.max(
+            0,
+            Math.trunc(Number(contentEditForm.commentCount) || 0)
+          ),
+          shareCount: Math.max(
+            0,
+            Math.trunc(Number(contentEditForm.shareCount) || 0)
+          )
+        }
+      : {
+          exposure: Math.max(
+            0,
+            Math.trunc(Number(contentEditForm.exposure) || 0)
+          )
+        };
     const res = await updateProjectContent({
       projectId: Number(project.value.id),
-      ...contentEditForm,
+      contentId: contentEditForm.contentId,
+      cooperationId: contentEditForm.cooperationId,
+      resourceId: contentEditForm.resourceId,
+      platform: contentEditForm.platform,
       postUrl,
-      exposure: Math.max(0, Math.trunc(Number(contentEditForm.exposure) || 0))
+      ...metrics
     });
     if (res.code !== 0) {
       ElMessage.warning(res.message || "合作内容更新失败");
@@ -966,7 +1003,11 @@ async function saveContentEdit() {
     if (res.data?.previewWarning) {
       ElMessage.warning(res.data.previewWarning);
     } else {
-      ElMessage.success("内容链接、平台与曝光量已更新");
+      ElMessage.success(
+        editingFacebookContent.value
+          ? "内容链接、平台与曝光/点赞/评论/转发已更新"
+          : "内容链接、平台与曝光量已更新"
+      );
     }
   } finally {
     contentSaving.value = false;
@@ -1205,6 +1246,10 @@ function contentFollowers(post: any) {
 
 function isWebsiteContent(post: any) {
   return normalizePlatformName(post?.platform) === "Website";
+}
+
+function isFacebookContent(post: any) {
+  return normalizePlatformName(post?.platform) === "Facebook";
 }
 
 function usesPageScreenshot(post: any) {
@@ -2697,12 +2742,16 @@ onBeforeUnmount(() => {
               }}</strong>
             </article>
             <article>
-              <span>{{ fieldLabel("分享量") }}</span>
+              <span>{{
+                fieldLabel(
+                  isFacebookContent(contentDetailView) ? "转发量" : "分享量"
+                )
+              }}</span>
               <strong>{{
                 formatCount(postShareCount(contentDetailView))
               }}</strong>
             </article>
-            <article>
+            <article v-if="!isFacebookContent(contentDetailView)">
               <span>{{ fieldLabel("收藏量") }}</span>
               <strong>{{
                 formatCount(postSaveCount(contentDetailView))
@@ -3652,18 +3701,38 @@ onBeforeUnmount(() => {
                 {{ fieldLabel(contentTypeTag(post)) }}
               </el-tag>
               <div class="content-card-metrics">
-                <span>
-                  <small>{{ fieldLabel(contentExposureLabel(post)) }}</small>
-                  <strong>{{ formatCount(postExposure(post)) }}</strong>
-                </span>
-                <span>
-                  <small>{{
-                    fieldLabel(contentSecondaryMetricLabel(post))
-                  }}</small>
-                  <strong>{{
-                    formatCount(contentSecondaryMetricValue(post))
-                  }}</strong>
-                </span>
+                <template v-if="isFacebookContent(post)">
+                  <span>
+                    <small>{{ fieldLabel("曝光量") }}</small>
+                    <strong>{{ formatCount(postExposure(post)) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{ fieldLabel("点赞量") }}</small>
+                    <strong>{{ formatCount(postLikeCount(post)) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{ fieldLabel("评论量") }}</small>
+                    <strong>{{ formatCount(postCommentCount(post)) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{ fieldLabel("转发量") }}</small>
+                    <strong>{{ formatCount(postShareCount(post)) }}</strong>
+                  </span>
+                </template>
+                <template v-else>
+                  <span>
+                    <small>{{ fieldLabel(contentExposureLabel(post)) }}</small>
+                    <strong>{{ formatCount(postExposure(post)) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{
+                      fieldLabel(contentSecondaryMetricLabel(post))
+                    }}</small>
+                    <strong>{{
+                      formatCount(contentSecondaryMetricValue(post))
+                    }}</strong>
+                  </span>
+                </template>
               </div>
             </div>
           </article>
@@ -3710,7 +3779,49 @@ onBeforeUnmount(() => {
           placeholder="https://..."
         />
       </el-form-item>
-      <el-form-item :label="fieldLabel('曝光量')" required>
+      <template v-if="editingFacebookContent">
+        <el-form-item :label="fieldLabel('曝光量')" required>
+          <el-input-number
+            v-model="contentEditForm.exposure"
+            :min="0"
+            :step="1"
+            :precision="0"
+            controls-position="right"
+            class="w-full!"
+          />
+        </el-form-item>
+        <el-form-item :label="fieldLabel('点赞量')" required>
+          <el-input-number
+            v-model="contentEditForm.likeCount"
+            :min="0"
+            :step="1"
+            :precision="0"
+            controls-position="right"
+            class="w-full!"
+          />
+        </el-form-item>
+        <el-form-item :label="fieldLabel('评论量')" required>
+          <el-input-number
+            v-model="contentEditForm.commentCount"
+            :min="0"
+            :step="1"
+            :precision="0"
+            controls-position="right"
+            class="w-full!"
+          />
+        </el-form-item>
+        <el-form-item :label="fieldLabel('转发量')" required>
+          <el-input-number
+            v-model="contentEditForm.shareCount"
+            :min="0"
+            :step="1"
+            :precision="0"
+            controls-position="right"
+            class="w-full!"
+          />
+        </el-form-item>
+      </template>
+      <el-form-item v-else :label="fieldLabel('曝光量')" required>
         <el-input-number
           v-model="contentEditForm.exposure"
           :min="0"

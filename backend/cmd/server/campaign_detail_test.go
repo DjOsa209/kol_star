@@ -76,7 +76,7 @@ func TestAggregateProjectResourcesByName(t *testing.T) {
 	}
 }
 
-func TestUpdateBusinessProjectContentAllowsFacebookManualExposure(t *testing.T) {
+func TestUpdateBusinessProjectContentAllowsFacebookManualMetrics(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,10 @@ func TestUpdateBusinessProjectContentAllowsFacebookManualExposure(t *testing.T) 
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	mock.ExpectExec("update biz_cooperations").
-		WithArgs(4321, 4321, 22, 11, 33).
+		WithArgs(4321, 4321, 130, 11, 22, 11, 33).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert into biz_resource_platform_posts").
+		WithArgs(33, "manual-22", sqlmock.AnyArg(), postURL, 4321, 123, 11, 7).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("select coalesce\\(r.platform_url").
 		WithArgs(22, 33).
@@ -119,6 +122,9 @@ func TestUpdateBusinessProjectContentAllowsFacebookManualExposure(t *testing.T) 
 		"platform":      "Facebook",
 		"postUrl":       postURL,
 		"exposure":      4321,
+		"likeCount":     123,
+		"commentCount":  11,
+		"shareCount":    7,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +155,13 @@ func TestUpdateBusinessProjectContentAllowsFacebookManualExposure(t *testing.T) 
 	for field, want := range expected {
 		if got := response.Data[field]; got != want {
 			t.Errorf("%s = %#v, want %q", field, got, want)
+		}
+	}
+	for field, want := range map[string]float64{
+		"exposure": 4321, "likeCount": 123, "commentCount": 11, "shareCount": 7,
+	} {
+		if got := response.Data[field]; got != want {
+			t.Errorf("%s = %#v, want %.0f", field, got, want)
 		}
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -2199,31 +2199,26 @@ async function confirmImportPrivacyNotice() {
     return true;
   }
 
-  const platformText = platforms.join("、");
   const chineseMessage = [
-    `检测到 ${platformText} 平台数据。`,
     platforms.includes("Facebook")
-      ? "Facebook 受平台隐私及接口限制，系统无法自动读取粉丝数、内容曝光量等数据。"
+      ? "<p><strong>FB：</strong>因 Facebook 平台隐私设置，达人粉丝量及内容数据系统无法调用，请分别前往 <strong>【项目管理-进入项目-达人-编辑】及【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
       : "",
     platforms.includes("小红书")
-      ? "小红书受平台隐私设置限制，系统无法自动读取内容曝光量。"
-      : "",
-    "导入完成后，请前往「资源管理 > 编辑资源」补充粉丝数；前往「项目详情 > 内容」，点击对应内容右上角「… > 编辑」补充或修改曝光量。Facebook 与小红书均支持手动编辑。"
+      ? "<p><strong>小红书：</strong>因小红书平台隐私设置，达人内容阅读数系统无法调用，请前往 <strong>【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
+      : ""
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("");
   const englishMessage = [
-    `${platformText} data was detected.`,
     platforms.includes("Facebook")
-      ? "Due to Facebook privacy and API restrictions, follower counts and content exposure cannot be read automatically."
+      ? "<p><strong>Facebook:</strong> Due to Facebook's privacy settings, the system cannot retrieve creator follower counts or content metrics. Update them under <strong>[Project Management - Open Project - Creators - Edit]</strong> and <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
       : "",
     platforms.includes("小红书")
-      ? "Due to RedNote privacy restrictions, content exposure cannot be read automatically."
-      : "",
-    "After import, update follower counts under Resources > Edit Resource, and update exposure under Project Details > Content > … > Edit. Both Facebook and RedNote support manual editing."
+      ? "<p><strong>RedNote:</strong> Due to RedNote's privacy settings, the system cannot retrieve content view counts. Update them under <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
+      : ""
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("");
 
   try {
     const alertPromise = ElMessageBox.alert(
@@ -2232,6 +2227,7 @@ async function confirmImportPrivacyNotice() {
       {
         type: "warning",
         confirmButtonText: locale.value === "en" ? "Got it" : "我知道了",
+        dangerouslyUseHTMLString: true,
         appendTo: document.body,
         customClass: "project-import-validation-message-box"
       }

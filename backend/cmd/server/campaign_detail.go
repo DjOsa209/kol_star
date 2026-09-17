@@ -487,6 +487,18 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusOK, 10001, "曝光量不能小于 0")
 		return
 	}
+	_, likeCountProvided := body["likeCount"]
+	_, commentCountProvided := body["commentCount"]
+	_, shareCountProvided := body["shareCount"]
+	facebookMetricsProvided := platform == "Facebook" &&
+		(exposureProvided || likeCountProvided || commentCountProvided || shareCountProvided)
+	likeCount := intField(body, "likeCount")
+	commentCount := intField(body, "commentCount")
+	shareCount := intField(body, "shareCount")
+	if likeCount < 0 || commentCount < 0 || shareCount < 0 {
+		writeError(w, http.StatusOK, 10001, "点赞、评论和转发数不能小于 0")
+		return
+	}
 	if projectID <= 0 || cooperationID <= 0 || resourceID <= 0 {
 		writeError(w, http.StatusOK, 10001, "项目、合作记录和合作方不能为空")
 		return
@@ -655,7 +667,7 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 			syncWarning = syncResult.Message
 		}
 	}
-	if exposureProvided {
+	if exposureProvided && platform != "Facebook" {
 		// 手工录入的曝光量优先于平台同步结果，确保编辑内容时可以修正第三方数据。
 		if _, err = a.DB().ExecContext(r.Context(),
 			`update biz_cooperations
@@ -672,6 +684,47 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 				    set view_count = ?
 				  where id = ? and resource_id = ?`,
 				exposure, postID, resourceID,
+			); err != nil {
+				writeDBError(w, err)
+				return
+			}
+		}
+	}
+	if facebookMetricsProvided {
+		// Facebook 平台指标由用户手工填写曝光/点赞/评论/转发。
+		if _, err = a.DB().ExecContext(r.Context(),
+			`update biz_cooperations
+			    set views = ?, impressions = ?,
+			        engagement_count = ?, comments_count = ?
+			  where id = ? and project_id = ? and resource_id = ?`,
+			exposure, exposure, likeCount+shareCount, commentCount,
+			cooperationID, projectID, resourceID,
+		); err != nil {
+			writeDBError(w, err)
+			return
+		}
+		if postID > 0 {
+			if _, err = a.DB().ExecContext(r.Context(),
+				`update biz_resource_platform_posts
+				    set view_count = ?, like_count = ?, comment_count = ?, share_count = ?
+				  where id = ? and resource_id = ?`,
+				exposure, likeCount, commentCount, shareCount, postID, resourceID,
+			); err != nil {
+				writeDBError(w, err)
+				return
+			}
+		} else {
+			if _, err = a.DB().ExecContext(r.Context(),
+				`insert into biz_resource_platform_posts
+				  (resource_id, platform, platform_post_id, title, post_url, media_type,
+				   view_count, like_count, comment_count, share_count, save_count, synced_at)
+				 values (?, 'Facebook', ?, ?, ?, 'POST', ?, ?, ?, ?, 0, now())
+				 on duplicate key update title = values(title), post_url = values(post_url),
+				   view_count = values(view_count), like_count = values(like_count),
+				   comment_count = values(comment_count), share_count = values(share_count),
+				   synced_at = now()`,
+				resourceID, fmt.Sprintf("manual-%d", cooperationID), contentTitle, postURL,
+				exposure, likeCount, commentCount, shareCount,
 			); err != nil {
 				writeDBError(w, err)
 				return
@@ -725,6 +778,9 @@ func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Reques
 		"cooperationId":           cooperationID,
 		"contentRecordId":         postID,
 		"exposure":                exposure,
+		"likeCount":               likeCount,
+		"commentCount":            commentCount,
+		"shareCount":              shareCount,
 	})
 }
 
