@@ -2050,13 +2050,76 @@ function normalizeImportPreviewSheet(sheet: any) {
   };
 }
 
+const importValidationFieldLabels: Record<string, string> = {
+  名称: "Name",
+  合作方主页: "Profile Link",
+  类型: "Type",
+  领域: "Niche",
+  市场: "Market",
+  平台: "Platform",
+  合作类型: "Collaboration Type",
+  内容链接: "Content URL",
+  内容类型: "Content Type",
+  合作费用: "Cost",
+  联系方式: "Contact",
+  对接人: "Owner",
+  供应商: "Vendor",
+  备注: "Notes",
+  resourceType: "Type",
+  category: "Niche",
+  platform: "Platform",
+  cooperationType: "Collaboration Type",
+  contentType: "Content Type"
+};
+
+function localizedImportValidationMessage(message: unknown) {
+  const text = String(message || "").trim();
+  if (locale.value !== "en" || !text) return text;
+
+  const directTranslations: Record<string, string> = {
+    "合作方必须填写完整有效的主页 URL":
+      "A complete and valid profile URL is required",
+    缺少资源名称: "Resource name is required",
+    "发布链接必须是有效 URL": "Content URL must be valid"
+  };
+  if (directTranslations[text]) return directTranslations[text];
+
+  const requiredMatch = text.match(/^(.+?)为必填项$/);
+  if (requiredMatch) {
+    const field =
+      importValidationFieldLabels[requiredMatch[1]] || requiredMatch[1];
+    return `${field} is required`;
+  }
+  const missingMatch = text.match(/^(.+?)未填写$/);
+  if (missingMatch) {
+    const field =
+      importValidationFieldLabels[missingMatch[1]] || missingMatch[1];
+    return `${field} is not provided`;
+  }
+  const presetMatch = text.match(/^(.+?)\s*必须使用平台预设选项$/);
+  if (presetMatch) {
+    const field = importValidationFieldLabels[presetMatch[1]] || presetMatch[1];
+    return `${field} must use a preset option`;
+  }
+  return fieldLabel(text);
+}
+
 function importValidationSummary(rows: any[], key: "errors" | "warnings") {
   const shown = rows.slice(0, 8).map(row => {
     const messages = Array.isArray(row[key]) ? row[key] : [];
-    return `${row.sourceSheet || "Sheet"} 第 ${row.rowNo || "-"} 行：${messages.join("、")}`;
+    const messageText = messages
+      .map(localizedImportValidationMessage)
+      .join(locale.value === "en" ? ", " : "、");
+    return locale.value === "en"
+      ? `${row.sourceSheet || "Sheet"}, row ${row.rowNo || "-"}: ${messageText}`
+      : `${row.sourceSheet || "Sheet"} 第 ${row.rowNo || "-"} 行：${messageText}`;
   });
   if (rows.length > shown.length) {
-    shown.push(`另有 ${rows.length - shown.length} 行未展示`);
+    shown.push(
+      locale.value === "en"
+        ? `${rows.length - shown.length} more row(s) not shown`
+        : `另有 ${rows.length - shown.length} 行未展示`
+    );
   }
   return shown.join("\n");
 }
@@ -2081,11 +2144,14 @@ async function confirmImportValidation() {
   if (requiredRows.length > 0) {
     try {
       const alertPromise = ElMessageBox.alert(
-        `以下数据存在必填项或格式错误，请修改 Excel 后重新上传：\n${importValidationSummary(requiredRows, "errors")}`,
-        "导入已拦截",
+        locale.value === "en"
+          ? `The following rows contain missing required fields or formatting errors. Update the Excel file and upload it again:\n${importValidationSummary(requiredRows, "errors")}`
+          : `以下数据存在必填项或格式错误，请修改 Excel 后重新上传：\n${importValidationSummary(requiredRows, "errors")}`,
+        locale.value === "en" ? "Import blocked" : "导入已拦截",
         {
           type: "warning",
-          confirmButtonText: "返回修改",
+          confirmButtonText:
+            locale.value === "en" ? "Back to edit" : "返回修改",
           appendTo: document.body,
           customClass: "project-import-validation-message-box"
         }
@@ -2106,12 +2172,14 @@ async function confirmImportValidation() {
   }
   try {
     const confirmPromise = ElMessageBox.confirm(
-      `以下选填项尚未填写，仍可继续导入：\n${importValidationSummary(optionalRows, "warnings")}`,
-      "选填项提醒",
+      locale.value === "en"
+        ? `The following optional fields are empty. You can still continue the import:\n${importValidationSummary(optionalRows, "warnings")}`
+        : `以下选填项尚未填写，仍可继续导入：\n${importValidationSummary(optionalRows, "warnings")}`,
+      locale.value === "en" ? "Optional fields" : "选填项提醒",
       {
         type: "warning",
-        confirmButtonText: "确认继续",
-        cancelButtonText: "暂不导入",
+        confirmButtonText: locale.value === "en" ? "Continue" : "确认继续",
+        cancelButtonText: locale.value === "en" ? "Not now" : "暂不导入",
         appendTo: document.body,
         customClass: "project-import-validation-message-box"
       }
@@ -3217,13 +3285,21 @@ onMounted(() => {
                 "
                 type="warning"
               >
-                {{ (row.warnings || []).join("；") }}
+                {{
+                  (row.warnings || [])
+                    .map(localizedImportValidationMessage)
+                    .join(locale === "en" ? "; " : "；")
+                }}
               </el-tag>
               <el-tag v-if="row.duplicate" class="ml-2" type="warning"
                 >{{ fieldLabel("疑似重复") }}</el-tag
               >
               <el-tag v-if="row.errors.length > 0" type="danger">
-                {{ row.errors.join("；") }}
+                {{
+                  row.errors
+                    .map(localizedImportValidationMessage)
+                    .join(locale === "en" ? "; " : "；")
+                }}
               </el-tag>
             </template>
           </el-table-column>
