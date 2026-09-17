@@ -150,6 +150,53 @@ func (a *app) syncCooperationPost(ctx context.Context, cooperationID int, allowA
 	)
 }
 
+// syncProjectCooperationPost mirrors the project detail page's single-content
+// sync behavior. Website content has no platform metrics API, so its sync work
+// is refreshing the locally cached page preview instead.
+func (a *app) syncProjectCooperationPost(ctx context.Context, cooperationID int) (cooperationPostSyncResult, error) {
+	var resourceID int
+	var finalLink string
+	var deliverableLinks string
+	if err := a.DB().QueryRowContext(ctx,
+		`select resource_id, coalesce(final_link, ''), coalesce(deliverable_links, '')
+		   from biz_cooperations where id = ? limit 1`,
+		cooperationID,
+	).Scan(&resourceID, &finalLink, &deliverableLinks); err != nil {
+		return cooperationPostSyncResult{}, err
+	}
+	postSource := cooperationPostSource(finalLink, deliverableLinks)
+	link, err := parseCooperationPostLink(postSource)
+	if err != nil || link.Platform != "Website" {
+		return a.syncCooperationPost(ctx, cooperationID, true)
+	}
+
+	result := cooperationPostSyncResult{
+		Synced:           true,
+		Source:           "网页预览",
+		Platform:         link.Platform,
+		PostID:           link.PostID,
+		FinalLink:        finalLink,
+		DeliverableLinks: deliverableLinks,
+		Message:          "网页预览已同步",
+	}
+	localCoverURL, warning := captureWebsiteScreenshot(ctx, resourceID, cooperationID, link.URL)
+	result.PreviewWarning = warning
+	if localCoverURL != "" {
+		if err := storeCooperationPageScreenshot(
+			ctx,
+			a.DB(),
+			cooperationID,
+			resourceID,
+			link.Platform,
+			link.PostID,
+			localCoverURL,
+		); err != nil {
+			return cooperationPostSyncResult{}, err
+		}
+	}
+	return a.finishCooperationPostSyncResult(ctx, cooperationID, resourceID, true, result)
+}
+
 func applyCooperationPostMetricsToResult(result *cooperationPostSyncResult, post platformPost) {
 	if result == nil {
 		return

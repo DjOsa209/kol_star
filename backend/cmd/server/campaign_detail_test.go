@@ -178,6 +178,46 @@ func TestBusinessProjectDetailDisablesHTTPResponseCaching(t *testing.T) {
 	}
 }
 
+func TestSyncBusinessProjectContentReturnsEmptySummary(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("select count\\(\\*\\) from biz_projects where id = \\?").
+		WithArgs(24).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("select id from biz_cooperations").
+		WithArgs(24).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	body, err := json.Marshal(map[string]any{"projectId": 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", "/business/projects/content/sync-all", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+	newApp(db, Config{}).syncBusinessProjectContent(recorder, request)
+
+	var response struct {
+		Code int                       `json:"code"`
+		Data projectContentSyncSummary `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 0 || response.Data.Total != 0 || response.Data.SuccessCount != 0 || response.Data.FailedCount != 0 {
+		t.Fatalf("unexpected response: %s", recorder.Body.String())
+	}
+	if response.Data.Failures == nil {
+		t.Fatalf("failures should be an empty array: %s", recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAggregateProjectResourcesKeepsNicheFromGroupedProfiles(t *testing.T) {
 	resources := []map[string]any{
 		{

@@ -385,6 +385,94 @@ func parseProjectContentPostID(value string) int64 {
 	return id
 }
 
+type projectContentSyncSummary struct {
+	Total        int                       `json:"total"`
+	SuccessCount int                       `json:"successCount"`
+	FailedCount  int                       `json:"failedCount"`
+	Failures     []projectContentSyncError `json:"failures"`
+}
+
+type projectContentSyncError struct {
+	CooperationID int    `json:"cooperationId"`
+	Message       string `json:"message"`
+}
+
+func (a *app) syncBusinessProjectContent(w http.ResponseWriter, r *http.Request) {
+	projectID := intField(readBody(r), "projectId")
+	if projectID <= 0 {
+		writeError(w, http.StatusOK, 10001, "项目 id 不能为空")
+		return
+	}
+
+	var projectExists int
+	if err := a.DB().QueryRowContext(r.Context(),
+		`select count(*) from biz_projects where id = ?`,
+		projectID,
+	).Scan(&projectExists); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if projectExists == 0 {
+		writeError(w, http.StatusOK, 10004, "项目不存在")
+		return
+	}
+
+	rows, err := a.DB().QueryContext(r.Context(),
+		`select id from biz_cooperations
+		  where project_id = ?
+		    and coalesce(nullif(final_link, ''), nullif(deliverable_links, ''), '') <> ''
+		  order by id asc`,
+		projectID,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	var cooperationIDs []int
+	for rows.Next() {
+		var cooperationID int
+		if err = rows.Scan(&cooperationID); err != nil {
+			rows.Close()
+			writeDBError(w, err)
+			return
+		}
+		cooperationIDs = append(cooperationIDs, cooperationID)
+	}
+	if err = rows.Close(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if err = rows.Err(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+
+	summary := projectContentSyncSummary{
+		Total:    len(cooperationIDs),
+		Failures: make([]projectContentSyncError, 0),
+	}
+	for _, cooperationID := range cooperationIDs {
+		result, syncErr := a.syncProjectCooperationPost(r.Context(), cooperationID)
+		if syncErr == nil && result.Synced {
+			summary.SuccessCount++
+			continue
+		}
+		message := "平台未返回可用的内容数据"
+		if syncErr != nil {
+			message = redactSensitiveText(syncErr.Error())
+		} else if strings.TrimSpace(result.Message) != "" {
+			message = result.Message
+		}
+		summary.FailedCount++
+		summary.Failures = append(summary.Failures, projectContentSyncError{
+			CooperationID: cooperationID,
+			Message:       message,
+		})
+	}
+
+	writeOK(w, summary)
+}
+
 func (a *app) updateBusinessProjectContent(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
 	projectID := intField(body, "projectId")

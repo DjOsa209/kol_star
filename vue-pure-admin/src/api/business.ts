@@ -230,6 +230,15 @@ export const updateProjectContent = (data?: object) => {
   );
 };
 
+export const syncProjectContent = (data: { projectId: number }) => {
+  return http.request<Result>(
+    "post",
+    "/business/projects/content/sync-all",
+    { data },
+    { timeout: 600000 }
+  );
+};
+
 export const deleteProjectContent = (data?: object) => {
   return http.request<Result>("post", "/business/projects/content/delete", {
     data

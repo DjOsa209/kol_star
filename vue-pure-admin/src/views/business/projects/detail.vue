@@ -26,6 +26,7 @@ import {
   renewProject,
   reportProjectInfluencer,
   syncCooperation,
+  syncProjectContent,
   updateProject,
   updateProjectBudget,
   updateProjectContent,
@@ -87,6 +88,7 @@ const contentEditing = ref(false);
 const contentSaving = ref(false);
 const editingContentPost = ref<any>(null);
 const websiteScreenshotLoading = ref(false);
+const syncingProjectContent = ref(false);
 const syncingContentIds = reactive<Record<string, boolean>>({});
 const failedContentAvatarUrls = reactive(new Set<string>());
 const attemptedWebsiteScreenshotIds = new Set<string>();
@@ -1098,6 +1100,46 @@ async function syncContentFromCard(post: any) {
     }
   } finally {
     syncingContentIds[key] = false;
+  }
+}
+
+async function syncAllProjectContent() {
+  const projectId = Number(project.value?.id || selectedProjectId.value || 0);
+  if (!projectId || syncingProjectContent.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `将同步当前项目的 ${projectContentPosts.value.length} 条内容，是否继续？`,
+      "同步全部内容",
+      {
+        type: "info",
+        confirmButtonText: "开始同步",
+        cancelButtonText: "取消"
+      }
+    );
+  } catch {
+    return;
+  }
+
+  syncingProjectContent.value = true;
+  try {
+    const res = await syncProjectContent({ projectId });
+    if (res.code !== 0) {
+      ElMessage.error(res.message || "项目内容同步失败");
+      return;
+    }
+    await loadDetail();
+    const total = numberValue(res.data?.total);
+    const succeeded = numberValue(res.data?.successCount);
+    const failed = numberValue(res.data?.failedCount);
+    if (total === 0) {
+      ElMessage.warning("当前项目暂无可同步的内容");
+    } else if (failed > 0) {
+      ElMessage.warning(`同步完成：成功 ${succeeded} 条，失败 ${failed} 条`);
+    } else {
+      ElMessage.success(`已同步当前项目的 ${succeeded} 条内容`);
+    }
+  } finally {
+    syncingProjectContent.value = false;
   }
 }
 
@@ -3505,6 +3547,15 @@ onBeforeUnmount(() => {
             >{{ fieldLabel("共") }} {{ filteredContentPosts.length }}
             {{ fieldLabel("条内容") }}</span
           >
+          <el-button
+            type="primary"
+            :loading="syncingProjectContent"
+            :disabled="!projectContentPosts.length"
+            @click="syncAllProjectContent"
+          >
+            <IconifyIconOnline icon="ri:refresh-line" />
+            {{ fieldLabel("同步全部内容") }}
+          </el-button>
         </div>
         <el-empty
           v-if="!filteredContentPosts.length"

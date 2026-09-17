@@ -262,6 +262,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/tags/create", a.requireMenu("/business/tags", a.createBusinessTag))
 	mux.HandleFunc("POST /business/projects", a.requireMenu("/business/projects", a.businessProjects))
 	mux.HandleFunc("GET /business/projects/detail", a.requireMenu("/business/projects", a.businessProjectDetail))
+	mux.HandleFunc("POST /business/projects/content/sync-all", a.requireMenu("/business/projects", a.syncBusinessProjectContent))
 	mux.HandleFunc("POST /business/projects/content/update", a.requireMenu("/business/projects", a.updateBusinessProjectContent))
 	mux.HandleFunc("POST /business/projects/content/delete", a.requireMenu("/business/projects", a.deleteBusinessProjectContent))
 	mux.HandleFunc("POST /business/projects/status", a.requireMenu("/business/projects", a.updateBusinessProjectStatus))
