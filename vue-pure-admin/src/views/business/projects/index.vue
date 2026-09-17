@@ -2199,20 +2199,20 @@ async function confirmImportPrivacyNotice() {
 
   const chineseMessage = [
     platforms.includes("Facebook")
-      ? "<p>因 Facebook 平台隐私设置，达人粉丝量及内容数据系统无法调用，请分别前往 <strong>【项目管理-进入项目-达人-编辑】及【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
+      ? "<p>因 Facebook 平台隐私设置，达人粉丝量及内容数据系统无法调用，请分别前往【项目管理-进入项目-达人-编辑】及【项目管理-进入项目-内容-更多-编辑】进行数据更新</p>"
       : "",
     platforms.includes("小红书")
-      ? "<p>因小红书平台隐私设置，达人内容阅读数系统无法调用，请前往 <strong>【项目管理-进入项目-内容-更多-编辑】进行数据更新</strong></p>"
+      ? "<p>因小红书平台隐私设置，达人内容阅读数系统无法调用，请前往【项目管理-进入项目-内容-更多-编辑】进行数据更新</p>"
       : ""
   ]
     .filter(Boolean)
     .join("");
   const englishMessage = [
     platforms.includes("Facebook")
-      ? "<p>Due to Facebook's privacy settings, the system cannot retrieve creator follower counts or content metrics. Update them under <strong>[Project Management - Open Project - Creators - Edit]</strong> and <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
+      ? "<p>Due to Facebook's privacy settings, the system cannot retrieve creator follower counts or content metrics. Update them under [Project Management - Open Project - Creators - Edit] and [Project Management - Open Project - Content - More - Edit].</p>"
       : "",
     platforms.includes("小红书")
-      ? "<p>Due to RedNote's privacy settings, the system cannot retrieve content view counts. Update them under <strong>[Project Management - Open Project - Content - More - Edit]</strong>.</p>"
+      ? "<p>Due to RedNote's privacy settings, the system cannot retrieve content view counts. Update them under [Project Management - Open Project - Content - More - Edit].</p>"
       : ""
   ]
     .filter(Boolean)
