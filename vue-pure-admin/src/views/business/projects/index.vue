@@ -35,6 +35,7 @@ import {
   createCooperation,
   updateCooperation,
   syncCooperation,
+  syncProjectContent,
   importCooperations,
   getMarketOptions,
   createMarketOption,
@@ -91,6 +92,7 @@ const selectedProjectId = ref<number | null>(null);
 const activePipelineStage = ref("all");
 const activeCooperation = ref<any>(null);
 const syncingCooperationIds = reactive<Record<number, boolean>>({});
+const syncingProjectIds = reactive<Record<number, boolean>>({});
 const exportingProjectIds = reactive<Record<number, boolean>>({});
 const savingCooperation = ref(false);
 const projectSearch = ref("");
@@ -1626,6 +1628,47 @@ async function exportProjectData(row: any) {
   }
 }
 
+async function syncAllProjectContent(row: any) {
+  const projectId = Number(row?.id || 0);
+  if (!projectId || syncingProjectIds[projectId]) return;
+  const contentCount = projectStats(projectId).cooperationCount;
+  try {
+    await ElMessageBox.confirm(
+      `将同步「${row.name || "当前项目"}」的全部 ${contentCount} 条内容，是否继续？`,
+      "同步项目内容",
+      {
+        type: "info",
+        confirmButtonText: "开始同步",
+        cancelButtonText: "取消"
+      }
+    );
+  } catch {
+    return;
+  }
+
+  syncingProjectIds[projectId] = true;
+  try {
+    const res = await syncProjectContent({ projectId });
+    if (res.code !== 0) {
+      ElMessage.error(res.message || "项目内容同步失败");
+      return;
+    }
+    await loadData();
+    const total = numberValue(res.data?.total);
+    const succeeded = numberValue(res.data?.successCount);
+    const failed = numberValue(res.data?.failedCount);
+    if (total === 0) {
+      ElMessage.warning("当前项目暂无可同步的内容");
+    } else if (failed > 0) {
+      ElMessage.warning(`同步完成：成功 ${succeeded} 条，失败 ${failed} 条`);
+    } else {
+      ElMessage.success(`已同步该项目的 ${succeeded} 条内容`);
+    }
+  } finally {
+    syncingProjectIds[projectId] = false;
+  }
+}
+
 function openContentImportWorkbook(workbook: XLSX.WorkBook, fileName: string) {
   importProjectId.value = null;
   importProjectNameDraft.value = "";
@@ -2701,30 +2744,44 @@ onMounted(() => {
           </el-table-column>
           <el-table-column
             :label="fieldLabel('操作')"
-            width="300"
+            width="350"
             fixed="right"
             align="center"
           >
             <template #default="{ row }">
               <div class="project-action-cell">
-              <el-button
-                link
-                type="primary"
-                @click.stop="openCampaignDetail(row.id)"
-                >{{ locale === "en" ? fieldLabel("项目详情") : fieldLabel("进入项目") }}</el-button
-              >
-              <el-button link @click.stop="openEditProject(row)"
-                >{{ fieldLabel("编辑") }}</el-button
-              >
-              <el-button
-                link
-                :loading="exportingProjectIds[row.id]"
-                @click.stop="exportProjectData(row)"
-                >{{ fieldLabel("导出") }}</el-button
-              >
-              <el-button link type="danger" @click.stop="removeProjects([row])"
-                >{{ fieldLabel("删除") }}</el-button
-              >
+                <el-button
+                  link
+                  type="primary"
+                  @click.stop="openCampaignDetail(row.id)"
+                  >{{
+                    locale === "en"
+                      ? fieldLabel("项目详情")
+                      : fieldLabel("进入项目")
+                  }}</el-button
+                >
+                <el-button link @click.stop="openEditProject(row)">{{
+                  fieldLabel("编辑")
+                }}</el-button>
+                <el-button
+                  link
+                  :loading="exportingProjectIds[row.id]"
+                  @click.stop="exportProjectData(row)"
+                  >{{ fieldLabel("导出") }}</el-button
+                >
+                <el-button
+                  link
+                  type="danger"
+                  @click.stop="removeProjects([row])"
+                  >{{ fieldLabel("删除") }}</el-button
+                >
+                <el-button
+                  link
+                  type="primary"
+                  :loading="!!syncingProjectIds[Number(row.id || 0)]"
+                  @click.stop="syncAllProjectContent(row)"
+                  >{{ fieldLabel("同步") }}</el-button
+                >
               </div>
             </template>
           </el-table-column>

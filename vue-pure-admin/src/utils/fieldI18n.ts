@@ -843,7 +843,6 @@ const englishFieldLabels: Record<string, string> = {
   数据已同步: "Data Synced",
   合作项目: "Collaboration Project",
   内容数据已同步: "Content data synced",
-  同步全部内容: "Sync All Content",
   更多项目操作: "More Project Actions",
   项目详情导航: "Project Details Navigation",
   恢复项目: "Resume Project",
