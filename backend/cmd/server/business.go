@@ -24,6 +24,10 @@ import (
 
 func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
+	resourceType := strings.TrimSpace(str(body, "resourceType"))
+	if resourceType == "达人" || resourceType == "媒体" {
+		delete(body, "resourceType")
+	}
 	pageSize := intField(body, "pageSize")
 	currentPage := intField(body, "currentPage")
 	if pageSize <= 0 {
@@ -55,6 +59,11 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		"owner":        "owner like ?",
 		"regionTeam":   "region_team like ?",
 	})
+	if resourceType == "达人" {
+		where = appendBusinessWhere(where, "not (lower(resource_type) = 'media' or resource_type = '媒体')")
+	} else if resourceType == "媒体" {
+		where = appendBusinessWhere(where, "(lower(resource_type) = 'media' or resource_type = '媒体')")
+	}
 	var total int
 	if err := a.DB().QueryRowContext(r.Context(), `select count(*) from biz_resources`+where, args...).Scan(&total); err != nil {
 		writeDBError(w, err)
@@ -95,6 +104,14 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	if err := a.attachResourceWeeklyDeltas(r.Context(), rows); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if err := a.attachResourcePlatformAccounts(r.Context(), rows); err != nil {
+		writeDBError(w, err)
+		return
+	}
 	if target := normalizeTargetLanguage(str(body, "locale")); target != "" {
 		if err := a.attachLocalizedResourceText(r.Context(), rows, target); err != nil {
 			writeDBError(w, err)
@@ -102,6 +119,161 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeOK(w, tableData{List: rows, Total: total, PageSize: pageSize, CurrentPage: currentPage})
+}
+
+func appendBusinessWhere(where, clause string) string {
+	if strings.TrimSpace(where) == "" {
+		return " where " + clause
+	}
+	return where + " and " + clause
+}
+
+func weeklyPercentDelta(current, previous float64) any {
+	if previous <= 0 {
+		return nil
+	}
+	return math.Round(((current-previous)/previous)*1000) / 10
+}
+
+func (a *app) attachResourceWeeklyDeltas(ctx context.Context, rows []map[string]any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]any, 0, len(rows))
+	placeholders := make([]string, 0, len(rows))
+	for _, row := range rows {
+		id := anyInt64(row["id"])
+		if id <= 0 {
+			continue
+		}
+		ids = append(ids, id)
+		placeholders = append(placeholders, "?")
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	snapshots, err := a.queryMaps(ctx,
+		`select resource_id as resourceId, audience_size as audienceSize,
+		        average_views as averageViews, average_interactions as averageInteractions,
+		        snapshot_week as snapshotWeek
+		   from biz_resource_metric_snapshots
+		  where resource_id in (`+strings.Join(placeholders, ",")+`)
+		    and snapshot_week < date_sub(curdate(), interval weekday(curdate()) day)
+		  order by snapshot_week desc`,
+		ids...,
+	)
+	if err != nil {
+		return err
+	}
+	previousByResource := make(map[int64]map[string]any, len(rows))
+	for _, snapshot := range snapshots {
+		id := anyInt64(snapshot["resourceId"])
+		if _, exists := previousByResource[id]; !exists {
+			previousByResource[id] = snapshot
+		}
+	}
+	for _, row := range rows {
+		previous := previousByResource[anyInt64(row["id"])]
+		if previous == nil {
+			row["weeklyDeltas"] = map[string]any{
+				"audience": nil, "views": nil, "interactions": nil,
+			}
+			continue
+		}
+		engagementRate := anyFloat64(row["engagementRate"])
+		if engagementRate > 1 {
+			engagementRate /= 100
+		}
+		currentAudience := anyFloat64(row["followers"])
+		if strings.Contains(strings.ToLower(fmt.Sprint(row["resourceType"])), "media") ||
+			strings.Contains(fmt.Sprint(row["resourceType"]), "媒体") {
+			currentAudience = anyFloat64(row["monthlyVisits"])
+			if currentAudience <= 0 {
+				currentAudience = anyFloat64(row["umvMonth"])
+			}
+			if currentAudience <= 0 {
+				currentAudience = anyFloat64(row["audienceSize"])
+			}
+		}
+		currentViews := anyFloat64(row["avgViews"])
+		row["weeklyDeltas"] = map[string]any{
+			"audience":     weeklyPercentDelta(currentAudience, anyFloat64(previous["audienceSize"])),
+			"views":        weeklyPercentDelta(currentViews, anyFloat64(previous["averageViews"])),
+			"interactions": weeklyPercentDelta(currentViews*engagementRate, anyFloat64(previous["averageInteractions"])),
+		}
+	}
+	return nil
+}
+
+func (a *app) attachResourcePlatformAccounts(ctx context.Context, rows []map[string]any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	names := make([]any, 0, len(rows))
+	placeholders := make([]string, 0, len(rows))
+	seen := map[string]bool{}
+	for _, row := range rows {
+		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(row["name"])))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+		placeholders = append(placeholders, "?")
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	accounts, err := a.queryMaps(ctx,
+		`select lower(trim(name)) as resourceName, platform,
+		        greatest(followers, audience_size, umv_month, monthly_visits) as followers
+		   from biz_resources
+		  where lower(trim(name)) in (`+strings.Join(placeholders, ",")+`)
+		    and trim(platform) <> ''
+		  order by followers desc`,
+		names...,
+	)
+	if err != nil {
+		return err
+	}
+	byName := make(map[string][]map[string]any, len(names))
+	for _, account := range accounts {
+		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(account["resourceName"])))
+		byName[name] = append(byName[name], map[string]any{
+			"platform":  account["platform"],
+			"followers": account["followers"],
+		})
+	}
+	for _, row := range rows {
+		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(row["name"])))
+		row["platformAccounts"] = byName[name]
+	}
+	return nil
+}
+
+func (a *app) recordResourceMetricSnapshot(ctx context.Context, resourceID int) error {
+	_, err := a.DB().ExecContext(ctx,
+		`insert into biz_resource_metric_snapshots
+		  (resource_id, snapshot_week, audience_size, average_views, average_interactions)
+		 select id,
+		        date_sub(curdate(), interval weekday(curdate()) day),
+		        case
+		          when lower(resource_type) = 'media' or resource_type = '媒体'
+		            then coalesce(nullif(monthly_visits, 0), nullif(umv_month, 0), audience_size, 0)
+		          else coalesce(nullif(followers, 0), audience_size, 0)
+		        end,
+		        coalesce(avg_views, 0),
+		        round(coalesce(avg_views, 0) *
+		          case when engagement_rate > 1 then engagement_rate / 100 else engagement_rate end)
+		   from biz_resources
+		  where id = ?
+		 on duplicate key update
+		   audience_size = values(audience_size),
+		   average_views = values(average_views),
+		   average_interactions = values(average_interactions)`,
+		resourceID,
+	)
+	return err
 }
 
 func (a *app) createBusinessResource(w http.ResponseWriter, r *http.Request) {
@@ -5636,7 +5808,15 @@ func businessFilters(body map[string]any, rules map[string]string) (string, []an
 }
 
 func str(body map[string]any, key string) string {
-	return strings.TrimSpace(fmt.Sprint(body[key]))
+	value, exists := body[key]
+	if !exists || value == nil {
+		return ""
+	}
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "<nil>" || text == "undefined" {
+		return ""
+	}
+	return text
 }
 
 func floatField(body map[string]any, key string) float64 {

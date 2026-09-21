@@ -72,6 +72,31 @@ const feishuConfig = ref<any>({
 const latestJob = ref<any>(null);
 const resourceCounts = ref<any[]>([]);
 const lastResourceSyncAt = ref<any>(null);
+const schedule = ref<any>({
+  enabled: false,
+  frequency: "weekly",
+  weekday: 1,
+  runTime: "02:00",
+  timezone: "Asia/Shanghai",
+  lastStartedAt: null,
+  nextRunAt: null
+});
+const weekdayOptions = [
+  { value: 1, label: "星期一" },
+  { value: 2, label: "星期二" },
+  { value: 3, label: "星期三" },
+  { value: 4, label: "星期四" },
+  { value: 5, label: "星期五" },
+  { value: 6, label: "星期六" },
+  { value: 7, label: "星期日" }
+];
+const timezoneOptions = [
+  "Asia/Shanghai",
+  "UTC",
+  "Europe/London",
+  "America/New_York",
+  "America/Los_Angeles"
+];
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const syncRunning = computed(() => latestJob.value?.status === "运行中");
@@ -140,6 +165,8 @@ async function loadData() {
   latestJob.value = data.latestJob || null;
   resourceCounts.value = data.resourceCounts || [];
   lastResourceSyncAt.value = data.lastResourceSyncAt || null;
+  Object.assign(schedule.value, data.schedule || {});
+  schedule.value.enabled = normalizeSwitch(schedule.value.enabled);
   if (syncRunning.value) startPolling();
 }
 
@@ -155,7 +182,8 @@ async function save() {
   const res = await savePlatformSyncControl({
     settings: settings.value,
     apiConfig: apiConfig.value,
-    feishuConfig: feishuConfig.value
+    feishuConfig: feishuConfig.value,
+    schedule: schedule.value
   });
   saving.value = false;
   if (res.code === 0) {
@@ -257,6 +285,67 @@ onUnmounted(stopPolling);
         <strong>
           {{ latestJob?.successCount || 0 }}/{{ latestJob?.failedCount || 0 }}
         </strong>
+      </div>
+    </section>
+
+    <section class="schedule-panel">
+      <div class="panel-header">
+        <div>
+          <strong>{{ fieldLabel("自动刷新计划") }}</strong>
+          <span>{{ fieldLabel("自动同步资源数据；周环比仍按自然周计算。") }}</span>
+        </div>
+        <el-switch
+          v-model="schedule.enabled"
+          :active-text="fieldLabel('启用')"
+          :inactive-text="fieldLabel('停用')"
+        />
+      </div>
+      <el-form label-position="top" class="schedule-form">
+        <el-form-item :label="fieldLabel('刷新周期')">
+          <el-select v-model="schedule.frequency">
+            <el-option :label="fieldLabel('每天')" value="daily" />
+            <el-option :label="fieldLabel('每周')" value="weekly" />
+          </el-select>
+        </el-form-item>
+        <el-form-item
+          v-if="schedule.frequency === 'weekly'"
+          :label="fieldLabel('执行星期')"
+        >
+          <el-select v-model="schedule.weekday">
+            <el-option
+              v-for="item in weekdayOptions"
+              :key="item.value"
+              :label="fieldLabel(item.label)"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="fieldLabel('执行时间')">
+          <el-time-select
+            v-model="schedule.runTime"
+            start="00:00"
+            step="00:30"
+            end="23:30"
+          />
+        </el-form-item>
+        <el-form-item :label="fieldLabel('时区')">
+          <el-select v-model="schedule.timezone" filterable>
+            <el-option
+              v-for="item in timezoneOptions"
+              :key="item"
+              :label="item"
+              :value="item"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div class="schedule-meta">
+        <span>
+          {{ fieldLabel("下次执行") }}：{{ formatDateTime(schedule.nextRunAt) }}
+        </span>
+        <span>
+          {{ fieldLabel("上次自动启动") }}：{{ formatDateTime(schedule.lastStartedAt) }}
+        </span>
       </div>
     </section>
 
@@ -592,6 +681,7 @@ onUnmounted(stopPolling);
 
 .status-grid > div,
 .sync-panel,
+.schedule-panel,
 .api-panel,
 .settings-panel {
   padding: 16px;
@@ -616,6 +706,32 @@ onUnmounted(stopPolling);
 
 .sync-panel {
   margin-bottom: 16px;
+}
+
+.schedule-panel {
+  margin-bottom: 16px;
+}
+
+.schedule-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.schedule-form :deep(.el-select),
+.schedule-form :deep(.el-date-editor) {
+  width: 100%;
+}
+
+.schedule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding-top: 12px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #64748b;
+  border-top: 1px solid #eef2f7;
 }
 
 .api-panel {
@@ -676,6 +792,10 @@ onUnmounted(stopPolling);
   }
 
   .status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-form {
     grid-template-columns: 1fr;
   }
 }

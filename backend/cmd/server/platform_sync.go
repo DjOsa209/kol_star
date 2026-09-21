@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -40,6 +41,15 @@ func (a *app) savePlatformSyncControl(w http.ResponseWriter, r *http.Request) {
 	if err := a.ensurePlatformSyncSettings(r.Context()); err != nil {
 		writeDBError(w, err)
 		return
+	}
+	var schedule *resourceSyncSchedule
+	if raw, ok := body["schedule"].(map[string]any); ok {
+		normalized, err := normalizeResourceSyncSchedule(raw)
+		if err != nil {
+			writeError(w, http.StatusOK, 10003, err.Error())
+			return
+		}
+		schedule = &normalized
 	}
 	if apiConfigRaw, ok := body["apiConfig"].(map[string]any); ok {
 		if err := a.savePlatformAPIConfig(r.Context(), apiConfigRaw); err != nil {
@@ -79,6 +89,20 @@ func (a *app) savePlatformSyncControl(w http.ResponseWriter, r *http.Request) {
 			   post_limit = values(post_limit)`,
 			platform, boolInt(row, "enabled"), boolInt(row, "syncProfile"), boolInt(row, "syncPosts"), clampInt(intField(row, "postLimit"), 1, 50),
 		); err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
+	if schedule != nil {
+		if _, err := tx.ExecContext(r.Context(),
+			`insert into biz_resource_sync_schedule
+			  (id, enabled, frequency, weekday, run_time, timezone)
+			 values (1, ?, ?, ?, ?, ?)
+			 on duplicate key update
+			   enabled = values(enabled), frequency = values(frequency),
+			   weekday = values(weekday), run_time = values(run_time), timezone = values(timezone)`,
+			schedule.Enabled, schedule.Frequency, schedule.Weekday,
+			schedule.RunTime, schedule.Timezone); err != nil {
 			writeDBError(w, err)
 			return
 		}
@@ -226,6 +250,11 @@ func (a *app) runBusinessResourcesSyncAll(jobID int, selectedPlatforms map[strin
 			a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, errMessage)
 			continue
 		}
+		if err = a.recordResourceMetricSnapshot(ctx, resource.ID); err != nil {
+			failedCount++
+			a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, fmt.Sprintf("记录周度指标失败：%v", err))
+			continue
+		}
 		successCount++
 		a.updatePlatformSyncJobProgress(ctx, jobID, resource, successCount, failedCount, skippedCount, "同步成功")
 	}
@@ -283,6 +312,11 @@ func (a *app) runBusinessResourceSyncOne(jobID int, resource syncResourceRow) {
 		a.markResourceSyncFailed(ctx, resource.ID, errMessage)
 		a.updatePlatformSyncJobProgress(ctx, jobID, resource, 0, 1, 0, errMessage)
 		a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("%s 同步失败：%s", resource.Name, errMessage))
+		return
+	}
+	if err := a.recordResourceMetricSnapshot(ctx, resource.ID); err != nil {
+		a.updatePlatformSyncJobProgress(ctx, jobID, resource, 0, 1, 0, fmt.Sprintf("记录周度指标失败：%v", err))
+		a.finishPlatformSyncJob(ctx, jobID, "失败", fmt.Sprintf("%s 周度指标记录失败", resource.Name))
 		return
 	}
 	a.updatePlatformSyncJobProgress(ctx, jobID, resource, 1, 0, 0, "同步成功")
@@ -524,6 +558,26 @@ func (a *app) platformSyncStatus(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	schedule, err := a.resourceSyncSchedule(ctx)
+	if err != nil {
+		return nil, err
+	}
+	_, _, nextRun, scheduleErr := resourceSyncScheduleState(schedule, time.Now())
+	if scheduleErr != nil {
+		return nil, scheduleErr
+	}
+	scheduleData := map[string]any{
+		"enabled": schedule.Enabled, "frequency": schedule.Frequency,
+		"weekday": schedule.Weekday, "runTime": schedule.RunTime,
+		"timezone": schedule.Timezone, "lastRunKey": schedule.LastRunKey,
+		"lastStartedAt": nil, "nextRunAt": nil,
+	}
+	if schedule.LastStartedAt.Valid {
+		scheduleData["lastStartedAt"] = schedule.LastStartedAt.Time.UnixMilli()
+	}
+	if schedule.Enabled {
+		scheduleData["nextRunAt"] = nextRun.UnixMilli()
+	}
 	return map[string]any{
 		"settings":           settings,
 		"latestJob":          latestJob,
@@ -532,6 +586,7 @@ func (a *app) platformSyncStatus(ctx context.Context) (map[string]any, error) {
 		"apiConfig":          a.platformAPIConfigStatus(ctx),
 		"feishuConfig":       feishuConfigPublicContent(a.Config().Feishu),
 		"tokenStatus":        a.platformTokenStatus(ctx),
+		"schedule":           scheduleData,
 	}, nil
 }
 

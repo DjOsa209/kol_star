@@ -75,6 +75,7 @@ func main() {
 	} else if interrupted > 0 {
 		log.Printf("interrupted %d stale platform sync job(s) from previous service run", interrupted)
 	}
+	go a.runResourceSyncScheduler(context.Background())
 	watchConfig(watcher, func(next Config) {
 		if err := a.reloadConfig(next); err != nil {
 			log.Printf("reload config failed: %v", err)

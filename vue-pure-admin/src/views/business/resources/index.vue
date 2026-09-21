@@ -83,7 +83,7 @@ const selectedProject = ref("");
 const editingCooperationId = ref<number | null>(null);
 const total = ref(0);
 const currentPage = ref(1);
-const pageSize = ref(10);
+const pageSize = ref(20);
 const sequenceSortOrder = ref<"asc" | "desc">("asc");
 const workbookSheets = ref<any[]>([]);
 const selectedSheets = ref<string[]>([]);
@@ -129,6 +129,16 @@ const defaultPlatformOptions = [
   "Reddit"
 ];
 const platformOptions = ref<string[]>(loadPlatformOptions());
+const countryOptions = computed(() =>
+  Array.from(
+    new Set(
+      (Array.isArray(list.value) ? list.value : [])
+        .flatMap(row => [row.country, row.market])
+        .map(value => displayText(value, ""))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b))
+);
 
 const search = reactive({
   name: "",
@@ -142,7 +152,7 @@ const search = reactive({
 
 const form = reactive({
   name: "",
-  resourceType: "KOL",
+  resourceType: "达人",
   country: "",
   region: "",
   city: "",
@@ -283,7 +293,7 @@ const postsByResource = computed(() => {
     if (!resourceId) return;
     if (!map.has(resourceId)) map.set(resourceId, []);
     const items = map.get(resourceId)!;
-    if (items.length < 2) items.push(post);
+    if (items.length < 3) items.push(post);
   });
   return map;
 });
@@ -332,6 +342,162 @@ function postsFor(row: any) {
   return postsByResource.value.get(Number(row.id)) || [];
 }
 
+function isMediaResource(row: any) {
+  return /媒体|media/i.test(String(row?.resourceType || ""));
+}
+
+function resourceTypeText(value: unknown) {
+  return fieldLabel(/媒体|media/i.test(String(value || "")) ? "媒体" : "达人");
+}
+
+function platformAccounts(row: any) {
+  const raw = Array.isArray(row?.platformAccounts)
+    ? row.platformAccounts
+    : Array.isArray(row?.platforms)
+      ? row.platforms
+      : [];
+  const normalized = raw
+    .map((item: any) =>
+      typeof item === "string"
+        ? { platform: item, followers: 0 }
+        : {
+            platform: item?.platform || item?.name,
+            followers: numberValue(
+              item?.followers ?? item?.audienceSize ?? item?.visits
+            )
+          }
+    )
+    .filter((item: any) => item.platform);
+  if (row?.platform) {
+    normalized.push({
+      platform: row.platform,
+      followers: resourceAudience(row)
+    });
+  }
+  const unique = new Map<string, { platform: string; followers: number }>();
+  normalized.forEach((item: any) => {
+    const key = String(item.platform).trim().toLowerCase();
+    const existing = unique.get(key);
+    if (!existing || item.followers > existing.followers) unique.set(key, item);
+  });
+  return Array.from(unique.values())
+    .sort((a, b) => b.followers - a.followers)
+    .slice(0, 5);
+}
+
+function metricDelta(row: any, key: string) {
+  const aliases: Record<string, string[]> = {
+    audience: ["audience", "followers", "visits", "audienceSize"],
+    views: ["views", "avgViews", "averageViews"],
+    interactions: ["interactions", "avgInteractions", "averageInteractions"]
+  };
+  const source = row?.weeklyDeltas || row?.weekOverWeek || {};
+  for (const alias of aliases[key] || [key]) {
+    const value = Number(source?.[alias] ?? row?.[`${alias}WeeklyDelta`]);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function deltaText(value: number | null) {
+  if (value === null) return "--";
+  return `${Math.abs(value).toFixed(1)}%`;
+}
+
+function deltaClass(row: any, key: string) {
+  const value = metricDelta(row, key);
+  if (value === null) return "is-empty";
+  return value >= 0 ? "is-up" : "is-down";
+}
+
+function deltaIcon(row: any, key: string) {
+  const value = metricDelta(row, key);
+  return value !== null && value >= 0
+    ? "ri:arrow-up-line"
+    : "ri:arrow-down-line";
+}
+
+function averageValue(total: number, count: number) {
+  return count > 0 ? total / count : 0;
+}
+
+function cooperationCostRange(row: any) {
+  const costs = cooperationsFor(row)
+    .map(item => numberValue(item.quoteAmount))
+    .filter(value => value > 0);
+  if (!costs.length) return "-";
+  const minimum = Math.min(...costs);
+  const maximum = Math.max(...costs);
+  const formatUSD = (value: number) =>
+    `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  return minimum === maximum
+    ? formatUSD(minimum)
+    : `${formatUSD(minimum)}–${formatUSD(maximum)}`;
+}
+
+function averageCooperationReach(row: any) {
+  const stat = cooperationStats(row);
+  return averageValue(stat.totalReach, stat.count);
+}
+
+function averageCooperationCpm(row: any) {
+  const rows = cooperationsFor(row).filter(
+    item => numberValue(item.quoteAmount) > 0 && primaryReach(item) > 0
+  );
+  if (!rows.length) return "-";
+  const average =
+    rows.reduce(
+      (sum, item) =>
+        sum + (numberValue(item.quoteAmount) * 1000) / primaryReach(item),
+      0
+    ) / rows.length;
+  return `$${average.toFixed(2)}`;
+}
+
+function recentCooperationPosts(row: any) {
+  const cooperationLinks = new Set(
+    cooperationsFor(row)
+      .flatMap(item => [item.finalLink, item.deliverableLinks])
+      .flatMap(value => String(value || "").split(/[\n,;]/))
+      .map(value => value.trim().replace(/\/$/, ""))
+      .filter(Boolean)
+  );
+  const posts = postsFor(row);
+  const matched = posts.filter(post =>
+    cooperationLinks.has(
+      String(post.postUrl || "")
+        .trim()
+        .replace(/\/$/, "")
+    )
+  );
+  return matched.slice(0, 3);
+}
+
+function postDate(post: any) {
+  const value = Number(post?.publishedAt || 0);
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString(
+    locale.value === "en" ? "en-CA" : "zh-CN",
+    { year: "numeric", month: "2-digit", day: "2-digit" }
+  );
+}
+
+function durationText(value: unknown) {
+  const total = Math.max(0, Math.round(numberValue(value)));
+  const minutes = Math.floor(total / 60);
+  const seconds = String(total % 60).padStart(2, "0");
+  return `${String(minutes).padStart(2, "0")}:${seconds}`;
+}
+
+function postInteractions(post: any) {
+  return (
+    numberValue(post?.likeCount) +
+    numberValue(post?.commentCount) +
+    numberValue(post?.shareCount) +
+    numberValue(post?.saveCount)
+  );
+}
+
 function openUrl(url: string) {
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
@@ -339,8 +505,10 @@ function openUrl(url: string) {
 
 function marketText(row: any) {
   const parts = [
-    localizedText(row, "region"),
-    row.market || localizedText(row, "country") || localizedText(row, "city")
+    localizedText(row, "region", ""),
+    row.market ||
+      localizedText(row, "country", "") ||
+      localizedText(row, "city", "")
   ]
     .map(item => displayText(item, ""))
     .filter(Boolean);
@@ -348,11 +516,13 @@ function marketText(row: any) {
 }
 
 function domainText(row: any) {
-  return fieldLabel(displayText(
-    row.category
-      ? localizedText(row, "category")
-      : localizedText(row, "industry")
-  ));
+  return fieldLabel(
+    displayText(
+      row.category
+        ? localizedText(row, "category")
+        : localizedText(row, "industry")
+    )
+  );
 }
 
 function tierText(row: any) {
@@ -375,7 +545,11 @@ function cooperationTypes(row: any) {
 
 function resourceAudience(row: any) {
   if (/媒体|media/i.test(String(row?.resourceType || ""))) {
-    return numberValue(row?.audienceSize);
+    return (
+      numberValue(row?.monthlyVisits) ||
+      numberValue(row?.umvMonth) ||
+      numberValue(row?.audienceSize)
+    );
   }
   return numberValue(row?.followers) || numberValue(row?.audienceSize);
 }
@@ -495,7 +669,7 @@ async function translateVisibleRows(params: any, rows: any[]) {
           getResourcePosts({
             resourceId: row.id,
             currentPage: 1,
-            pageSize: 2,
+            pageSize: 3,
             locale: "en"
           })
         )
@@ -575,7 +749,7 @@ async function loadData() {
           getResourcePosts({
             resourceId: row.id,
             currentPage: 1,
-            pageSize: 2,
+            pageSize: 3,
             locale: locale.value
           })
         )
@@ -825,12 +999,50 @@ function locationText(row: any) {
 }
 
 function mediaAccountTitle(row: any) {
-  return displayText(
-    row.mediaOutlet ||
-      row.platformHandle ||
-      localizedText(row, "title", "") ||
-      row.platformUrl
-  );
+  const outlet = displayText(row.mediaOutlet, "");
+  if (outlet) return outlet;
+
+  const handle = displayText(row.platformHandle, "");
+  if (handle) {
+    if (/^https?:\/\//i.test(handle)) return accountFromHomepage(handle);
+    const socialPlatform = /youtube|instagram|tiktok|twitter|\bx\b/i.test(
+      String(row.platform || "")
+    );
+    return socialPlatform && !handle.startsWith("@") ? `@${handle}` : handle;
+  }
+
+  const title = displayText(localizedText(row, "title", ""), "");
+  if (title) return title;
+  return accountFromHomepage(row.platformUrl);
+}
+
+function accountFromHomepage(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  try {
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    const segments = decodeURIComponent(url.pathname)
+      .split("/")
+      .map(item => item.trim())
+      .filter(Boolean);
+    const handle = segments.find(item => item.startsWith("@"));
+    if (handle) return handle;
+    const platformHost = url.hostname.replace(/^www\./i, "").toLowerCase();
+    const socialHost = /youtube|instagram|tiktok|twitter|x\.com|facebook/.test(
+      platformHost
+    );
+    const lastSegment = segments.at(-1);
+    if (
+      socialHost &&
+      lastSegment &&
+      !/^(channel|user|c|profile)$/i.test(lastSegment)
+    ) {
+      return lastSegment.startsWith("@") ? lastSegment : `@${lastSegment}`;
+    }
+    return url.hostname.replace(/^www\./i, "");
+  } catch {
+    return displayText(raw);
+  }
 }
 
 function mediaAccountSub(row: any) {
@@ -931,7 +1143,7 @@ function resetForm() {
   editingId.value = null;
   Object.assign(form, {
     name: "",
-    resourceType: "KOL",
+    resourceType: "达人",
     country: "",
     region: "",
     city: "",
@@ -970,6 +1182,7 @@ function openEdit(row: any) {
   resetForm();
   editingId.value = row.id;
   Object.assign(form, row);
+  form.resourceType = isMediaResource(row) ? "媒体" : "达人";
   form.followers = /媒体|media/i.test(String(row.resourceType || ""))
     ? numberValue(row.audienceSize)
     : numberValue(row.followers);
@@ -1561,49 +1774,152 @@ onUnmounted(() => {
 
 <template>
   <div class="business-page">
-    <section class="page-hero">
-      <div>
-        <span>Resource Library</span>
+    <section class="resource-toolbar">
+      <div class="resource-toolbar__title">
         <h1>{{ fieldLabel("全球资源库") }}</h1>
         <p>
-          {{
-            fieldLabel(
-              "集中维护媒体、KOL、创作者与代理商主档，沉淀评分、风险、平台数据和导入来源。"
-            )
-          }}
+          {{ fieldLabel("汇聚全球优质创作者与媒体资源，助力品牌高效出海") }}
         </p>
       </div>
-      <div class="hero-actions">
-        <div class="sync-action">
-          <el-button
-            :loading="syncingAll || (showSyncCard && syncRunning)"
-            type="success"
-            @click="syncAll"
-          >
-            <IconifyIconOnline icon="ri:cloud-line" class="mr-1" />
-            {{ fieldLabel("立即同步KOL数据") }}
-          </el-button>
-          <span
-            >{{ fieldLabel("上一次同步") }}：{{
-              formatDateTime(syncStatus.lastResourceSyncAt)
-            }}</span
-          >
-        </div>
-        <el-button type="primary" @click="openCreate">
-          <IconifyIconOnline icon="ri:add-line" class="mr-1" />
-          {{ fieldLabel("新增资源") }}
-        </el-button>
-        <el-button
-          type="danger"
-          plain
-          :disabled="selectedResourceIds.length === 0"
-          @click="removeResources(selectedResourceIds)"
+      <div class="resource-toolbar__filters">
+        <el-input
+          v-model="search.name"
+          clearable
+          :placeholder="fieldLabel('搜索名称、账号或关键词')"
+          class="resource-search"
+          @keyup.enter="searchData"
         >
-          {{ fieldLabel("删除所选")
-          }}{{
-            selectedResourceIds.length ? ` (${selectedResourceIds.length})` : ""
-          }}
-        </el-button>
+          <template #prefix>
+            <IconifyIconOnline icon="ri:search-line" />
+          </template>
+        </el-input>
+        <el-select
+          v-model="search.resourceType"
+          clearable
+          :placeholder="fieldLabel('全部类型')"
+          class="toolbar-select"
+          @change="searchData"
+        >
+          <el-option
+            v-for="item in ['达人', '媒体']"
+            :key="item"
+            :label="fieldLabel(item)"
+            :value="item"
+          />
+        </el-select>
+        <el-select
+          v-model="search.country"
+          clearable
+          filterable
+          allow-create
+          :placeholder="fieldLabel('全部国家/地区')"
+          class="toolbar-select toolbar-country"
+          @change="searchData"
+        >
+          <el-option
+            v-for="country in countryOptions"
+            :key="country"
+            :label="fieldLabel(country)"
+            :value="country"
+          />
+        </el-select>
+        <el-select
+          v-model="search.tier"
+          clearable
+          :placeholder="fieldLabel('全部粉丝量')"
+          class="toolbar-select"
+          @change="searchData"
+        >
+          <el-option
+            v-for="item in ['头部', '腰部', '尾部']"
+            :key="item"
+            :label="fieldLabel(item)"
+            :value="item"
+          />
+        </el-select>
+        <el-popover placement="bottom-end" :width="360" trigger="click">
+          <template #reference>
+            <el-button class="filter-trigger">
+              <IconifyIconOnline icon="ri:filter-3-line" />
+              {{ fieldLabel("筛选") }}
+            </el-button>
+          </template>
+          <div class="advanced-filter-panel">
+            <el-select
+              v-model="search.platform"
+              clearable
+              filterable
+              :placeholder="fieldLabel('全部平台')"
+            >
+              <el-option
+                v-for="platform in platformOptions"
+                :key="platform"
+                :label="platform"
+                :value="platform"
+              />
+            </el-select>
+            <el-select
+              v-model="search.industry"
+              clearable
+              filterable
+              :placeholder="fieldLabel('全部领域')"
+            >
+              <el-option
+                v-for="item in [
+                  '科技',
+                  '生活方式',
+                  '商业',
+                  '综合新闻',
+                  '游戏',
+                  '校园',
+                  '设计'
+                ]"
+                :key="item"
+                :label="fieldLabel(item)"
+                :value="item"
+              />
+            </el-select>
+            <el-select
+              v-model="selectedProject"
+              clearable
+              filterable
+              :placeholder="fieldLabel('全部历史合作')"
+            >
+              <el-option
+                v-for="project in projectOptions"
+                :key="project"
+                :label="project"
+                :value="project"
+              />
+            </el-select>
+            <div class="advanced-filter-actions">
+              <el-button @click="resetSearch">{{
+                fieldLabel("重置")
+              }}</el-button>
+              <el-button type="primary" @click="searchData">{{
+                fieldLabel("应用筛选")
+              }}</el-button>
+            </div>
+            <div class="resource-management-actions">
+              <el-button text @click="syncAll">{{
+                fieldLabel("同步数据")
+              }}</el-button>
+              <el-button text @click="openImportDialog">{{
+                fieldLabel("上传主名单")
+              }}</el-button>
+              <el-button text @click="openCreate">{{
+                fieldLabel("新增资源")
+              }}</el-button>
+              <el-button
+                text
+                type="danger"
+                :disabled="selectedResourceIds.length === 0"
+                @click="removeResources(selectedResourceIds)"
+                >{{ fieldLabel("删除所选") }}</el-button
+              >
+            </div>
+          </div>
+        </el-popover>
       </div>
     </section>
 
@@ -1646,137 +1962,7 @@ onUnmounted(() => {
       </div>
     </el-card>
 
-    <el-card shadow="never" class="filter-card">
-      <el-form :model="search" inline>
-        <el-form-item :label="fieldLabel('名称')">
-          <el-input
-            v-model="search.name"
-            clearable
-            :placeholder="fieldLabel('账号/媒体名')"
-          />
-        </el-form-item>
-        <el-form-item :label="fieldLabel('资源类型')">
-          <el-select
-            v-model="search.resourceType"
-            clearable
-            :placeholder="fieldLabel('全部类型')"
-            class="filter-select-wide"
-          >
-            <el-option
-              v-for="item in ['KOL', '媒体', 'IP', '其他']"
-              :key="item"
-              :label="fieldLabel(item)"
-              :value="item"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="fieldLabel('国家')">
-          <el-input
-            v-model="search.country"
-            clearable
-            :placeholder="fieldLabel('国家/地区')"
-          />
-        </el-form-item>
-        <el-form-item :label="fieldLabel('平台')">
-          <el-select
-            v-model="search.platform"
-            clearable
-            filterable
-            :placeholder="fieldLabel('全部')"
-            class="filter-select-wide"
-          >
-            <el-option
-              v-for="platform in platformOptions"
-              :key="platform"
-              :label="platform"
-              :value="platform"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="fieldLabel('资源领域')">
-          <el-select
-            v-model="search.industry"
-            clearable
-            filterable
-            :placeholder="fieldLabel('全部领域')"
-            class="filter-select-wide"
-          >
-            <el-option
-              v-for="item in [
-                '科技',
-                '生活方式',
-                '商业',
-                '综合新闻',
-                '游戏',
-                '校园',
-                '设计'
-              ]"
-              :key="item"
-              :label="fieldLabel(item)"
-              :value="item"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="fieldLabel('分级')">
-          <el-select
-            v-model="search.tier"
-            clearable
-            :placeholder="fieldLabel('全部')"
-            class="filter-select-wide"
-          >
-            <el-option
-              v-for="item in ['头部', '腰部', '尾部']"
-              :key="item"
-              :label="fieldLabel(item)"
-              :value="item"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="fieldLabel('合作项目')">
-          <el-select
-            v-model="selectedProject"
-            clearable
-            filterable
-            :placeholder="fieldLabel('全部历史合作')"
-            class="filter-select-wide"
-          >
-            <el-option
-              v-for="project in projectOptions"
-              :key="project"
-              :label="project"
-              :value="project"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="searchData">
-            <IconifyIconOnline icon="ri:search-line" class="mr-1" />
-            {{ fieldLabel("查询") }}
-          </el-button>
-          <el-button @click="openImportDialog">
-            <IconifyIconOnline icon="ri:upload-cloud-2-line" class="mr-1" />
-            {{ fieldLabel("上传主名单") }}
-          </el-button>
-          <el-button @click="resetSearch">{{ fieldLabel("重置") }}</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card class="mt-3 table-card" shadow="never">
-      <template #header>
-        <div class="table-card-header">
-          <div>
-            <strong>{{ fieldLabel("资源清单") }}</strong>
-            <span
-              >共
-              {{ total }} 条资源，点击达人查看完整档案，编辑入口独立维护</span
-            >
-          </div>
-          <el-tag v-if="selectedProject" type="warning" effect="plain">
-            当前合作数据：{{ selectedProject }}
-          </el-tag>
-        </div>
-      </template>
+    <section class="resource-table-shell">
       <section v-loading="loading" class="compact-resource-list">
         <div class="compact-list-head">
           <span class="compact-index-head">
@@ -1803,9 +1989,11 @@ onUnmounted(() => {
             </button>
           </span>
           <span>{{ fieldLabel("资源身份") }}</span>
-          <span>{{ fieldLabel("基础表现") }}</span>
+          <span>
+            {{ fieldLabel("基础表现") }}<sup class="weekly-mark">*</sup>
+          </span>
           <span>{{ fieldLabel("合作数据") }}</span>
-          <span>{{ fieldLabel("最近平台作品") }}</span>
+          <span>{{ fieldLabel("最近合作作品") }}</span>
           <span>{{ fieldLabel("操作") }}</span>
         </div>
         <article
@@ -1842,93 +2030,142 @@ onUnmounted(() => {
                 {{ displayText(row.name) }}
               </button>
               <span>{{ mediaAccountTitle(row) }}</span>
-              <p>
+              <p class="compact-identity-tags">
                 <el-tag size="small" effect="plain">{{
-                  enumText(row.resourceType)
+                  resourceTypeText(row.resourceType)
                 }}</el-tag>
                 <el-tag size="small" type="warning" effect="plain">{{
                   domainText(row)
                 }}</el-tag>
+                <el-tag size="small" type="info" effect="plain">{{
+                  tierText(row)
+                }}</el-tag>
               </p>
               <p class="compact-identity-meta">
+                <IconifyIconOnline icon="ri:map-pin-2-fill" />
                 <span>{{ marketText(row) }}</span>
-                <span>{{ tierText(row) }}</span>
-                <span>
-                  <PlatformIconBadge :platform="row.platform" />
-                  {{ displayText(row.platform) }}
-                </span>
               </p>
+              <span class="compact-platforms">
+                <PlatformIconBadge
+                  v-for="account in platformAccounts(row)"
+                  :key="account.platform"
+                  :platform="account.platform"
+                />
+              </span>
             </div>
           </div>
 
           <dl class="compact-base-metrics">
-            <div>
-              <dt>{{ fieldLabel("多平台粉丝 / 访问量") }}</dt>
-              <dd>{{ compactCount(resourceAudience(row)) }}</dd>
+            <div class="metric-row">
+              <div>
+                <dt>
+                  {{
+                    fieldLabel(
+                      isMediaResource(row) ? "全网访问量" : "全网粉丝量"
+                    )
+                  }}
+                </dt>
+                <dd>{{ compactCount(resourceAudience(row)) }}</dd>
+              </div>
+              <span :class="['metric-delta', deltaClass(row, 'audience')]">
+                <IconifyIconOnline
+                  v-if="metricDelta(row, 'audience') !== null"
+                  :icon="deltaIcon(row, 'audience')"
+                />
+                {{ deltaText(metricDelta(row, "audience")) }}
+              </span>
             </div>
-            <div>
-              <dt>{{ fieldLabel("月均播放量") }}</dt>
-              <dd>{{ compactCount(row.avgViews) }}</dd>
+            <div class="metric-row">
+              <div>
+                <dt>
+                  {{
+                    fieldLabel(
+                      isMediaResource(row)
+                        ? "近30天平均阅读量"
+                        : "近30天平均播放量"
+                    )
+                  }}
+                </dt>
+                <dd>{{ compactCount(row.avgViews) }}</dd>
+              </div>
+              <span :class="['metric-delta', deltaClass(row, 'views')]">
+                <IconifyIconOnline
+                  v-if="metricDelta(row, 'views') !== null"
+                  :icon="deltaIcon(row, 'views')"
+                />
+                {{ deltaText(metricDelta(row, "views")) }}
+              </span>
             </div>
-            <div>
-              <dt>{{ fieldLabel("月均互动量") }}</dt>
-              <dd>{{ compactCount(avgInteractions(row)) }}</dd>
+            <div class="metric-row">
+              <div>
+                <dt>{{ fieldLabel("近30天平均互动量") }}</dt>
+                <dd>{{ compactCount(avgInteractions(row)) }}</dd>
+              </div>
+              <span :class="['metric-delta', deltaClass(row, 'interactions')]">
+                <IconifyIconOnline
+                  v-if="metricDelta(row, 'interactions') !== null"
+                  :icon="deltaIcon(row, 'interactions')"
+                />
+                {{ deltaText(metricDelta(row, "interactions")) }}
+              </span>
             </div>
+            <p class="weekly-note">
+              * {{ fieldLabel("数据按配置周期刷新，百分比为周环比") }}
+            </p>
           </dl>
 
           <div class="compact-cooperation">
-            <div class="compact-cooperation__meta">
-              <CooperationTypeTags
-                :value="cooperationTypeValues(row)"
-                empty-text="-"
-              />
-              <strong>{{ cooperationProjects(row) }}</strong>
-            </div>
             <dl>
               <div>
-                <dt>{{ fieldLabel("合作费用") }}</dt>
-                <dd>{{ currencyText(cooperationStats(row).totalCost) }}</dd>
+                <dt>{{ fieldLabel("合作费用区间(USD)") }}</dt>
+                <dd>{{ cooperationCostRange(row) }}</dd>
               </div>
               <div>
-                <dt>{{ fieldLabel("合作曝光量") }}</dt>
-                <dd>{{ compactCount(cooperationStats(row).totalReach) }}</dd>
+                <dt>{{ fieldLabel("合作平均曝光量") }}</dt>
+                <dd>{{ compactCount(averageCooperationReach(row)) }}</dd>
               </div>
               <div>
-                <dt>{{ fieldLabel("合作互动量") }}</dt>
-                <dd>
-                  {{ compactCount(cooperationStats(row).totalEngagements) }}
-                </dd>
+                <dt>{{ fieldLabel("合作平均互动率") }}</dt>
+                <dd>{{ cooperationEngagementText(row) }}</dd>
               </div>
               <div>
-                <dt>{{ fieldLabel("效果分数") }}</dt>
-                <dd>{{ displayText(row.score) }}</dd>
-              </div>
-              <div>
-                <dt>CPM</dt>
-                <dd>{{ cooperationCpmText(row) }}</dd>
+                <dt>{{ fieldLabel("合作平均CPM") }}</dt>
+                <dd>{{ averageCooperationCpm(row) }}</dd>
               </div>
             </dl>
           </div>
 
           <div class="compact-content">
             <button
-              v-for="post in postsFor(row)"
+              v-for="post in recentCooperationPosts(row)"
               :key="post.id"
               type="button"
+              class="cooperation-work-card"
               @click="openUrl(post.postUrl)"
             >
-              <img
-                v-if="post.coverUrl"
-                :src="post.coverUrl"
-                :alt="post.title"
-              />
-              <span v-else
-                ><IconifyIconOnline icon="ri:play-circle-line"
-              /></span>
-              <small>{{ compactCount(post.viewCount) }}</small>
+              <span class="work-cover">
+                <img
+                  v-if="post.coverUrl"
+                  :src="post.coverUrl"
+                  :alt="post.title"
+                />
+                <IconifyIconOnline v-else icon="ri:play-circle-line" />
+                <small>{{ durationText(post.durationSeconds) }}</small>
+              </span>
+              <span class="work-meta">
+                <time>{{ postDate(post) }}</time>
+                <span
+                  >{{ fieldLabel("曝光") }}
+                  {{ compactCount(post.viewCount) }}</span
+                >
+                <span
+                  >{{ fieldLabel("互动") }}
+                  {{ compactCount(postInteractions(post)) }}</span
+                >
+              </span>
             </button>
             <button
-              v-if="!postsFor(row).length"
+              v-if="!recentCooperationPosts(row).length"
               type="button"
               class="compact-content-empty"
               @click="openPosts(row)"
@@ -1998,7 +2235,7 @@ onUnmounted(() => {
                 <dl class="detail-grid">
                   <div>
                     <dt>{{ fieldLabel("资源类型") }}</dt>
-                    <dd>{{ enumText(row.resourceType) }}</dd>
+                    <dd>{{ resourceTypeText(row.resourceType) }}</dd>
                   </div>
                   <div>
                     <dt>{{ fieldLabel("资源领域") }}</dt>
@@ -2245,7 +2482,7 @@ onUnmounted(() => {
         <el-table-column :label="fieldLabel('资源类型 / 领域')" min-width="180">
           <template #default="{ row }">
             <div class="stack-cell">
-              <strong>{{ enumText(row.resourceType) }}</strong>
+              <strong>{{ resourceTypeText(row.resourceType) }}</strong>
               <span>{{ domainText(row) }}</span>
             </div>
           </template>
@@ -2335,13 +2572,13 @@ onUnmounted(() => {
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
           :total="total"
-          layout="sizes, prev, pager, next, jumper"
+          layout="prev, pager, next, sizes"
           background
           @size-change="handleSizeChange"
           @current-change="handleCurrentChange"
         />
       </div>
-    </el-card>
+    </section>
 
     <el-dialog
       v-model="syncDialogVisible"
@@ -2455,7 +2692,7 @@ onUnmounted(() => {
             ><el-form-item :label="fieldLabel('资源类型')"
               ><el-select v-model="form.resourceType" class="w-full!">
                 <el-option
-                  v-for="item in ['KOL', '媒体', 'IP', '其他']"
+                  v-for="item in ['达人', '媒体']"
                   :key="item"
                   :label="item"
                   :value="item" /></el-select></el-form-item
@@ -2710,7 +2947,7 @@ onUnmounted(() => {
             <el-form-item :label="fieldLabel('资源类型')">
               <el-select v-model="form.resourceType" class="w-full!">
                 <el-option
-                  v-for="item in ['KOL', '媒体', 'IP', '其他']"
+                  v-for="item in ['达人', '媒体']"
                   :key="item"
                   :label="item"
                   :value="item"
@@ -3340,7 +3577,7 @@ onUnmounted(() => {
           <div>
             <h2>{{ displayText(selectedResource.name) }}</h2>
             <p>
-              {{ enumText(selectedResource.resourceType) }} ·
+              {{ resourceTypeText(selectedResource.resourceType) }} ·
               {{ displayText(selectedResource.platform) }} ·
               {{ locationText(selectedResource) }}
             </p>
@@ -3358,7 +3595,7 @@ onUnmounted(() => {
         <dl class="profile-facts">
           <div>
             <dt>{{ fieldLabel("资源类型") }}</dt>
-            <dd>{{ enumText(selectedResource.resourceType) }}</dd>
+            <dd>{{ resourceTypeText(selectedResource.resourceType) }}</dd>
           </div>
           <div>
             <dt>{{ fieldLabel("资源领域") }}</dt>
@@ -3746,8 +3983,92 @@ onUnmounted(() => {
 <style scoped>
 .business-page {
   min-height: 100%;
-  padding: 20px;
-  background: #f8fafc;
+  padding: 18px 14px 14px;
+  background: #fff;
+}
+
+.resource-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  gap: 28px;
+  align-items: center;
+  padding: 0 0 28px;
+}
+
+.resource-toolbar__title h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 780;
+  line-height: 1.2;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.resource-toolbar__title p {
+  margin: 9px 0 0;
+  font-size: 14px;
+  color: #8290aa;
+}
+
+.resource-toolbar__filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.resource-search {
+  width: 250px;
+}
+
+.toolbar-select {
+  width: 132px;
+}
+
+.toolbar-country {
+  width: 152px;
+}
+
+.resource-toolbar__filters :deep(.el-input__wrapper),
+.resource-toolbar__filters :deep(.el-select__wrapper),
+.filter-trigger {
+  min-height: 44px;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #dbe3ef inset;
+}
+
+.resource-toolbar__filters :deep(.el-input__wrapper),
+.resource-toolbar__filters :deep(.el-select__wrapper) {
+  padding-right: 14px;
+  padding-left: 14px;
+}
+
+.filter-trigger {
+  gap: 8px;
+  padding: 0 17px;
+  font-weight: 650;
+  color: #334155;
+}
+
+.advanced-filter-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.advanced-filter-actions,
+.resource-management-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.resource-management-actions {
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid #eef2f7;
+}
+
+.resource-table-shell {
+  min-width: 0;
 }
 
 .page-hero {
@@ -3855,13 +4176,13 @@ onUnmounted(() => {
 .avatar-box {
   position: relative;
   display: inline-grid;
+  place-items: center;
   width: 32px;
   height: 32px;
   overflow: hidden;
   vertical-align: middle;
   background: #e2e8f0;
   border-radius: 50%;
-  place-items: center;
 }
 
 .avatar-letter {
@@ -3879,30 +4200,48 @@ onUnmounted(() => {
 }
 
 .compact-resource-list {
-  overflow: hidden;
+  overflow: auto hidden;
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border-color: #dce4ef;
+  border-radius: 9px;
 }
 
 .compact-list-head,
 .compact-resource-row {
   display: grid;
   grid-template-columns:
-    74px minmax(190px, 0.95fr) minmax(130px, 0.6fr)
-    minmax(270px, 1.35fr) minmax(180px, 0.9fr) 112px;
-  gap: 10px;
-  align-items: center;
+    72px minmax(225px, 0.9fr) minmax(280px, 1.2fr)
+    minmax(190px, 0.8fr) minmax(370px, 1.5fr) 150px;
+  gap: 0;
+  align-items: stretch;
 }
 
 .compact-list-head {
-  min-height: 38px;
-  padding: 0 14px;
-  font-size: 11px;
+  min-height: 54px;
+  padding: 0;
+  font-size: 13px;
   font-weight: 700;
   color: #64748b;
   background: #f8fafc;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.compact-list-head > span {
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  border-left: 1px solid #eef2f7;
+}
+
+.compact-list-head > span:first-child {
+  padding: 0;
+  border-left: 0;
+}
+
+.weekly-mark {
+  margin-left: 2px;
+  color: #2563eb;
 }
 
 .compact-list-head span:first-child,
@@ -3940,10 +4279,22 @@ onUnmounted(() => {
 }
 
 .compact-resource-row {
-  min-height: 126px;
-  padding: 11px 14px;
+  min-height: 282px;
+  padding: 0;
   border-bottom: 1px solid #edf0f3;
   transition: background 0.18s ease;
+}
+
+.compact-resource-row > * {
+  min-width: 0;
+  padding: 22px 18px;
+  border-left: 1px solid #eef2f7;
+}
+
+.compact-resource-row > :first-child {
+  padding-right: 0;
+  padding-left: 0;
+  border-left: 0;
 }
 
 .compact-resource-row:last-child {
@@ -3966,34 +4317,36 @@ onUnmounted(() => {
 }
 
 .compact-identity {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: center;
   min-width: 0;
 }
 
 .compact-avatar {
-  width: 58px;
-  height: 58px;
+  width: 86px;
+  height: 86px;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px #e2e8f0;
 }
 
 .compact-identity > div {
   display: grid;
-  gap: 5px;
+  gap: 6px;
+  width: 100%;
   min-width: 0;
 }
 
 .compact-identity button {
   padding: 0;
   overflow: hidden;
-  font-size: 14px;
+  text-overflow: ellipsis;
+  font-size: 16px;
   font-weight: 750;
   color: #0f172a;
   text-align: left;
-  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
   background: transparent;
@@ -4006,9 +4359,9 @@ onUnmounted(() => {
 
 .compact-identity > div > span {
   overflow: hidden;
-  font-size: 12px;
-  color: #64748b;
   text-overflow: ellipsis;
+  font-size: 13px;
+  color: #64748b;
   white-space: nowrap;
 }
 
@@ -4021,17 +4374,26 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+.compact-identity .compact-identity-tags {
+  flex-wrap: nowrap;
+  overflow: visible;
+}
+
+.compact-identity-tags :deep(.el-tag) {
+  flex: none;
+}
+
 .compact-identity p > span:last-child {
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   color: #94a3b8;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .compact-identity .compact-identity-meta {
-  gap: 0;
-  font-size: 11px;
+  gap: 5px;
+  font-size: 12px;
   color: #64748b;
 }
 
@@ -4039,33 +4401,58 @@ onUnmounted(() => {
   display: inline-flex;
   gap: 3px;
   align-items: center;
-  max-width: 110px;
+  max-width: 150px;
 }
 
-.compact-identity-meta span + span::before {
-  margin: 0 6px;
-  color: #cbd5e1;
-  content: "·";
+.compact-platforms {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  max-width: none !important;
+}
+
+.compact-platforms :deep(.platform-icon-badge) {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.compact-platforms :deep(.platform-icon-badge img) {
+  width: 26px;
+  height: 26px;
 }
 
 .compact-base-metrics {
-  display: grid;
-  gap: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  justify-content: center;
   min-width: 0;
   margin: 0;
 }
 
-.compact-base-metrics > div {
+.compact-base-metrics > .metric-row {
   display: flex;
-  gap: 10px;
-  align-items: baseline;
+  gap: 12px;
+  align-items: center;
   justify-content: space-between;
+  min-width: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.compact-base-metrics > .metric-row > div {
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
 .compact-base-metrics dt,
 .compact-cooperation dt {
-  font-size: 11px;
+  font-size: 13px;
   color: #94a3b8;
 }
 
@@ -4073,16 +4460,51 @@ onUnmounted(() => {
 .compact-cooperation dd {
   margin: 0;
   overflow: hidden;
-  font-size: 12px;
+  text-overflow: ellipsis;
+  font-size: 16px;
   font-weight: 700;
   color: #1e293b;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.metric-delta {
+  display: inline-flex;
+  flex: none;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 999px;
+}
+
+.metric-delta.is-up {
+  color: #16a34a;
+  background: #ecfdf3;
+}
+
+.metric-delta.is-down {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.metric-delta.is-empty {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
+.weekly-note {
+  margin: 11px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+
 .compact-cooperation {
-  display: grid;
-  gap: 10px;
+  display: flex;
+  align-items: center;
   min-width: 0;
 }
 
@@ -4096,8 +4518,8 @@ onUnmounted(() => {
 .compact-cooperation__meta span,
 .compact-cooperation__meta strong {
   overflow: hidden;
-  font-size: 11px;
   text-overflow: ellipsis;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -4116,8 +4538,9 @@ onUnmounted(() => {
 
 .compact-cooperation dl {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px 14px;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  width: 100%;
   min-width: 0;
   margin: 0;
 }
@@ -4127,45 +4550,56 @@ onUnmounted(() => {
 }
 
 .compact-cooperation dt {
-  margin-bottom: 2px;
+  margin-bottom: 5px;
 }
 
 .compact-content {
-  display: flex;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   align-items: center;
-  justify-content: center;
   min-width: 0;
 }
 
-.compact-content button {
-  position: relative;
-  flex: 1;
+.compact-content .cooperation-work-card {
+  display: grid;
+  gap: 8px;
+  align-self: center;
   width: auto;
   min-width: 0;
-  height: 64px;
+  height: auto;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
+  text-align: left;
   cursor: pointer;
-  background: #f1f5f9;
+  background: transparent;
   border: 0;
+}
+
+.work-cover {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 132px;
+  overflow: hidden;
+  color: #64748b;
+  background: #f1f5f9;
   border-radius: 8px;
 }
 
-.compact-content img {
+.work-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.2s ease;
 }
 
-.compact-content button > span {
-  display: grid;
-  height: 100%;
-  color: #64748b;
-  place-items: center;
+.cooperation-work-card:hover .work-cover img {
+  transform: scale(1.035);
 }
 
-.compact-content small {
+.work-cover small {
   position: absolute;
   right: 5px;
   bottom: 5px;
@@ -4174,6 +4608,24 @@ onUnmounted(() => {
   color: #fff;
   background: rgb(15 23 42 / 75%);
   border-radius: 999px;
+}
+
+.work-meta {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #64748b;
+}
+
+.work-meta time {
+  color: #94a3b8;
+}
+
+.work-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .compact-content .compact-content-empty {
@@ -4200,7 +4652,7 @@ onUnmounted(() => {
 .compact-actions {
   display: flex;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: 14px;
   align-items: center;
   justify-content: center;
   white-space: nowrap;
@@ -4281,12 +4733,12 @@ onUnmounted(() => {
 .resource-identity__body > button {
   padding: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 15px;
   font-weight: 750;
   line-height: 1.25;
   color: #0f172a;
   text-align: left;
-  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
   background: transparent;
@@ -4300,9 +4752,9 @@ onUnmounted(() => {
 .resource-handle,
 .identity-market {
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 12px;
   color: #64748b;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -4370,10 +4822,10 @@ onUnmounted(() => {
 .cooperation-mini-grid dd {
   margin: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 14px;
   font-weight: 750;
   color: #1e293b;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -4431,9 +4883,9 @@ onUnmounted(() => {
 
 .content-thumbnails button > span {
   display: grid;
+  place-items: center;
   height: 100%;
   color: #64748b;
-  place-items: center;
 }
 
 .content-thumbnails small {
@@ -4452,12 +4904,12 @@ onUnmounted(() => {
 
 .content-empty {
   display: grid;
+  gap: 3px;
+  place-content: center;
   width: 100%;
   height: 80px;
-  gap: 3px;
   font-size: 12px;
   color: #94a3b8;
-  place-content: center;
 }
 
 .content-empty svg {
@@ -4542,15 +4994,14 @@ onUnmounted(() => {
 .editor-form {
   display: grid;
   flex: 1;
+  grid-auto-rows: max-content;
+  gap: 14px;
   width: 100%;
   min-width: 0;
   min-height: 0;
-  gap: 14px;
-  grid-auto-rows: max-content;
   max-height: none;
   padding-right: 4px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden auto;
 }
 
 .editor-section {
@@ -4584,13 +5035,13 @@ onUnmounted(() => {
 .editor-section__title i {
   display: grid;
   flex: 0 0 auto;
+  place-items: center;
   width: 36px;
   height: 36px;
   font-size: 18px;
   color: #2563eb;
   background: #eff6ff;
   border-radius: 9px;
-  place-items: center;
 }
 
 .editor-section__title > div,
@@ -4650,9 +5101,9 @@ onUnmounted(() => {
 
 .cooperation-field-summary strong {
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 14px;
   color: #1e293b;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -4794,13 +5245,13 @@ onUnmounted(() => {
 
 .detail-group__heading i {
   display: grid;
+  place-items: center;
   width: 34px;
   height: 34px;
   font-size: 17px;
   color: #15803d;
   background: #ecfdf3;
   border-radius: 8px;
-  place-items: center;
 }
 
 .detail-group__heading div {
@@ -4835,10 +5286,10 @@ onUnmounted(() => {
 
 .detail-grid dd {
   margin: 0;
-  overflow-wrap: anywhere;
   font-weight: 650;
   line-height: 1.55;
   color: #334155;
+  overflow-wrap: anywhere;
 }
 
 .detail-grid--metrics dd {
@@ -4877,20 +5328,20 @@ onUnmounted(() => {
 .stack-cell span,
 .metric-cell span {
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 12px;
   line-height: 1.45;
   color: #64748b;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .stack-cell strong,
 .metric-cell strong {
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 14px;
   line-height: 1.4;
   color: #0f172a;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -4965,10 +5416,10 @@ onUnmounted(() => {
 .profile-facts dd {
   margin: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 650;
   color: #334155;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -5020,9 +5471,9 @@ onUnmounted(() => {
   height: 28px;
   padding: 0 12px;
   font-weight: 700;
+  background: #e7f8ef;
   border-color: transparent;
   border-radius: 999px;
-  background: #e7f8ef;
 }
 
 .filter-card,
@@ -5064,7 +5515,8 @@ onUnmounted(() => {
   gap: 12px;
   align-items: center;
   justify-content: space-between;
-  margin-top: 12px;
+  padding: 14px 2px 0;
+  margin-top: 0;
   color: var(--el-text-color-secondary);
 }
 
@@ -5122,15 +5574,34 @@ onUnmounted(() => {
   --el-table-tr-bg-color: var(--el-color-warning-light-9);
 }
 
+@media (width <= 1200px) {
+  .resource-toolbar {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .resource-toolbar__filters {
+    flex-wrap: wrap;
+  }
+}
+
 @media (width <= 760px) {
   .business-page {
     padding: 12px;
   }
 
-  .page-hero,
+  .resource-toolbar,
   .table-footer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .resource-toolbar {
+    display: flex;
+  }
+
+  .resource-toolbar__filters {
+    flex-wrap: wrap;
   }
 
   .profile-header,
@@ -5186,8 +5657,8 @@ onUnmounted(() => {
   .editor-header,
   .editor-footer,
   .editor-section__title--between {
-    align-items: stretch;
     flex-direction: column;
+    align-items: stretch;
   }
 
   .editor-form-grid,
@@ -5220,14 +5691,7 @@ onUnmounted(() => {
 @media (width > 760px) and (width <= 1180px) {
   .compact-list-head,
   .compact-resource-row {
-    grid-template-columns:
-      32px minmax(205px, 1fr) minmax(150px, 0.75fr)
-      minmax(300px, 1.5fr) 112px;
-  }
-
-  .compact-list-head span:nth-child(5),
-  .compact-content {
-    display: none;
+    min-width: 1320px;
   }
 
   .resource-card__main {
