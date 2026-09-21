@@ -4371,6 +4371,10 @@ func (a *app) businessCooperations(w http.ResponseWriter, r *http.Request) {
 		        r.audience_size_unit as audienceSizeUnit, r.tier as collaboratorTier, r.contact as primaryContact,
 		        c.cooperation_type as cooperationType, c.cooperation_mode as cooperationMode,
 		        c.package_id as packageId, c.content_type as contentType, c.owner, c.vendor, c.audience_segment as audienceSegment,
+		        c.content_platform as contentPlatform,
+		        coalesce(nullif(c.content_cover_url, ''), nullif(c.content_cover_remote_url, ''), '') as contentCoverUrl,
+		        c.content_cover_remote_url as contentCoverRemoteUrl,
+		        case when c.content_cover_url like '/api/uploads/resource-images/%' then c.content_cover_url else '' end as contentCoverLocalUrl,
 		        c.creative_name as creativeName, c.quote_amount as quoteAmount,
 		        c.currency, c.status, c.deliverable_status as deliverableStatus,
 		        c.impressions, c.views, c.clicks, c.conversions, c.engagement_count as engagementCount,
@@ -4381,6 +4385,7 @@ func (a *app) businessCooperations(w http.ResponseWriter, r *http.Request) {
 		        c.tracking_link as trackingLink, c.ad_authorization_code as adAuthorizationCode,
 		        c.import_batch_id as importBatchId, c.notes,
 		        case when c.views > 0 then c.quote_amount * 1000 / c.views else 0 end as cpm,
+		        cast(unix_timestamp(c.created_at) * 1000 as unsigned) as createdAt,
 		        cast(unix_timestamp(c.updated_at) * 1000 as unsigned) as updatedAt
 		   from biz_cooperations c
 		   left join biz_projects p on p.id = c.project_id

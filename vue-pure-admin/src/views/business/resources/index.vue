@@ -7,6 +7,7 @@ import * as XLSX from "xlsx";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import { fieldLabel } from "@/utils/fieldI18n";
+import { buildRecentCooperationWorks } from "./recentWorks";
 import {
   getResourceList,
   createResource,
@@ -455,27 +456,16 @@ function averageCooperationCpm(row: any) {
 }
 
 function recentCooperationPosts(row: any) {
-  const cooperationLinks = new Set(
-    cooperationsFor(row)
-      .flatMap(item => [item.finalLink, item.deliverableLinks])
-      .flatMap(value => String(value || "").split(/[\n,;]/))
-      .map(value => value.trim().replace(/\/$/, ""))
-      .filter(Boolean)
-  );
-  const posts = postsFor(row);
-  const matched = posts.filter(post =>
-    cooperationLinks.has(
-      String(post.postUrl || "")
-        .trim()
-        .replace(/\/$/, "")
-    )
-  );
-  return matched.slice(0, 3);
+  return buildRecentCooperationWorks(cooperationsFor(row), postsFor(row));
 }
 
 function postDate(post: any) {
-  const value = Number(post?.publishedAt || 0);
-  if (!value) return "-";
+  const rawValue = post?.publishedAt;
+  const value =
+    typeof rawValue === "number"
+      ? rawValue
+      : Date.parse(String(rawValue || ""));
+  if (!value || Number.isNaN(value)) return "-";
   return new Date(value).toLocaleDateString(
     locale.value === "en" ? "en-CA" : "zh-CN",
     { year: "numeric", month: "2-digit", day: "2-digit" }
@@ -490,6 +480,9 @@ function durationText(value: unknown) {
 }
 
 function postInteractions(post: any) {
+  if (post?.interactionCount != null) {
+    return numberValue(post.interactionCount);
+  }
   return (
     numberValue(post?.likeCount) +
     numberValue(post?.commentCount) +
@@ -669,7 +662,7 @@ async function translateVisibleRows(params: any, rows: any[]) {
           getResourcePosts({
             resourceId: row.id,
             currentPage: 1,
-            pageSize: 3,
+            pageSize: 30,
             locale: "en"
           })
         )
@@ -749,7 +742,7 @@ async function loadData() {
           getResourcePosts({
             resourceId: row.id,
             currentPage: 1,
-            pageSize: 3,
+            pageSize: 30,
             locale: locale.value
           })
         )
@@ -2150,7 +2143,9 @@ onUnmounted(() => {
                   :alt="post.title"
                 />
                 <IconifyIconOnline v-else icon="ri:play-circle-line" />
-                <small>{{ durationText(post.durationSeconds) }}</small>
+                <small v-if="numberValue(post.durationSeconds) > 0">{{
+                  durationText(post.durationSeconds)
+                }}</small>
               </span>
               <span class="work-meta">
                 <time>{{ postDate(post) }}</time>
