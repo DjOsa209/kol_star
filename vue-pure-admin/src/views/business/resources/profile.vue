@@ -23,6 +23,8 @@ const cooperations = ref<any[]>([]);
 const posts = ref<any[]>([]);
 const activePlatform = ref("");
 const avatarFailed = ref(false);
+const cooperationPage = ref(1);
+const cooperationPageSize = ref(10);
 
 const metricDefinitions = [
   { key: "followers", label: "粉丝量", icon: "ri:user-3-line" },
@@ -54,6 +56,13 @@ const selectedCooperations = computed(() =>
     .filter(item => Number(item.resourceId) === Number(resource.value?.id || 0))
     .sort((a, b) => dateRank(b) - dateRank(a))
 );
+const pagedCooperations = computed(() => {
+  const start = (cooperationPage.value - 1) * cooperationPageSize.value;
+  return selectedCooperations.value.slice(
+    start,
+    start + cooperationPageSize.value
+  );
+});
 const latestCooperation = computed(() => selectedCooperations.value[0] || null);
 const cooperationStats = computed(() =>
   selectedCooperations.value.reduce(
@@ -450,6 +459,11 @@ function openUrl(url: string) {
   if (url) window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function handleCooperationPageSize(size: number) {
+  cooperationPageSize.value = size;
+  cooperationPage.value = 1;
+}
+
 function publishedDate(value: unknown) {
   const time = Number(value || 0);
   if (!Number.isFinite(time) || time <= 0) return "-";
@@ -534,6 +548,7 @@ async function loadProfile() {
       ? postResponse.data.list
       : [];
     activePlatform.value = platformAccounts(resource.value)[0]?.platform || "";
+    cooperationPage.value = 1;
     avatarFailed.value = false;
     if (!resource.value) ElMessage.warning("未找到该资源档案");
   } catch {
@@ -546,6 +561,13 @@ async function loadProfile() {
 }
 
 watch(() => route.query.id, loadProfile);
+watch(
+  () => selectedCooperations.value.length,
+  total => {
+    const lastPage = Math.max(1, Math.ceil(total / cooperationPageSize.value));
+    cooperationPage.value = Math.min(cooperationPage.value, lastPage);
+  }
+);
 onMounted(loadProfile);
 </script>
 
@@ -861,7 +883,7 @@ onMounted(loadProfile);
             {{ resourceKind }}合作明细</strong
           >
         </div>
-        <el-table :data="selectedCooperations" border class="cooperation-table">
+        <el-table :data="pagedCooperations" border class="cooperation-table">
           <el-table-column
             prop="projectName"
             label="项目名称"
@@ -912,6 +934,17 @@ onMounted(loadProfile);
           <el-table-column prop="owner" label="对接人" width="88" />
           <el-table-column prop="vendor" label="合作供应商" min-width="120" />
         </el-table>
+        <div v-if="selectedCooperations.length" class="detail-pagination">
+          <el-pagination
+            v-model:current-page="cooperationPage"
+            :page-size="cooperationPageSize"
+            :page-sizes="[10, 20, 50]"
+            :total="selectedCooperations.length"
+            layout="total, sizes, prev, pager, next, jumper"
+            background
+            @size-change="handleCooperationPageSize"
+          />
+        </div>
       </section>
     </template>
 
@@ -1530,6 +1563,19 @@ onMounted(loadProfile);
   height: 52px;
   padding: 4px 0;
   color: #2e3d58;
+}
+
+.detail-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+}
+
+:deep(.detail-pagination .el-pagination) {
+  --el-pagination-button-height: 28px;
+  --el-pagination-button-width: 28px;
+
+  font-size: 11px;
 }
 
 .work-thumbnail {
