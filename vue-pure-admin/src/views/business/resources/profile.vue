@@ -5,7 +5,11 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
-import { getCooperationList, getResourceList } from "@/api/business";
+import {
+  getCooperationList,
+  getResourceList,
+  getResourcePosts
+} from "@/api/business";
 import { fieldLabel } from "@/utils/fieldI18n";
 
 defineOptions({ name: "BusinessResourceProfile" });
@@ -16,6 +20,7 @@ const { locale } = useI18n();
 const loading = ref(false);
 const resource = ref<any>(null);
 const cooperations = ref<any[]>([]);
+const posts = ref<any[]>([]);
 const activePlatform = ref("");
 const avatarFailed = ref(false);
 
@@ -76,6 +81,32 @@ const engagementRate = computed(() =>
 const resourceKind = computed(() =>
   isMediaResource(resource.value) ? "媒体" : "达人"
 );
+const activePosts = computed(() => {
+  const selected = normalizePlatform(activePlatform.value);
+  if (!selected) return [...posts.value];
+  const matched = posts.value.filter(
+    item => normalizePlatform(item.platform) === selected
+  );
+  return matched.sort(
+    (left, right) =>
+      numberValue(right.publishedAt) - numberValue(left.publishedAt)
+  );
+});
+const visiblePosts = computed(() => activePosts.value.slice(0, 10));
+const contentTotals = computed(() =>
+  activePosts.value.reduce(
+    (total, post) => {
+      total.views += numberValue(post.viewCount);
+      total.likes += numberValue(post.likeCount);
+      total.comments += numberValue(post.commentCount);
+      total.shares += numberValue(post.shareCount);
+      total.saves += numberValue(post.saveCount);
+      return total;
+    },
+    { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
+  )
+);
+const topicTags = computed(() => buildTopicTags(activePosts.value));
 
 function displayText(value: unknown, fallback = "-") {
   const text = String(value ?? "").trim();
@@ -86,6 +117,17 @@ function displayText(value: unknown, fallback = "-") {
 function numberValue(value: unknown) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
+}
+
+function normalizePlatform(value: unknown) {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (text.includes("youtube")) return "youtube";
+  if (text.includes("instagram")) return "instagram";
+  if (text.includes("tiktok")) return "tiktok";
+  if (text.includes("facebook")) return "facebook";
+  return text;
 }
 
 function formatCount(value: unknown) {
@@ -408,6 +450,58 @@ function openUrl(url: string) {
   if (url) window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function publishedDate(value: unknown) {
+  const time = Number(value || 0);
+  if (!Number.isFinite(time) || time <= 0) return "-";
+  return new Date(time).toLocaleDateString("en-CA");
+}
+
+function durationText(value: unknown) {
+  const total = Math.max(0, Math.floor(numberValue(value)));
+  if (!total) return "--:--";
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function buildTopicTags(rows: any[]) {
+  if (!rows.length) return [];
+  const counts = new Map<string, number>();
+  rows.forEach(post => {
+    const source = `${post.title || ""} ${post.description || ""}`;
+    for (const match of source.matchAll(/[#＃]([\p{L}\p{N}_-]{2,30})/gu)) {
+      const tag = match[1].trim();
+      if (tag) counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  });
+  if (!counts.size) {
+    const fallbacks = [
+      ...(Array.isArray(resource.value?.tagNames)
+        ? resource.value.tagNames
+        : []),
+      resource.value?.category,
+      resource.value?.industry
+    ];
+    fallbacks.filter(Boolean).forEach(tag => counts.set(String(tag), 1));
+  }
+  const total = Array.from(counts.values()).reduce(
+    (sum, count) => sum + count,
+    0
+  );
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 5)
+    .map(([name, count], index) => ({
+      name,
+      count,
+      share: total ? (count / total) * 100 : 0,
+      scale: 1.45 - index * 0.13
+    }));
+}
+
 async function loadProfile() {
   const id = Number(route.query.id || 0);
   if (!id) {
@@ -416,24 +510,35 @@ async function loadProfile() {
   }
   loading.value = true;
   try {
-    const [resourceResponse, cooperationResponse] = await Promise.all([
-      getResourceList({
-        id,
-        currentPage: 1,
-        pageSize: 1,
-        locale: locale.value
-      }),
-      getCooperationList()
-    ]);
+    const [resourceResponse, cooperationResponse, postResponse] =
+      await Promise.all([
+        getResourceList({
+          id,
+          currentPage: 1,
+          pageSize: 1,
+          locale: locale.value
+        }),
+        getCooperationList(),
+        getResourcePosts({
+          resourceId: id,
+          currentPage: 1,
+          pageSize: 100,
+          locale: locale.value
+        })
+      ]);
     resource.value = resourceResponse.data?.list?.[0] || null;
     cooperations.value = Array.isArray(cooperationResponse.data?.list)
       ? cooperationResponse.data.list
+      : [];
+    posts.value = Array.isArray(postResponse.data?.list)
+      ? postResponse.data.list
       : [];
     activePlatform.value = platformAccounts(resource.value)[0]?.platform || "";
     avatarFailed.value = false;
     if (!resource.value) ElMessage.warning("未找到该资源档案");
   } catch {
     resource.value = null;
+    posts.value = [];
     ElMessage.warning("资源档案加载失败，请稍后重试");
   } finally {
     loading.value = false;
@@ -497,24 +602,26 @@ onMounted(loadProfile);
         <div class="section-heading">
           <strong
             ><IconifyIconOnline icon="ri:bar-chart-box-line" />
-            {{ resourceKind }}基础表现</strong
+            {{ resourceKind }}信息</strong
           >
-          <span
-            ><IconifyIconOnline icon="ri:information-line" />
-            数据按周维度更新，百分比为周环比</span
-          >
-        </div>
-        <div class="platform-tabs">
-          <button
-            v-for="account in profileAccounts"
-            :key="`tab-${account.platform}`"
-            type="button"
-            :class="['platform-tab', { active: account === activeAccount }]"
-            @click="activePlatform = account.platform"
-          >
-            <PlatformIconBadge :platform="account.platform" />
-            <span>{{ account.platform }}</span>
-          </button>
+          <div class="section-heading-side">
+            <span class="refresh-note"
+              ><IconifyIconOnline icon="ri:information-line" />
+              数据按周维度更新，百分比为周环比</span
+            >
+            <div class="platform-tabs">
+              <button
+                v-for="account in profileAccounts"
+                :key="`tab-${account.platform}`"
+                type="button"
+                :class="['platform-tab', { active: account === activeAccount }]"
+                @click="activePlatform = account.platform"
+              >
+                <PlatformIconBadge :platform="account.platform" />
+                <span>{{ account.platform }}</span>
+              </button>
+            </div>
+          </div>
         </div>
         <div class="basic-grid">
           <article
@@ -556,6 +663,136 @@ onMounted(loadProfile);
             <span class="contact-hint">项目上传信息</span>
           </article>
         </div>
+      </section>
+
+      <section v-if="resourceKind === '达人'" class="profile-section">
+        <div class="section-heading">
+          <strong><IconifyIconOnline icon="ri:video-line" /> 内容数据</strong>
+          <span>{{ activeAccount?.platform || "全部平台" }} · 近期作品</span>
+        </div>
+        <div class="content-summary">
+          <article>
+            <span class="summary-icon is-blue"
+              ><IconifyIconOnline icon="ri:eye-line"
+            /></span>
+            <span>总曝光量</span>
+            <strong>{{ compactCount(contentTotals.views) }}</strong>
+          </article>
+          <article>
+            <span class="summary-icon is-orange"
+              ><IconifyIconOnline icon="ri:thumb-up-line"
+            /></span>
+            <span>总点赞量</span>
+            <strong>{{ compactCount(contentTotals.likes) }}</strong>
+          </article>
+          <article>
+            <span class="summary-icon is-green"
+              ><IconifyIconOnline icon="ri:chat-3-line"
+            /></span>
+            <span>总评论量</span>
+            <strong>{{ compactCount(contentTotals.comments) }}</strong>
+          </article>
+          <article>
+            <span class="summary-icon is-purple"
+              ><IconifyIconOnline icon="ri:share-forward-line"
+            /></span>
+            <span>总分享量</span>
+            <strong>{{ compactCount(contentTotals.shares) }}</strong>
+          </article>
+          <article>
+            <span class="summary-icon is-red"
+              ><IconifyIconOnline icon="ri:bookmark-line"
+            /></span>
+            <span>总收藏量</span>
+            <strong>{{ compactCount(contentTotals.saves) }}</strong>
+          </article>
+        </div>
+
+        <div v-if="visiblePosts.length" class="content-gallery">
+          <button
+            v-for="post in visiblePosts"
+            :key="post.id"
+            type="button"
+            class="content-card"
+            :title="post.title || '打开作品'"
+            @click="openUrl(post.postUrl)"
+          >
+            <span class="content-cover">
+              <img
+                v-if="post.coverUrl"
+                :src="post.coverUrl"
+                :alt="post.title || '作品封面'"
+              />
+              <span v-else class="cover-placeholder"
+                ><PlatformIconBadge :platform="post.platform" /> 暂无封面</span
+              >
+              <i class="cover-date">{{ publishedDate(post.publishedAt) }}</i>
+              <i class="cover-duration">{{
+                durationText(post.durationSeconds)
+              }}</i>
+            </span>
+            <span class="content-metrics">
+              <span
+                ><IconifyIconOnline icon="ri:eye-line" />
+                {{ compactCount(post.viewCount) }}</span
+              >
+              <span
+                ><IconifyIconOnline icon="ri:thumb-up-line" />
+                {{ compactCount(post.likeCount) }}</span
+              >
+              <span
+                ><IconifyIconOnline icon="ri:chat-3-line" />
+                {{ compactCount(post.commentCount) }}</span
+              >
+              <span
+                ><IconifyIconOnline icon="ri:share-forward-line" />
+                {{ compactCount(post.shareCount) }}</span
+              >
+              <span
+                ><IconifyIconOnline icon="ri:bookmark-line" />
+                {{ compactCount(post.saveCount) }}</span
+              >
+            </span>
+          </button>
+        </div>
+        <el-empty v-else :image-size="54" description="该平台暂无已同步作品" />
+      </section>
+
+      <section v-if="resourceKind === '达人'" class="profile-section">
+        <div class="section-heading">
+          <strong
+            ><IconifyIconOnline icon="ri:bubble-chart-line" /> 内容分析</strong
+          >
+          <span>内容主题标签按作品占比 TOP5 展示</span>
+        </div>
+        <div v-if="topicTags.length" class="analysis-grid">
+          <article class="word-cloud-card">
+            <span class="analysis-title">词云</span>
+            <div class="word-cloud">
+              <span
+                v-for="(tag, index) in topicTags"
+                :key="`cloud-${tag.name}`"
+                :class="`tone-${(index % 5) + 1}`"
+                :style="{ fontSize: `${tag.scale}rem` }"
+                >#{{ tag.name }}</span
+              >
+            </div>
+          </article>
+          <article class="topic-card">
+            <span class="analysis-title">内容主题标签 · TOP5</span>
+            <div class="topic-list">
+              <div v-for="(tag, index) in topicTags" :key="tag.name">
+                <span class="topic-rank">{{ index + 1 }}</span>
+                <strong>#{{ tag.name }}</strong>
+                <span class="topic-track"
+                  ><i :style="{ width: `${Math.max(tag.share, 5)}%` }"
+                /></span>
+                <em>{{ tag.share.toFixed(1) }}%</em>
+              </div>
+            </div>
+          </article>
+        </div>
+        <el-empty v-else :image-size="54" description="暂无可分析的内容标签" />
       </section>
 
       <section class="profile-section">
@@ -717,6 +954,7 @@ onMounted(loadProfile);
 .profile-meta-line,
 .hero-actions,
 .section-heading,
+.section-heading-side,
 .platform-tabs,
 .metric-footer {
   display: flex;
@@ -838,7 +1076,8 @@ onMounted(loadProfile);
   color: #267bf2;
 }
 
-.section-heading > span {
+.section-heading > span,
+.refresh-note {
   display: inline-flex;
   gap: 4px;
   align-items: center;
@@ -846,11 +1085,12 @@ onMounted(loadProfile);
   color: #8290aa;
 }
 
+.section-heading-side {
+  gap: 12px;
+}
+
 .platform-tabs {
-  gap: 8px;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid #e9eef6;
+  gap: 5px;
 }
 
 .platform-tab {
@@ -858,10 +1098,10 @@ onMounted(loadProfile);
   gap: 7px;
   align-items: center;
   justify-content: center;
-  min-width: 118px;
-  height: 34px;
-  padding: 0 14px;
-  font-size: 12px;
+  min-width: 90px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
   color: #5c6b87;
   cursor: pointer;
   background: #f5f7fb;
@@ -877,7 +1117,10 @@ onMounted(loadProfile);
 }
 
 .basic-grid,
-.cooperation-grid {
+.cooperation-grid,
+.content-summary,
+.content-gallery,
+.analysis-grid {
   display: grid;
   gap: 8px;
 }
@@ -888,6 +1131,283 @@ onMounted(loadProfile);
 
 .cooperation-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.content-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: #f8faff;
+  border: 1px solid #e8eef8;
+  border-radius: 8px;
+}
+
+.content-summary article {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 4px 10px;
+  border-right: 1px solid #e5ebf5;
+}
+
+.content-summary article:last-child {
+  border-right: 0;
+}
+
+.summary-icon {
+  display: inline-flex;
+  grid-row: 1 / 3;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  font-size: 15px;
+  border-radius: 8px;
+}
+
+.summary-icon.is-blue {
+  color: #2878ef;
+  background: #eaf3ff;
+}
+
+.summary-icon.is-orange {
+  color: #e89418;
+  background: #fff4dd;
+}
+
+.summary-icon.is-green {
+  color: #18a66b;
+  background: #e6f8f1;
+}
+
+.summary-icon.is-purple {
+  color: #8b5cf6;
+  background: #f1ebff;
+}
+
+.summary-icon.is-red {
+  color: #ef5261;
+  background: #ffeaed;
+}
+
+.content-summary article > span:not(.summary-icon) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: #7887a1;
+  white-space: nowrap;
+}
+
+.content-summary strong {
+  font-size: 15px;
+  color: #172640;
+}
+
+.content-gallery {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.content-card {
+  display: flex;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #e3eaf4;
+  border-radius: 8px;
+  flex-direction: column;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.content-card:hover {
+  border-color: #9cc3fb;
+  box-shadow: 0 6px 16px rgb(37 99 235 / 10%);
+}
+
+.content-cover {
+  position: relative;
+  display: flex;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  color: #7b8ba5;
+  align-items: center;
+  justify-content: center;
+  background: #eef3f9;
+}
+
+.content-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-placeholder {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.cover-date,
+.cover-duration {
+  position: absolute;
+  bottom: 5px;
+  padding: 2px 5px;
+  font-size: 9px;
+  font-style: normal;
+  color: #fff;
+  background: rgb(15 23 42 / 70%);
+  border-radius: 4px;
+}
+
+.cover-date {
+  left: 5px;
+}
+
+.cover-duration {
+  right: 5px;
+}
+
+.content-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px 7px;
+  width: 100%;
+  padding: 8px;
+}
+
+.content-metrics > span {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 9px;
+  color: #61708b;
+  white-space: nowrap;
+}
+
+.content-metrics svg {
+  flex: 0 0 auto;
+  color: #8795ad;
+}
+
+.analysis-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+.word-cloud-card,
+.topic-card {
+  min-width: 0;
+  min-height: 148px;
+  padding: 12px 14px;
+  background: #fbfcff;
+  border: 1px solid #e5ebf5;
+  border-radius: 8px;
+}
+
+.analysis-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #65748f;
+}
+
+.word-cloud {
+  display: flex;
+  gap: 14px 20px;
+  align-content: center;
+  align-items: center;
+  justify-content: center;
+  min-height: 105px;
+  padding: 8px;
+  flex-wrap: wrap;
+}
+
+.word-cloud span {
+  font-weight: 700;
+  line-height: 1;
+}
+
+.tone-1 {
+  color: #2878ef;
+}
+
+.tone-2 {
+  color: #8b5cf6;
+}
+
+.tone-3 {
+  color: #16a568;
+}
+
+.tone-4 {
+  color: #e89418;
+}
+
+.tone-5 {
+  color: #ef5261;
+}
+
+.topic-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.topic-list > div {
+  display: grid;
+  grid-template-columns: 19px minmax(72px, 0.5fr) minmax(100px, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 10px;
+}
+
+.topic-rank {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  font-weight: 700;
+  color: #2878ef;
+  place-items: center;
+  background: #eaf3ff;
+  border-radius: 5px;
+}
+
+.topic-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #263550;
+  white-space: nowrap;
+}
+
+.topic-track {
+  height: 6px;
+  overflow: hidden;
+  background: #e8edf5;
+  border-radius: 999px;
+}
+
+.topic-track i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #2778ef, #79b4ff);
+  border-radius: inherit;
+}
+
+.topic-list em {
+  font-style: normal;
+  color: #71809a;
+  text-align: right;
 }
 
 .metric-card {
