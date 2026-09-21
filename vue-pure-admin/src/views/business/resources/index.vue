@@ -23,7 +23,6 @@ import {
   getTagList,
   createTag,
   getCooperationList,
-  getResourcePosts,
   getProjectList,
   createCooperation,
   updateCooperation,
@@ -78,7 +77,6 @@ const list = ref<any[]>([]);
 const selectedResourceIds = ref<number[]>([]);
 const allCooperations = ref<any[]>([]);
 const projectOptionsForEdit = ref<any[]>([]);
-const recentPosts = ref<any[]>([]);
 const selectedResource = ref<any | null>(null);
 const selectedProject = ref("");
 const editingCooperationId = ref<number | null>(null);
@@ -287,17 +285,6 @@ const projectOptions = computed(() =>
     )
   )
 );
-const postsByResource = computed(() => {
-  const map = new Map<number, any[]>();
-  recentPosts.value.forEach(post => {
-    const resourceId = Number(post.resourceId || 0);
-    if (!resourceId) return;
-    if (!map.has(resourceId)) map.set(resourceId, []);
-    const items = map.get(resourceId)!;
-    if (items.length < 3) items.push(post);
-  });
-  return map;
-});
 const selectedCooperationStats = computed(() =>
   selectedResource.value
     ? cooperationStats(selectedResource.value)
@@ -337,10 +324,6 @@ function cooperationsFor(row: any) {
       Number(item.resourceId) === Number(row?.id) &&
       (!selectedProject.value || item.projectName === selectedProject.value)
   );
-}
-
-function postsFor(row: any) {
-  return postsByResource.value.get(Number(row.id)) || [];
 }
 
 function isMediaResource(row: any) {
@@ -456,7 +439,7 @@ function averageCooperationCpm(row: any) {
 }
 
 function recentCooperationPosts(row: any) {
-  return buildRecentCooperationWorks(cooperationsFor(row), postsFor(row));
+  return buildRecentCooperationWorks(cooperationsFor(row));
 }
 
 function postDate(post: any) {
@@ -657,25 +640,6 @@ async function translateVisibleRows(params: any, rows: any[]) {
           row => Number(row.id) === Number(selectedResource.value?.id)
         );
       }
-      const translatedPostResults = await Promise.all(
-        list.value.map((row: any) =>
-          getResourcePosts({
-            resourceId: row.id,
-            currentPage: 1,
-            pageSize: 30,
-            locale: "en"
-          })
-        )
-      );
-      recentPosts.value = translatedPostResults.flatMap(result =>
-        result.code === 0 && Array.isArray(result.data?.list)
-          ? result.data.list.map((post: any) => ({
-              ...post,
-              title: post.localized?.title || post.title,
-              description: post.localized?.description || post.description
-            }))
-          : []
-      );
     }
     await loadExtraFieldDefinitions();
   } finally {
@@ -737,31 +701,6 @@ async function loadData() {
       list.value = resourceRows;
       total.value = Number(resourceRes.data?.total || 0);
       void translateVisibleRows(params, resourceRows);
-      const postResults = await Promise.all(
-        resourceRows.map((row: any) =>
-          getResourcePosts({
-            resourceId: row.id,
-            currentPage: 1,
-            pageSize: 30,
-            locale: locale.value
-          })
-        )
-      );
-      recentPosts.value = postResults.flatMap(result =>
-        result.code === 0 && Array.isArray(result.data?.list)
-          ? result.data.list.map((post: any) => ({
-              ...post,
-              title:
-                locale.value === "en" && post.localized?.title
-                  ? post.localized.title
-                  : post.title,
-              description:
-                locale.value === "en" && post.localized?.description
-                  ? post.localized.description
-                  : post.description
-            }))
-          : []
-      );
       if (requestedResourceId) {
         const requestedResource = resourceRows.find(
           row => Number(row.id) === requestedResourceId
@@ -774,7 +713,6 @@ async function loadData() {
     } else {
       list.value = [];
       total.value = 0;
-      recentPosts.value = [];
     }
     if (cooperationRes.code === 0) {
       allCooperations.value = Array.isArray(cooperationRes.data?.list)
@@ -789,7 +727,6 @@ async function loadData() {
   } catch (error) {
     list.value = [];
     total.value = 0;
-    recentPosts.value = [];
     ElMessage.warning("资源列表加载失败，请稍后重试");
   } finally {
     loading.value = false;

@@ -5,20 +5,17 @@ import test from "node:test";
 import { buildRecentCooperationWorks } from "./recentWorks.ts";
 
 test("uses a cooperation cover when the platform post is unavailable", () => {
-  const works = buildRecentCooperationWorks(
-    [
-      {
-        id: 344,
-        finalLink: "https://www.stuff.tv/hot-stuff/example/",
-        contentCoverUrl:
-          "/api/uploads/resource-images/1246/project-content/344/website.png",
-        releaseDate: "2026-02-18",
-        views: 152000,
-        engagementCount: 9600
-      }
-    ],
-    []
-  );
+  const works = buildRecentCooperationWorks([
+    {
+      id: 344,
+      finalLink: "https://www.stuff.tv/hot-stuff/example/",
+      contentCoverUrl:
+        "/api/uploads/resource-images/1246/project-content/344/website.png",
+      releaseDate: "2026-02-18",
+      views: 152000,
+      engagementCount: 9600
+    }
+  ]);
 
   assert.equal(works.length, 1);
   assert.equal(
@@ -29,29 +26,19 @@ test("uses a cooperation cover when the platform post is unavailable", () => {
   assert.equal(works[0].interactionCount, 9600);
 });
 
-test("enriches cooperation data with a matching platform post", () => {
-  const works = buildRecentCooperationWorks(
-    [
-      {
-        id: 340,
-        finalLink: "https://www.youtube.com/shorts/YyLyg4COWp0",
-        contentCoverUrl: "/stored-cover.jpg",
-        views: 100
-      }
-    ],
-    [
-      {
-        id: 99,
-        postUrl: "https://www.youtube.com/shorts/YyLyg4COWp0/",
-        coverUrl: "/post-cover.jpg",
-        durationSeconds: 48,
-        viewCount: 200
-      }
-    ]
-  );
+test("only returns work recorded on a cooperation", () => {
+  const works = buildRecentCooperationWorks([
+    {
+      id: 340,
+      finalLink: "https://www.youtube.com/shorts/YyLyg4COWp0",
+      contentCoverUrl: "/stored-cover.jpg",
+      views: 100,
+      engagementCount: 12
+    }
+  ]);
 
   assert.equal(works.length, 1);
-  assert.equal(works[0].coverUrl, "/post-cover.jpg");
-  assert.equal(works[0].durationSeconds, 48);
-  assert.equal(works[0].viewCount, 200);
+  assert.equal(works[0].coverUrl, "/stored-cover.jpg");
+  assert.equal(works[0].viewCount, 100);
+  assert.equal(works[0].interactionCount, 12);
 });
