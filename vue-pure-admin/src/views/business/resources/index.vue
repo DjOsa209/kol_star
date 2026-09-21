@@ -78,6 +78,7 @@ const selectedResourceIds = ref<number[]>([]);
 const allCooperations = ref<any[]>([]);
 const projectOptionsForEdit = ref<any[]>([]);
 const selectedResource = ref<any | null>(null);
+const activeProfilePlatform = ref("");
 const selectedProject = ref("");
 const editingCooperationId = ref<number | null>(null);
 const total = ref(0);
@@ -126,6 +127,21 @@ const defaultPlatformOptions = [
   "Facebook",
   "LinkedIn",
   "Reddit"
+];
+const profileMetricDefinitions = [
+  { key: "followers", label: "粉丝量", icon: "ri:user-3-line" },
+  { key: "views", label: "近30天平均播放量", icon: "ri:play-circle-line" },
+  { key: "interactions", label: "近30天平均互动量", icon: "ri:chat-3-line" },
+  {
+    key: "interactionRate",
+    label: "近30天平均互动率",
+    icon: "ri:heart-3-line"
+  },
+  {
+    key: "contentCount",
+    label: "近30天内容发布数",
+    icon: "ri:file-list-3-line"
+  }
 ];
 const platformOptions = ref<string[]>(loadPlatformOptions());
 const countryOptions = computed(() =>
@@ -276,6 +292,17 @@ const selectedCooperations = computed(() => {
 const selectedLatestCooperation = computed(
   () => selectedCooperations.value[0] || null
 );
+const selectedProfileAccounts = computed(() =>
+  selectedResource.value ? platformAccounts(selectedResource.value) : []
+);
+const selectedProfileAccount = computed(
+  () =>
+    selectedProfileAccounts.value.find(
+      account => account.platform === activeProfilePlatform.value
+    ) ||
+    selectedProfileAccounts.value[0] ||
+    null
+);
 const projectOptions = computed(() =>
   Array.from(
     new Set(
@@ -289,6 +316,18 @@ const selectedCooperationStats = computed(() =>
   selectedResource.value
     ? cooperationStats(selectedResource.value)
     : emptyCooperationStats()
+);
+const selectedProfileEngagements = computed(() =>
+  selectedCooperations.value.reduce(
+    (sum, item) => sum + numberValue(item.engagementCount),
+    0
+  )
+);
+const selectedProfileEngagementRate = computed(() =>
+  ratioPercent(
+    selectedProfileEngagements.value,
+    selectedCooperationStats.value.totalReach
+  )
 );
 const editorCooperations = computed(() => {
   const id = Number(editingId.value || 0);
@@ -345,6 +384,7 @@ function platformAccounts(row: any) {
       typeof item === "string"
         ? { platform: item, followers: 0 }
         : {
+            ...item,
             platform: item?.platform || item?.name,
             followers: numberValue(
               item?.followers ?? item?.audienceSize ?? item?.visits
@@ -355,10 +395,19 @@ function platformAccounts(row: any) {
   if (row?.platform) {
     normalized.push({
       platform: row.platform,
-      followers: resourceAudience(row)
+      platformUrl: row.platformUrl,
+      platformHandle: row.platformHandle,
+      contact: row.contact,
+      followers: resourceAudience(row),
+      avgViews: numberValue(row.avgViews),
+      avgInteractions: avgInteractions(row),
+      engagementRate: numberValue(row.engagementRate),
+      contentCount: numberValue(row.videoCount),
+      weeklyDeltas: row.weeklyDeltas,
+      viewVolatility: row.viewVolatility
     });
   }
-  const unique = new Map<string, { platform: string; followers: number }>();
+  const unique = new Map<string, any>();
   normalized.forEach((item: any) => {
     const key = String(item.platform).trim().toLowerCase();
     const existing = unique.get(key);
@@ -373,7 +422,9 @@ function metricDelta(row: any, key: string) {
   const aliases: Record<string, string[]> = {
     audience: ["audience", "followers", "visits", "audienceSize"],
     views: ["views", "avgViews", "averageViews"],
-    interactions: ["interactions", "avgInteractions", "averageInteractions"]
+    interactions: ["interactions", "avgInteractions", "averageInteractions"],
+    interactionRate: ["interactionRate", "engagementRate"],
+    contentCount: ["contentCount", "posts"]
   };
   const source = row?.weeklyDeltas || row?.weekOverWeek || {};
   for (const alias of aliases[key] || [key]) {
@@ -440,6 +491,101 @@ function averageCooperationCpm(row: any) {
 
 function recentCooperationPosts(row: any) {
   return buildRecentCooperationWorks(cooperationsFor(row));
+}
+
+function profileMetricValue(account: any, key: string) {
+  if (!account) return "-";
+  if (key === "followers") return compactCount(account.followers);
+  if (key === "views") return compactCount(account.avgViews);
+  if (key === "interactions") return compactCount(account.avgInteractions);
+  if (key === "interactionRate") return percentText(account.engagementRate);
+  if (key === "contentCount") return formatCount(account.contentCount);
+  return "-";
+}
+
+function profileMetricDeltaKey(key: string) {
+  return key === "followers" ? "audience" : key;
+}
+
+function profileContact() {
+  const fromCooperation = selectedCooperations.value
+    .map(item => item.primaryContact || item.contact)
+    .find(Boolean);
+  return (
+    displayText(
+      fromCooperation ||
+        selectedProfileAccount.value?.contact ||
+        selectedResource.value?.contact,
+      ""
+    ) || "/"
+  );
+}
+
+function profileNotes() {
+  return (
+    displayText(
+      selectedLatestCooperation.value?.notes || selectedResource.value?.notes,
+      ""
+    ) || "/"
+  );
+}
+
+function coefficientOfVariation(values: number[]) {
+  const valid = values.filter(value => Number.isFinite(value) && value > 0);
+  if (valid.length < 2) return null;
+  const mean = valid.reduce((sum, value) => sum + value, 0) / valid.length;
+  if (mean <= 0) return null;
+  const variance =
+    valid.reduce((sum, value) => sum + (value - mean) ** 2, 0) / valid.length;
+  return (Math.sqrt(variance) / mean) * 100;
+}
+
+function cooperationVolatility() {
+  return coefficientOfVariation(
+    selectedCooperations.value.map(item => primaryReach(item))
+  );
+}
+
+function volatilityText(value: unknown) {
+  if (value === null || value === undefined || value === "") return "/";
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toFixed(1)}%` : "/";
+}
+
+function stabilityText(value: unknown) {
+  if (value === null || value === undefined || value === "") return "待评估";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "待评估";
+  if (number <= 30) return "稳定";
+  if (number <= 60) return "较稳定";
+  return "波动较大";
+}
+
+function cooperationContentLink(row: any) {
+  return (
+    String(row?.finalLink || "").trim() ||
+    String(row?.deliverableLinks || "")
+      .split(/[\n,;]/)[0]
+      ?.trim() ||
+    ""
+  );
+}
+
+function cooperationCover(row: any) {
+  return (
+    row?.contentCoverUrl ||
+    row?.contentCoverLocalUrl ||
+    row?.contentCoverRemoteUrl ||
+    ""
+  );
+}
+
+function cooperationDate(row: any) {
+  const raw = row?.publishTime || row?.releaseDate;
+  if (!raw) return "/";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return String(raw).slice(0, 10);
+  return parsed.toLocaleDateString("en-CA");
 }
 
 function postDate(post: any) {
@@ -1214,13 +1360,8 @@ async function syncCooperationPost(row: any) {
 
 function openProfile(row: any) {
   selectedResource.value = row;
+  activeProfilePlatform.value = platformAccounts(row)[0]?.platform || "";
   profileDialogVisible.value = true;
-}
-
-function editFromProfile() {
-  if (!selectedResource.value) return;
-  profileDialogVisible.value = false;
-  openEdit(selectedResource.value);
 }
 
 function openPosts(row: any) {
@@ -3472,9 +3613,10 @@ onUnmounted(() => {
 
     <el-dialog
       v-model="profileDialogVisible"
-      :title="fieldLabel('完整资源档案')"
-      width="min(1200px, 94vw)"
-      top="5vh"
+      width="min(1600px, 96vw)"
+      top="2vh"
+      class="profile-dialog"
+      :show-close="true"
     >
       <section v-if="selectedResource" class="profile-drawer">
         <div class="profile-header">
@@ -3494,286 +3636,278 @@ onUnmounted(() => {
               @error="markAvatarFailed(selectedResource)"
             />
           </span>
-          <div>
-            <h2>{{ displayText(selectedResource.name) }}</h2>
-            <p>
-              {{ resourceTypeText(selectedResource.resourceType) }} ·
-              {{ displayText(selectedResource.platform) }} ·
-              {{ locationText(selectedResource) }}
-            </p>
+          <div class="profile-identity">
+            <div class="profile-name-line">
+              <h2>{{ displayText(selectedResource.name) }}</h2>
+              <span>{{ mediaAccountTitle(selectedResource) }}</span>
+            </div>
+            <div class="profile-meta-line">
+              <span>{{
+                isMediaResource(selectedResource) ? "媒体" : "达人"
+              }}</span>
+              <i>·</i>
+              <span>{{ domainText(selectedResource) }}</span>
+              <i>·</i>
+              <span>{{ marketText(selectedResource) }}</span>
+              <i v-if="selectedProfileAccounts.length">·</i>
+              <button
+                v-for="account in selectedProfileAccounts"
+                :key="`profile-link-${account.platform}`"
+                type="button"
+                class="profile-platform-link"
+                :title="`${account.platform} 主页`"
+                :disabled="!account.platformUrl"
+                @click="openUrl(account.platformUrl)"
+              >
+                <PlatformIconBadge :platform="account.platform" />
+              </button>
+            </div>
           </div>
           <div class="profile-header-actions">
-            <el-button @click="openPosts(selectedResource)"
-              >查看平台作品</el-button
+            <span class="profile-tier-badge">
+              <IconifyIconOnline icon="ri:vip-crown-2-fill" />
+              {{ tierText(selectedResource)
+              }}{{ isMediaResource(selectedResource) ? "媒体" : "达人" }}
+            </span>
+          </div>
+        </div>
+
+        <section class="profile-panel profile-performance-panel">
+          <div class="profile-section-title">
+            <strong
+              ><IconifyIconOnline icon="ri:bar-chart-box-line" />
+              达人基础表现</strong
             >
-            <el-button type="primary" plain @click="editFromProfile"
-              >编辑资源</el-button
+            <span
+              ><IconifyIconOnline icon="ri:information-line" />
+              数据按周维度更新，百分比为周环比</span
             >
           </div>
-        </div>
+          <div class="profile-platform-tabs">
+            <button
+              v-for="account in selectedProfileAccounts"
+              :key="`profile-tab-${account.platform}`"
+              type="button"
+              :class="[
+                'profile-platform-tab',
+                {
+                  active: account.platform === selectedProfileAccount?.platform
+                }
+              ]"
+              @click="activeProfilePlatform = account.platform"
+            >
+              <PlatformIconBadge :platform="account.platform" />
+              <span>{{ account.platform }}</span>
+            </button>
+          </div>
+          <div class="profile-basic-grid">
+            <article
+              v-for="metric in profileMetricDefinitions"
+              :key="metric.key"
+              class="profile-metric-card"
+            >
+              <span class="profile-card-icon"
+                ><IconifyIconOnline :icon="metric.icon"
+              /></span>
+              <span class="profile-card-label">{{
+                fieldLabel(metric.label)
+              }}</span>
+              <strong>{{
+                profileMetricValue(selectedProfileAccount, metric.key)
+              }}</strong>
+              <div class="profile-metric-footer">
+                <span
+                  :class="[
+                    'profile-delta',
+                    deltaClass(
+                      selectedProfileAccount,
+                      profileMetricDeltaKey(metric.key)
+                    )
+                  ]"
+                >
+                  <IconifyIconOnline
+                    v-if="
+                      metricDelta(
+                        selectedProfileAccount,
+                        profileMetricDeltaKey(metric.key)
+                      ) !== null
+                    "
+                    :icon="
+                      deltaIcon(
+                        selectedProfileAccount,
+                        profileMetricDeltaKey(metric.key)
+                      )
+                    "
+                  />
+                  {{
+                    deltaText(
+                      metricDelta(
+                        selectedProfileAccount,
+                        profileMetricDeltaKey(metric.key)
+                      )
+                    )
+                  }}
+                </span>
+                <el-tooltip
+                  v-if="metric.key === 'views'"
+                  content="近7天单日播放量标准差 ÷ 近7天单日播放量平均值 × 100%"
+                  placement="top"
+                >
+                  <span class="profile-volatility"
+                    >波动指数
+                    {{ volatilityText(selectedProfileAccount?.viewVolatility) }}
+                    <IconifyIconOnline icon="ri:information-line"
+                  /></span>
+                </el-tooltip>
+              </div>
+            </article>
+            <article class="profile-metric-card">
+              <span class="profile-card-icon"
+                ><IconifyIconOnline icon="ri:mail-line"
+              /></span>
+              <span class="profile-card-label">{{
+                fieldLabel("联系方式")
+              }}</span>
+              <strong class="profile-contact-value">{{
+                profileContact()
+              }}</strong>
+              <span class="profile-contact-hint">项目上传信息</span>
+            </article>
+          </div>
+        </section>
 
-        <dl class="profile-facts">
-          <div>
-            <dt>{{ fieldLabel("资源类型") }}</dt>
-            <dd>{{ resourceTypeText(selectedResource.resourceType) }}</dd>
+        <section class="profile-panel">
+          <div class="profile-section-title">
+            <strong
+              ><IconifyIconOnline icon="ri:shake-hands-line" />
+              达人合作表现</strong
+            >
           </div>
-          <div>
-            <dt>{{ fieldLabel("资源领域") }}</dt>
-            <dd>{{ domainText(selectedResource) }}</dd>
+          <div class="profile-cooperation-grid">
+            <article class="profile-metric-card">
+              <span class="profile-card-label">合作费用区间（USD）</span>
+              <strong>{{ cooperationCostRange(selectedResource) }}</strong>
+            </article>
+            <article class="profile-metric-card">
+              <span class="profile-card-label">合作内容总曝光量</span>
+              <strong>{{
+                compactCount(selectedCooperationStats.totalReach)
+              }}</strong>
+            </article>
+            <article class="profile-metric-card">
+              <span class="profile-card-label">合作内容总互动量</span>
+              <strong>{{ compactCount(selectedProfileEngagements) }}</strong>
+            </article>
+            <article class="profile-metric-card">
+              <span class="profile-card-label">合作次数</span>
+              <strong>{{ selectedCooperationStats.count }}次</strong>
+            </article>
+            <article class="profile-metric-card profile-average-reach-card">
+              <span class="profile-card-label">合作平均曝光量</span>
+              <strong>{{
+                compactCount(averageCooperationReach(selectedResource))
+              }}</strong>
+              <div class="profile-metric-footer">
+                <el-tooltip
+                  content="历次合作作品曝光量标准差 ÷ 历次合作作品曝光量平均值 × 100%"
+                  placement="top"
+                >
+                  <span class="profile-volatility"
+                    >波动指数 {{ volatilityText(cooperationVolatility()) }}
+                    <IconifyIconOnline icon="ri:information-line"
+                  /></span>
+                </el-tooltip>
+                <span class="profile-stability">{{
+                  stabilityText(cooperationVolatility())
+                }}</span>
+              </div>
+            </article>
+            <article class="profile-metric-card">
+              <span class="profile-card-label">合作平均互动率</span>
+              <strong>{{ selectedProfileEngagementRate }}</strong>
+            </article>
+            <article class="profile-metric-card">
+              <span class="profile-card-label">合作平均CPM</span>
+              <strong>{{ averageCooperationCpm(selectedResource) }}</strong>
+            </article>
+            <article class="profile-metric-card profile-note-card">
+              <span class="profile-card-label">达人备注</span>
+              <strong>{{ profileNotes() }}</strong>
+            </article>
           </div>
-          <div>
-            <dt>{{ fieldLabel("所属市场") }}</dt>
-            <dd>{{ marketText(selectedResource) }}</dd>
+        </section>
+
+        <section class="profile-panel profile-detail-panel">
+          <div class="profile-section-title">
+            <strong
+              ><IconifyIconOnline icon="ri:table-line" /> 达人合作明细</strong
+            >
           </div>
-          <div>
-            <dt>{{ fieldLabel("分级") }}</dt>
-            <dd>{{ tierText(selectedResource) }}</dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("平台") }}</dt>
-            <dd>{{ displayText(selectedResource.platform) }}</dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("合作类型") }}</dt>
-            <dd>
-              <CooperationTypeTags
-                :value="cooperationTypeValues(selectedResource)"
-                empty-text="-"
-              />
-            </dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("合作项目") }}</dt>
-            <dd>{{ cooperationProjects(selectedResource) }}</dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("合作费用") }}</dt>
-            <dd>{{ currencyText(selectedCooperationStats.totalCost) }}</dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("合作曝光量") }}</dt>
-            <dd>{{ formatCount(selectedCooperationStats.totalReach) }}</dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("合作互动量") }}</dt>
-            <dd>
-              {{ formatCount(selectedCooperationStats.totalEngagements) }}
-            </dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("合作效果分数") }}</dt>
-            <dd>TBC</dd>
-          </div>
-          <div>
-            <dt>CPM</dt>
-            <dd>{{ cooperationCpmText(selectedResource) }}</dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("联系方式") }}</dt>
-            <dd>
-              {{
-                displayText(
-                  selectedLatestCooperation?.primaryContact ||
-                    selectedResource.contact
-                )
-              }}
-            </dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("对接人") }}</dt>
-            <dd>
-              {{
-                displayText(
-                  selectedLatestCooperation?.owner || selectedResource.owner
-                )
-              }}
-            </dd>
-          </div>
-          <div>
-            <dt>{{ fieldLabel("供应商") }}</dt>
-            <dd>{{ displayText(selectedLatestCooperation?.vendor) }}</dd>
-          </div>
-          <div class="profile-facts__wide">
-            <dt>{{ fieldLabel("备注") }}</dt>
-            <dd>
-              {{
-                selectedLatestCooperation?.notes
-                  ? displayText(selectedLatestCooperation.notes)
-                  : localizedText(selectedResource, "notes")
-              }}
-            </dd>
-          </div>
-          <div
-            v-for="(_, fieldKey) in selectedResource.extraFields || {}"
-            :key="fieldKey"
+          <el-table
+            :data="selectedCooperations"
+            border
+            max-height="360"
+            class="profile-cooperation-table"
           >
-            <dt>{{ extraFieldLabel(String(fieldKey)) }}</dt>
-            <dd>
-              {{ localizedExtraValue(selectedResource, String(fieldKey)) }}
-            </dd>
-          </div>
-        </dl>
-
-        <div class="profile-metrics">
-          <div>
-            <span>{{
-              fieldLabel(
-                isMediaResource(selectedResource)
-                  ? "月独立访客(UMV)"
-                  : "多平台粉丝 / 访问"
-              )
-            }}</span>
-            <strong>{{
-              formatCount(resourceAudience(selectedResource))
-            }}</strong>
-          </div>
-          <div v-if="!isMediaResource(selectedResource)">
-            <span>{{ fieldLabel("平台均值播放 / 阅读") }}</span>
-            <strong>{{ formatCount(selectedResource.avgViews) }}</strong>
-          </div>
-          <div v-if="!isMediaResource(selectedResource)">
-            <span>{{ fieldLabel("月均互动量") }}</span>
-            <strong>{{
-              formatCount(avgInteractions(selectedResource))
-            }}</strong>
-          </div>
-          <div>
-            <span>{{ fieldLabel("过往合作次数") }}</span>
-            <strong>{{ selectedCooperationStats.count }} 次</strong>
-          </div>
-          <div>
-            <span>{{ fieldLabel("合作内容总触达") }}</span>
-            <strong>{{
-              formatCount(selectedCooperationStats.totalReach)
-            }}</strong>
-          </div>
-          <div>
-            <span>{{ fieldLabel("合作内容互动率") }}</span>
-            <strong>
-              {{
-                ratioPercent(
-                  selectedCooperationStats.totalEngagements,
-                  selectedCooperationStats.totalReach
-                )
-              }}
-            </strong>
-          </div>
-          <div>
-            <span>{{ fieldLabel("付费合作 CPM") }}</span>
-            <strong>{{ cooperationCpmText(selectedResource) }}</strong>
-          </div>
-          <div>
-            <span>{{ fieldLabel("合作 vs 平台均值") }}</span>
-            <strong>{{ performanceDeltaText(selectedResource) }}</strong>
-          </div>
-        </div>
-
-        <div class="profile-section-title">
-          <strong>{{ fieldLabel("过往合作追踪") }}</strong>
-          <span>{{
-            fieldLabel("合作链接、单条内容表现和项目归属会沉淀在这里")
-          }}</span>
-        </div>
-        <el-table
-          :data="selectedCooperations"
-          border
-          height="360"
-          class="business-table"
-        >
-          <el-table-column
-            prop="projectName"
-            :label="fieldLabel('项目')"
-            min-width="160"
-          />
-          <el-table-column :label="fieldLabel('合作形式')" width="120">
-            <template #default="{ row }">
-              <CooperationTypeTags
-                :value="row.cooperationType"
-                empty-text="-"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column
-            prop="releaseDate"
-            :label="fieldLabel('发布日期')"
-            width="120"
-          />
-          <el-table-column :label="fieldLabel('触达')" width="120">
-            <template #default="{ row }">{{
-              formatCount(primaryReach(row))
-            }}</template>
-          </el-table-column>
-          <el-table-column
-            prop="views"
-            :label="fieldLabel('播放 / 阅读')"
-            width="120"
-          />
-          <el-table-column
-            prop="engagementCount"
-            :label="fieldLabel('转赞藏')"
-            width="110"
-          />
-          <el-table-column
-            prop="commentsCount"
-            :label="fieldLabel('评论')"
-            width="90"
-          />
-          <el-table-column
-            prop="owner"
-            :label="fieldLabel('对接人')"
-            width="120"
-          />
-          <el-table-column
-            prop="vendor"
-            :label="fieldLabel('供应商')"
-            width="120"
-          />
-          <el-table-column :label="fieldLabel('互动率')" width="100">
-            <template #default="{ row }">
-              {{
-                ratioPercent(
-                  numberValue(row.engagementCount) +
-                    numberValue(row.commentsCount),
-                  primaryReach(row)
-                )
-              }}
-            </template>
-          </el-table-column>
-          <el-table-column :label="fieldLabel('发布链接')" min-width="220">
-            <template #default="{ row }">
-              <el-link
-                v-if="row.deliverableLinks"
-                type="primary"
-                :href="row.deliverableLinks"
-                target="_blank"
-              >
-                {{ row.deliverableLinks }}
-              </el-link>
-              <span v-else>-</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            prop="notes"
-            :label="fieldLabel('复盘备注')"
-            min-width="180"
-            show-overflow-tooltip
-          />
-          <el-table-column
-            :label="fieldLabel('操作')"
-            width="160"
-            fixed="right"
-          >
-            <template #default="{ row }">
-              <el-button
-                link
-                type="primary"
-                :loading="!!syncingCooperationIds[Number(row.id || 0)]"
-                @click="syncCooperationPost(row)"
-                >同步作品</el-button
-              >
-            </template>
-          </el-table-column>
-        </el-table>
+            <el-table-column
+              prop="projectName"
+              :label="fieldLabel('项目名称')"
+              min-width="180"
+            />
+            <el-table-column :label="fieldLabel('合作形式')" width="120">
+              <template #default="{ row }">
+                <CooperationTypeTags
+                  :value="row.cooperationType"
+                  empty-text="-"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column :label="fieldLabel('发布日期')" width="120">
+              <template #default="{ row }">{{ cooperationDate(row) }}</template>
+            </el-table-column>
+            <el-table-column :label="fieldLabel('发布作品')" width="150">
+              <template #default="{ row }">
+                <button
+                  v-if="cooperationContentLink(row)"
+                  type="button"
+                  class="profile-work-thumbnail"
+                  @click="openUrl(cooperationContentLink(row))"
+                >
+                  <img
+                    v-if="cooperationCover(row)"
+                    :src="cooperationCover(row)"
+                    :alt="row.creativeName || row.projectName"
+                  />
+                  <span v-else class="profile-work-placeholder"
+                    ><IconifyIconOnline icon="ri:play-circle-line"
+                  /></span>
+                  <i><IconifyIconOnline icon="ri:play-fill" /></i>
+                </button>
+                <span v-else>/</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="fieldLabel('曝光量')" width="120">
+              <template #default="{ row }">{{
+                formatCount(primaryReach(row))
+              }}</template>
+            </el-table-column>
+            <el-table-column :label="fieldLabel('互动量')" width="120">
+              <template #default="{ row }">{{
+                formatCount(row.engagementCount)
+              }}</template>
+            </el-table-column>
+            <el-table-column
+              prop="owner"
+              :label="fieldLabel('对接人')"
+              width="120"
+            />
+            <el-table-column
+              prop="vendor"
+              :label="fieldLabel('合作供应商')"
+              min-width="140"
+            />
+          </el-table>
+        </section>
       </section>
     </el-dialog>
 
@@ -5278,119 +5412,374 @@ onUnmounted(() => {
 
 .profile-drawer {
   display: grid;
-  gap: 16px;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  color: #13213c;
+}
+
+:deep(.profile-dialog) {
+  overflow: hidden;
+  background: #f5f8fd;
+  border-radius: 14px;
+  box-shadow: 0 20px 70px rgb(15 23 42 / 18%);
+}
+
+:deep(.profile-dialog .el-dialog__header) {
+  height: 0;
+  padding: 0;
+}
+
+:deep(.profile-dialog .el-dialog__headerbtn) {
+  top: 14px;
+  right: 16px;
+  z-index: 5;
+}
+
+:deep(.profile-dialog .el-dialog__body) {
+  max-height: 94vh;
+  padding: 12px;
+  overflow-y: auto;
 }
 
 .profile-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 14px;
+  gap: 18px;
   align-items: center;
-  padding: 14px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  padding: 18px 26px;
+  background: #fff;
+  border: 1px solid #e8eef7;
+  border-radius: 12px;
 }
 
 .profile-avatar {
-  width: 52px;
-  height: 52px;
+  width: 72px;
+  height: 72px;
+  border: 3px solid #eff4fb;
+}
+
+.profile-identity {
+  min-width: 0;
+}
+
+.profile-name-line,
+.profile-meta-line,
+.profile-header-actions,
+.profile-platform-tabs,
+.profile-metric-footer {
+  display: flex;
+  align-items: center;
+}
+
+.profile-name-line {
+  gap: 12px;
 }
 
 .profile-header h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 25px;
   line-height: 1.25;
-  color: #0f172a;
+  color: #12213d;
   letter-spacing: 0;
 }
 
-.profile-header p {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #64748b;
-}
-
-.profile-header-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.profile-facts {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0;
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-}
-
-.profile-facts > div {
-  min-width: 0;
-  padding: 10px 12px;
-  border-right: 1px solid #eef2f7;
-  border-bottom: 1px solid #eef2f7;
-}
-
-.profile-facts dt {
-  margin-bottom: 4px;
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.profile-facts dd {
-  margin: 0;
+.profile-name-line > span {
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
-  font-weight: 650;
-  color: #334155;
+  font-size: 14px;
+  color: #7786a3;
   white-space: nowrap;
 }
 
-.profile-facts__wide {
-  grid-column: span 5;
+.profile-meta-line {
+  gap: 8px;
+  min-height: 30px;
+  margin-top: 5px;
+  font-size: 14px;
+  color: #60708f;
 }
 
-.profile-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.profile-meta-line i {
+  color: #a7b3c8;
+  font-style: normal;
+}
+
+.profile-platform-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.profile-platform-link:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.profile-header-actions {
   gap: 10px;
+  padding-right: 28px;
 }
 
-.profile-metrics > div {
-  display: grid;
+.profile-tier-badge {
+  display: inline-flex;
   gap: 6px;
-  min-height: 78px;
-  padding: 12px;
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2878ef;
+  background: #eaf3ff;
   border-radius: 8px;
 }
 
-.profile-metrics span,
-.profile-section-title span {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.profile-metrics strong {
-  font-size: 18px;
-  line-height: 1.25;
-  color: #0f172a;
+.profile-panel {
+  width: 100%;
+  min-width: 0;
+  padding: 16px 22px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e8eef7;
+  border-radius: 12px;
 }
 
 .profile-section-title {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  align-items: baseline;
+  gap: 10px;
+  align-items: center;
   justify-content: space-between;
+  min-height: 28px;
+  margin-bottom: 12px;
 }
 
 .profile-section-title strong {
-  color: #0f172a;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 18px;
+  color: #14233e;
+}
+
+.profile-section-title strong svg {
+  color: #267bf2;
+}
+
+.profile-section-title span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 12px;
+  color: #8290aa;
+}
+
+.profile-platform-tabs {
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e9eef6;
+}
+
+.profile-platform-tab {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 150px;
+  height: 44px;
+  padding: 0 20px;
+  font-size: 14px;
+  color: #5c6b87;
+  cursor: pointer;
+  background: #f5f7fb;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition: 0.18s ease;
+}
+
+.profile-platform-tab:hover,
+.profile-platform-tab.active {
+  color: #1769e8;
+  background: #f8fbff;
+  border-color: #3b82f6;
+  box-shadow: 0 4px 14px rgb(37 99 235 / 9%);
+}
+
+.profile-basic-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profile-cooperation-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profile-metric-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  min-height: 102px;
+  padding: 15px 17px;
+  background: #fff;
+  border: 1px solid #e4ebf5;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgb(30 64 175 / 3%);
+}
+
+.profile-card-icon {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  color: #2f7df3;
+  background: #edf5ff;
+  border-radius: 50%;
+}
+
+.profile-card-label {
+  padding-right: 28px;
+  font-size: 12px;
+  color: #687895;
+}
+
+.profile-metric-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 21px;
+  line-height: 1.25;
+  color: #13213c;
+  white-space: nowrap;
+}
+
+.profile-metric-footer {
+  gap: 14px;
+  min-height: 20px;
+  margin-top: auto;
+}
+
+.profile-delta {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-delta.is-up {
+  color: #16a568;
+}
+
+.profile-delta.is-down {
+  color: #ef4458;
+}
+
+.profile-delta.is-empty {
+  color: #a1aec1;
+}
+
+.profile-volatility,
+.profile-contact-hint {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  font-size: 12px;
+  color: #7786a0;
+  cursor: help;
+}
+
+.profile-contact-value {
+  padding-right: 28px;
+  font-size: 15px !important;
+}
+
+.profile-stability {
+  padding: 3px 9px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: #159760;
+  background: #eaf9f1;
+  border-radius: 999px;
+}
+
+.profile-note-card strong {
+  font-size: 15px;
+  white-space: normal;
+}
+
+:deep(.profile-cooperation-table) {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+:deep(.profile-cooperation-table th.el-table__cell) {
+  height: 42px;
+  color: #60708d;
+  background: #f7f9fc;
+}
+
+:deep(.profile-cooperation-table td.el-table__cell) {
+  height: 64px;
+  color: #2e3d58;
+}
+
+.profile-work-thumbnail {
+  position: relative;
+  display: block;
+  width: 112px;
+  height: 48px;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  background: #eaf0f8;
+  border: 0;
+  border-radius: 6px;
+}
+
+.profile-work-thumbnail img,
+.profile-work-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-work-placeholder {
+  font-size: 24px;
+  color: #7890b4;
+}
+
+.profile-work-thumbnail i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: #fff;
+  background: rgb(15 23 42 / 70%);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .score-pill {
@@ -5509,6 +5898,14 @@ onUnmounted(() => {
   .resource-toolbar__filters {
     flex-wrap: wrap;
   }
+
+  .profile-basic-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .profile-cooperation-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (width <= 760px) {
@@ -5531,10 +5928,25 @@ onUnmounted(() => {
   }
 
   .profile-header,
-  .profile-metrics,
+  .profile-basic-grid,
+  .profile-cooperation-grid,
   .resource-expand,
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .profile-header-actions {
+    justify-content: flex-start;
+    padding-right: 0;
+  }
+
+  .profile-platform-tabs {
+    padding-bottom: 8px;
+    overflow-x: auto;
+  }
+
+  .profile-platform-tab {
+    flex: 0 0 auto;
   }
 
   .resource-card__main {
@@ -5546,8 +5958,7 @@ onUnmounted(() => {
     display: none;
   }
 
-  .compact-resource-row,
-  .profile-facts {
+  .compact-resource-row {
     grid-template-columns: 1fr;
   }
 
@@ -5562,10 +5973,6 @@ onUnmounted(() => {
 
   .compact-actions {
     justify-content: flex-start;
-  }
-
-  .profile-facts__wide {
-    grid-column: auto;
   }
 
   .resource-metrics,

@@ -176,7 +176,7 @@ func (a *app) attachResourceWeeklyDeltas(ctx context.Context, rows []map[string]
 		previous := previousByResource[anyInt64(row["id"])]
 		if previous == nil {
 			row["weeklyDeltas"] = map[string]any{
-				"audience": nil, "views": nil, "interactions": nil,
+				"audience": nil, "views": nil, "interactions": nil, "interactionRate": nil,
 			}
 			continue
 		}
@@ -196,10 +196,25 @@ func (a *app) attachResourceWeeklyDeltas(ctx context.Context, rows []map[string]
 			}
 		}
 		currentViews := anyFloat64(row["avgViews"])
+		currentInteractions := anyFloat64(row["avgInteractions"])
+		if currentInteractions <= 0 {
+			currentInteractions = currentViews * engagementRate
+		}
+		previousViews := anyFloat64(previous["averageViews"])
+		previousInteractions := anyFloat64(previous["averageInteractions"])
+		currentInteractionRate := float64(0)
+		if currentViews > 0 {
+			currentInteractionRate = currentInteractions / currentViews
+		}
+		previousInteractionRate := float64(0)
+		if previousViews > 0 {
+			previousInteractionRate = previousInteractions / previousViews
+		}
 		row["weeklyDeltas"] = map[string]any{
-			"audience":     weeklyPercentDelta(currentAudience, anyFloat64(previous["audienceSize"])),
-			"views":        weeklyPercentDelta(currentViews, anyFloat64(previous["averageViews"])),
-			"interactions": weeklyPercentDelta(currentViews*engagementRate, anyFloat64(previous["averageInteractions"])),
+			"audience":        weeklyPercentDelta(currentAudience, anyFloat64(previous["audienceSize"])),
+			"views":           weeklyPercentDelta(currentViews, previousViews),
+			"interactions":    weeklyPercentDelta(currentInteractions, previousInteractions),
+			"interactionRate": weeklyPercentDelta(currentInteractionRate, previousInteractionRate),
 		}
 	}
 	return nil
@@ -225,23 +240,74 @@ func (a *app) attachResourcePlatformAccounts(ctx context.Context, rows []map[str
 		return nil
 	}
 	accounts, err := a.queryMaps(ctx,
-		`select lower(trim(name)) as resourceName, platform,
-		        greatest(followers, audience_size, umv_month, monthly_visits) as followers
-		   from biz_resources
-		  where lower(trim(name)) in (`+strings.Join(placeholders, ",")+`)
-		    and trim(platform) <> ''
-		  order by followers desc`,
+		`select r.id, lower(trim(r.name)) as resourceName, r.resource_type as resourceType,
+		        r.platform, r.platform_url as platformUrl, r.platform_handle as platformHandle,
+		        r.contact, r.followers, r.audience_size as audienceSize,
+		        r.monthly_visits as monthlyVisits, r.umv_month as umvMonth,
+		        case when lower(trim(r.resource_type)) in ('媒体', 'media')
+		          then greatest(coalesce(r.umv_month, 0), coalesce(r.monthly_visits, 0), coalesce(r.audience_size, 0))
+		          else coalesce(nullif(r.followers, 0), r.audience_size, 0)
+		        end as platformAudience,
+		        coalesce(nullif(stats.averageViews, 0), r.avg_views, 0) as avgViews,
+		        coalesce(stats.averageInteractions,
+		          round(coalesce(r.avg_views, 0) * case when r.engagement_rate > 1 then r.engagement_rate / 100 else r.engagement_rate end),
+		          0) as avgInteractions,
+		        coalesce(stats.engagementRate, r.engagement_rate, 0) as engagementRate,
+		        coalesce(stats.contentCount, 0) as contentCount,
+		        volatility.viewVolatility as viewVolatility
+		   from biz_resources r
+		   left join (
+		     select resource_id,
+		            round(avg(view_count)) as averageViews,
+		            round(avg(like_count + comment_count + share_count + save_count)) as averageInteractions,
+		            case when sum(view_count) > 0
+		              then sum(like_count + comment_count + share_count + save_count) / sum(view_count)
+		              else 0 end as engagementRate,
+		            count(*) as contentCount
+		       from biz_resource_platform_posts
+		      where published_at >= date_sub(curdate(), interval 30 day)
+		      group by resource_id
+		   ) stats on stats.resource_id = r.id
+		   left join (
+		     select daily.resource_id,
+		            case when count(*) >= 2 and avg(daily.dailyViews) > 0
+		              then stddev_pop(daily.dailyViews) / avg(daily.dailyViews) * 100
+		              else null end as viewVolatility
+		       from (
+		         select resource_id, date(published_at) as publishDate, sum(view_count) as dailyViews
+		           from biz_resource_platform_posts
+		          where published_at >= date_sub(curdate(), interval 7 day)
+		          group by resource_id, date(published_at)
+		       ) daily
+		      group by daily.resource_id
+		   ) volatility on volatility.resource_id = r.id
+		  where lower(trim(r.name)) in (`+strings.Join(placeholders, ",")+`)
+		    and trim(r.platform) <> ''
+		  order by platformAudience desc`,
 		names...,
 	)
 	if err != nil {
+		return err
+	}
+	if err := a.attachResourceWeeklyDeltas(ctx, accounts); err != nil {
 		return err
 	}
 	byName := make(map[string][]map[string]any, len(names))
 	for _, account := range accounts {
 		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(account["resourceName"])))
 		byName[name] = append(byName[name], map[string]any{
-			"platform":  account["platform"],
-			"followers": account["followers"],
+			"resourceId":      account["id"],
+			"platform":        account["platform"],
+			"platformUrl":     account["platformUrl"],
+			"platformHandle":  account["platformHandle"],
+			"contact":         account["contact"],
+			"followers":       account["platformAudience"],
+			"avgViews":        account["avgViews"],
+			"avgInteractions": account["avgInteractions"],
+			"engagementRate":  account["engagementRate"],
+			"contentCount":    account["contentCount"],
+			"viewVolatility":  account["viewVolatility"],
+			"weeklyDeltas":    account["weeklyDeltas"],
 		})
 	}
 	for _, row := range rows {
