@@ -820,12 +820,18 @@ async function ensureTagIds(names: string[]) {
 }
 
 async function loadData() {
+  const legacyResourceId = Number(route.query.resourceId || 0);
+  if (legacyResourceId) {
+    await router.replace({
+      path: "/business/resources/profile",
+      query: { id: String(legacyResourceId) }
+    });
+    return;
+  }
   loading.value = true;
   try {
-    const requestedResourceId = Number(route.query.resourceId || 0);
     const params = {
       ...search,
-      ...(requestedResourceId ? { id: requestedResourceId } : {}),
       currentPage: currentPage.value,
       pageSize: pageSize.value,
       sequenceSortOrder: sequenceSortOrder.value,
@@ -843,15 +849,6 @@ async function loadData() {
       list.value = resourceRows;
       total.value = Number(resourceRes.data?.total || 0);
       void translateVisibleRows(params, resourceRows);
-      if (requestedResourceId) {
-        const requestedResource = resourceRows.find(
-          row => Number(row.id) === requestedResourceId
-        );
-        if (requestedResource) {
-          selectedResource.value = requestedResource;
-          profileDialogVisible.value = true;
-        }
-      }
     } else {
       list.value = [];
       total.value = 0;
@@ -1359,9 +1356,10 @@ async function syncCooperationPost(row: any) {
 }
 
 function openProfile(row: any) {
-  selectedResource.value = row;
-  activeProfilePlatform.value = platformAccounts(row)[0]?.platform || "";
-  profileDialogVisible.value = true;
+  router.push({
+    path: "/business/resources/profile",
+    query: { id: String(row?.id || "") }
+  });
 }
 
 function openPosts(row: any) {

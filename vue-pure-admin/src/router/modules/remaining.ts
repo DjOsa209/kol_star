@@ -73,6 +73,15 @@ export default [
       showLink: false
     }
   },
+  {
+    path: "/business/resources/profile",
+    name: "BusinessResourceProfile",
+    component: () => import("@/views/business/resources/profile.vue"),
+    meta: {
+      title: "资源档案",
+      showLink: false
+    }
+  },
   // 下面是一个无layout菜单的例子（一个全屏空白页面），因为这种情况极少发生，所以只需要在前端配置即可（配置路径：src/router/modules/remaining.ts）
   {
     path: "/empty",

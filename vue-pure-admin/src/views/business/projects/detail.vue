@@ -1471,8 +1471,8 @@ function openResourceProfile(row: any) {
   const resourceId = Number(row?.resourceId || 0);
   if (!resourceId) return;
   router.push({
-    path: "/business/resources",
-    query: { resourceId: String(resourceId) }
+    path: "/business/resources/profile",
+    query: { id: String(resourceId) }
   });
 }
 
