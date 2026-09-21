@@ -521,11 +521,7 @@ function cooperationTypes(row: any) {
 
 function resourceAudience(row: any) {
   if (/媒体|media/i.test(String(row?.resourceType || ""))) {
-    return (
-      numberValue(row?.monthlyVisits) ||
-      numberValue(row?.umvMonth) ||
-      numberValue(row?.audienceSize)
-    );
+    return numberValue(row?.umvMonth);
   }
   return numberValue(row?.followers) || numberValue(row?.audienceSize);
 }
@@ -1991,7 +1987,7 @@ onUnmounted(() => {
                 <dt>
                   {{
                     fieldLabel(
-                      isMediaResource(row) ? "全网访问量" : "全网粉丝量"
+                      isMediaResource(row) ? "月独立访客(UMV)" : "全网粉丝量"
                     )
                   }}
                 </dt>
@@ -2005,17 +2001,9 @@ onUnmounted(() => {
                 {{ deltaText(metricDelta(row, "audience")) }}
               </span>
             </div>
-            <div class="metric-row">
+            <div v-if="!isMediaResource(row)" class="metric-row">
               <div>
-                <dt>
-                  {{
-                    fieldLabel(
-                      isMediaResource(row)
-                        ? "近30天平均阅读量"
-                        : "近30天平均播放量"
-                    )
-                  }}
-                </dt>
+                <dt>{{ fieldLabel("近30天平均播放量") }}</dt>
                 <dd>{{ compactCount(row.avgViews) }}</dd>
               </div>
               <span :class="['metric-delta', deltaClass(row, 'views')]">
@@ -2026,7 +2014,7 @@ onUnmounted(() => {
                 {{ deltaText(metricDelta(row, "views")) }}
               </span>
             </div>
-            <div class="metric-row">
+            <div v-if="!isMediaResource(row)" class="metric-row">
               <div>
                 <dt>{{ fieldLabel("近30天平均互动量") }}</dt>
                 <dd>{{ compactCount(avgInteractions(row)) }}</dd>
@@ -3628,16 +3616,22 @@ onUnmounted(() => {
 
         <div class="profile-metrics">
           <div>
-            <span>{{ fieldLabel("多平台粉丝 / 访问") }}</span>
+            <span>{{
+              fieldLabel(
+                isMediaResource(selectedResource)
+                  ? "月独立访客(UMV)"
+                  : "多平台粉丝 / 访问"
+              )
+            }}</span>
             <strong>{{
               formatCount(resourceAudience(selectedResource))
             }}</strong>
           </div>
-          <div>
+          <div v-if="!isMediaResource(selectedResource)">
             <span>{{ fieldLabel("平台均值播放 / 阅读") }}</span>
             <strong>{{ formatCount(selectedResource.avgViews) }}</strong>
           </div>
-          <div>
+          <div v-if="!isMediaResource(selectedResource)">
             <span>{{ fieldLabel("月均互动量") }}</span>
             <strong>{{
               formatCount(avgInteractions(selectedResource))

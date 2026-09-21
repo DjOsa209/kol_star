@@ -525,6 +525,7 @@ const englishFieldLabels: Record<string, string> = {
   同步数据: "Sync Data",
   全网粉丝量: "Total Followers",
   全网访问量: "Total Visits",
+  "月独立访客(UMV)": "Monthly Unique Visitors (UMV)",
   近30天平均播放量: "30-day Avg. Views",
   近30天平均阅读量: "30-day Avg. Reads",
   近30天平均互动量: "30-day Avg. Engagements",
