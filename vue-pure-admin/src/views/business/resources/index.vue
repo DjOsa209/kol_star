@@ -2241,7 +2241,7 @@ onUnmounted(() => {
             <el-button link type="primary" @click="openEdit(row)">{{
               fieldLabel("编辑")
             }}</el-button>
-            <el-dropdown trigger="click">
+            <el-dropdown trigger="click" placement="bottom-end">
               <el-button link>
                 <IconifyIconOnline icon="ri:more-2-fill" />
               </el-button>
@@ -4270,7 +4270,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns:
     72px minmax(225px, 0.9fr) minmax(280px, 1.2fr)
-    minmax(190px, 0.8fr) minmax(370px, 1.5fr) 150px;
+    minmax(190px, 0.8fr) minmax(370px, 1.5fr) 210px;
   gap: 0;
   align-items: stretch;
 }

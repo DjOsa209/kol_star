@@ -386,10 +386,20 @@ func parseProjectContentPostID(value string) int64 {
 }
 
 type projectContentSyncSummary struct {
-	Total        int                       `json:"total"`
-	SuccessCount int                       `json:"successCount"`
-	FailedCount  int                       `json:"failedCount"`
-	Failures     []projectContentSyncError `json:"failures"`
+	Total                int                        `json:"total"`
+	SuccessCount         int                        `json:"successCount"`
+	FailedCount          int                        `json:"failedCount"`
+	Failures             []projectContentSyncError  `json:"failures"`
+	ResourceTotal        int                        `json:"resourceTotal"`
+	ResourceSuccessCount int                        `json:"resourceSuccessCount"`
+	ResourceFailedCount  int                        `json:"resourceFailedCount"`
+	ResourceFailures     []projectResourceSyncError `json:"resourceFailures"`
+}
+
+type projectResourceSyncError struct {
+	ResourceID int    `json:"resourceId"`
+	Name       string `json:"name"`
+	Message    string `json:"message"`
 }
 
 type projectContentSyncError struct {
@@ -414,6 +424,42 @@ func (a *app) syncBusinessProjectContent(w http.ResponseWriter, r *http.Request)
 	}
 	if projectExists == 0 {
 		writeError(w, http.StatusOK, 10004, "项目不存在")
+		return
+	}
+
+	resourceRows, err := a.DB().QueryContext(r.Context(),
+		`select r.id, r.name, r.platform, coalesce(r.platform_url, ''),
+		        coalesce(r.platform_user_id, ''), coalesce(r.platform_handle, '')
+		   from biz_resources r
+		   join (
+		     select resource_id from biz_project_resources where project_id = ?
+		     union
+		     select resource_id from biz_cooperations where project_id = ?
+		   ) linked on linked.resource_id = r.id
+		  order by r.id asc`,
+		projectID, projectID,
+	)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	var resources []syncResourceRow
+	for resourceRows.Next() {
+		var resource syncResourceRow
+		if err = resourceRows.Scan(&resource.ID, &resource.Name, &resource.Platform,
+			&resource.PlatformURL, &resource.PlatformUserID, &resource.PlatformHandle); err != nil {
+			resourceRows.Close()
+			writeDBError(w, err)
+			return
+		}
+		resources = append(resources, resource)
+	}
+	if err = resourceRows.Close(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if err = resourceRows.Err(); err != nil {
+		writeDBError(w, err)
 		return
 	}
 
@@ -448,8 +494,28 @@ func (a *app) syncBusinessProjectContent(w http.ResponseWriter, r *http.Request)
 	}
 
 	summary := projectContentSyncSummary{
-		Total:    len(cooperationIDs),
-		Failures: make([]projectContentSyncError, 0),
+		Total:            len(cooperationIDs),
+		Failures:         make([]projectContentSyncError, 0),
+		ResourceTotal:    len(resources),
+		ResourceFailures: make([]projectResourceSyncError, 0),
+	}
+	for _, resource := range resources {
+		if err := a.syncResourceProfileAndPostsByPlatform(r.Context(), resource); err != nil {
+			summary.ResourceFailedCount++
+			summary.ResourceFailures = append(summary.ResourceFailures, projectResourceSyncError{
+				ResourceID: resource.ID,
+				Name:       resource.Name,
+				Message:    redactSensitiveText(err.Error()),
+			})
+			continue
+		}
+		summary.ResourceSuccessCount++
+	}
+	if summary.ResourceSuccessCount > 0 {
+		if err := refreshAllResourceAudienceClassifications(r.Context(), a.DB()); err != nil {
+			writeDBError(w, err)
+			return
+		}
 	}
 	for _, cooperationID := range cooperationIDs {
 		result, syncErr := a.syncProjectCooperationPost(r.Context(), cooperationID)

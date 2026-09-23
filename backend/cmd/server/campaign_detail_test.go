@@ -201,6 +201,9 @@ func TestSyncBusinessProjectContentReturnsEmptySummary(t *testing.T) {
 	mock.ExpectQuery("select count\\(\\*\\) from biz_projects where id = \\?").
 		WithArgs(24).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("select r.id, r.name, r.platform").
+		WithArgs(24, 24).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "platform", "platform_url", "platform_user_id", "platform_handle"}))
 	mock.ExpectQuery("select id from biz_cooperations").
 		WithArgs(24).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -220,11 +223,52 @@ func TestSyncBusinessProjectContentReturnsEmptySummary(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != 0 || response.Data.Total != 0 || response.Data.SuccessCount != 0 || response.Data.FailedCount != 0 {
+	if response.Code != 0 || response.Data.Total != 0 || response.Data.SuccessCount != 0 || response.Data.FailedCount != 0 || response.Data.ResourceTotal != 0 {
 		t.Fatalf("unexpected response: %s", recorder.Body.String())
 	}
 	if response.Data.Failures == nil {
 		t.Fatalf("failures should be an empty array: %s", recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncBusinessProjectContentAlsoAttemptsLinkedResourceProfiles(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("select count\\(\\*\\) from biz_projects where id = \\?").
+		WithArgs(24).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("select r.id, r.name, r.platform").
+		WithArgs(24, 24).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "platform", "platform_url", "platform_user_id", "platform_handle"}).
+			AddRow(7, "Creator", "Facebook", "https://facebook.com/creator", "", ""))
+	mock.ExpectQuery("select id from biz_cooperations").
+		WithArgs(24).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	body, _ := json.Marshal(map[string]any{"projectId": 24})
+	request := httptest.NewRequest("POST", "/business/projects/content/sync-all", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+	newApp(db, Config{}).syncBusinessProjectContent(recorder, request)
+
+	var response struct {
+		Code int                       `json:"code"`
+		Data projectContentSyncSummary `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 0 || response.Data.ResourceTotal != 1 || response.Data.ResourceFailedCount != 1 || response.Data.Total != 0 {
+		t.Fatalf("unexpected response: %s", recorder.Body.String())
+	}
+	if len(response.Data.ResourceFailures) != 1 || response.Data.ResourceFailures[0].ResourceID != 7 {
+		t.Fatalf("missing resource failure: %s", recorder.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

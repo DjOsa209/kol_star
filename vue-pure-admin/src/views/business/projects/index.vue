@@ -1639,11 +1639,10 @@ async function exportProjectData(row: any) {
 async function syncAllProjectContent(row: any) {
   const projectId = Number(row?.id || 0);
   if (!projectId || syncingProjectIds[projectId]) return;
-  const contentCount = projectStats(projectId).cooperationCount;
   try {
     await ElMessageBox.confirm(
-      `将同步「${row.name || "当前项目"}」的全部 ${contentCount} 条内容，是否继续？`,
-      "同步项目内容",
+      `将同步「${row.name || "当前项目"}」关联的达人/媒体账号数据及有链接的合作内容，是否继续？`,
+      "同步项目数据",
       {
         type: "info",
         confirmButtonText: "开始同步",
@@ -1658,19 +1657,31 @@ async function syncAllProjectContent(row: any) {
   try {
     const res = await syncProjectContent({ projectId });
     if (res.code !== 0) {
-      ElMessage.error(res.message || "项目内容同步失败");
+      ElMessage.error(res.message || "项目数据同步失败");
       return;
     }
     await loadData();
     const total = numberValue(res.data?.total);
     const succeeded = numberValue(res.data?.successCount);
     const failed = numberValue(res.data?.failedCount);
-    if (total === 0) {
-      ElMessage.warning("当前项目暂无可同步的内容");
-    } else if (failed > 0) {
-      ElMessage.warning(`同步完成：成功 ${succeeded} 条，失败 ${failed} 条`);
+    const resourceTotal = numberValue(res.data?.resourceTotal);
+    const resourceSucceeded = numberValue(res.data?.resourceSuccessCount);
+    const resourceFailed = numberValue(res.data?.resourceFailedCount);
+    if (total === 0 && resourceTotal === 0) {
+      ElMessage.warning("当前项目暂无可同步的达人或内容");
+    } else if (failed > 0 || resourceFailed > 0) {
+      const firstFailure =
+        res.data?.resourceFailures?.[0] || res.data?.failures?.[0];
+      const failureHint = firstFailure?.message
+        ? `；例如：${firstFailure.name ? `${firstFailure.name}：` : ""}${firstFailure.message}`
+        : "";
+      ElMessage.warning(
+        `同步完成：达人/媒体 ${resourceSucceeded}/${resourceTotal} 个，内容 ${succeeded}/${total} 条；失败 ${resourceFailed + failed} 项${failureHint}`
+      );
     } else {
-      ElMessage.success(`已同步该项目的 ${succeeded} 条内容`);
+      ElMessage.success(
+        `已同步达人/媒体 ${resourceSucceeded} 个、合作内容 ${succeeded} 条`
+      );
     }
   } finally {
     syncingProjectIds[projectId] = false;
