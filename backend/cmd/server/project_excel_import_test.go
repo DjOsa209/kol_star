@@ -255,8 +255,10 @@ func TestBuildStandardProjectImportTemplateHasProtectedTwoRowHeader(t *testing.T
 	}
 	headerStyleID, _ := book.GetCellStyle(sheet, "B1")
 	headerStyle, _ := book.GetStyle(headerStyleID)
-	instructionStyleID, _ := book.GetCellStyle(sheet, "B3")
-	instructionStyle, _ := book.GetStyle(instructionStyleID)
+	scopeStyleID, _ := book.GetCellStyle(sheet, "B3")
+	scopeStyle, _ := book.GetStyle(scopeStyleID)
+	guidelineStyleID, _ := book.GetCellStyle(sheet, "B4")
+	guidelineStyle, _ := book.GetStyle(guidelineStyleID)
 	dataStyleID, _ := book.GetCellStyle(sheet, "B5")
 	dataStyle, _ := book.GetStyle(dataStyleID)
 	calculatedStyleID, _ := book.GetCellStyle(sheet, "G5")
@@ -278,17 +280,20 @@ func TestBuildStandardProjectImportTemplateHasProtectedTwoRowHeader(t *testing.T
 	if costStyle.CustomNumFmt == nil || *costStyle.CustomNumFmt != standardProjectCostNumberFormat {
 		t.Fatalf("cost number format = %#v, want %q", costStyle.CustomNumFmt, standardProjectCostNumberFormat)
 	}
-	if instructionStyle.Protection == nil || !instructionStyle.Protection.Locked {
-		t.Fatal("instruction rows must be locked")
+	if scopeStyle.Protection == nil || !scopeStyle.Protection.Locked || guidelineStyle.Protection == nil || !guidelineStyle.Protection.Locked {
+		t.Fatal("scope and guideline rows must be locked")
 	}
-	if instructionStyle.Alignment == nil || instructionStyle.Alignment.Horizontal != "left" {
-		t.Fatal("instruction rows must be left aligned")
+	if scopeStyle.Alignment == nil || scopeStyle.Alignment.Horizontal != "center" {
+		t.Fatal("scope row must be centered")
 	}
-	for _, cell := range []string{"C4", "L4"} {
+	if guidelineStyle.Alignment == nil || guidelineStyle.Alignment.Horizontal != "left" {
+		t.Fatal("guideline row must be left aligned")
+	}
+	for cell, want := range map[string]string{"C3": "center", "L3": "center", "C4": "left", "L4": "left"} {
 		styleID, _ := book.GetCellStyle(sheet, cell)
 		style, _ := book.GetStyle(styleID)
-		if style.Alignment == nil || style.Alignment.Horizontal != "left" {
-			t.Fatalf("%s must be left aligned", cell)
+		if style.Alignment == nil || style.Alignment.Horizontal != want {
+			t.Fatalf("%s alignment = %#v, want %q", cell, style.Alignment, want)
 		}
 	}
 	panes, err := book.GetPanes(sheet)
@@ -345,6 +350,13 @@ func TestBuildEnglishStandardProjectImportTemplateMatchesReferenceAndReimports(t
 	} {
 		if actual, _ := book.GetCellValue(sheet, cell); actual != expected {
 			t.Fatalf("%s = %q, want %q", cell, actual, expected)
+		}
+	}
+	for cell, want := range map[string]string{"C3": "center", "L3": "center", "C4": "left", "L4": "left"} {
+		styleID, _ := book.GetCellStyle(sheet, cell)
+		style, _ := book.GetStyle(styleID)
+		if style.Alignment == nil || style.Alignment.Horizontal != want {
+			t.Fatalf("%s alignment = %#v, want %q", cell, style.Alignment, want)
 		}
 	}
 	validations, err := book.GetDataValidations(sheet)

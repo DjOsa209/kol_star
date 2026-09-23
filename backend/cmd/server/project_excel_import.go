@@ -478,19 +478,29 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 			return nil, err
 		}
 	}
-	instructionStyle, err := book.NewStyle(&excelize.Style{
-		Font:      &excelize.Font{Color: "#000000", Family: "Arial", Size: 9},
-		Alignment: &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true},
-		Border: []excelize.Border{
-			{Type: "left", Color: "#D0D0D0", Style: 1}, {Type: "right", Color: "#D0D0D0", Style: 1},
-			{Type: "top", Color: "#D0D0D0", Style: 1}, {Type: "bottom", Color: "#D0D0D0", Style: 1},
-		},
-		Protection: &excelize.Protection{Locked: true},
-	})
+	newInstructionStyle := func(horizontal string) (int, error) {
+		return book.NewStyle(&excelize.Style{
+			Font:      &excelize.Font{Color: "#000000", Family: "Arial", Size: 9},
+			Alignment: &excelize.Alignment{Horizontal: horizontal, Vertical: "center", WrapText: true},
+			Border: []excelize.Border{
+				{Type: "left", Color: "#D0D0D0", Style: 1}, {Type: "right", Color: "#D0D0D0", Style: 1},
+				{Type: "top", Color: "#D0D0D0", Style: 1}, {Type: "bottom", Color: "#D0D0D0", Style: 1},
+			},
+			Protection: &excelize.Protection{Locked: true},
+		})
+	}
+	scopeStyle, err := newInstructionStyle("center")
 	if err != nil {
 		return nil, err
 	}
-	if err := book.SetCellStyle(sheet, "B3", "T4", instructionStyle); err != nil {
+	guidelineStyle, err := newInstructionStyle("left")
+	if err != nil {
+		return nil, err
+	}
+	if err := book.SetCellStyle(sheet, "B3", "T3", scopeStyle); err != nil {
+		return nil, err
+	}
+	if err := book.SetCellStyle(sheet, "B4", "T4", guidelineStyle); err != nil {
 		return nil, err
 	}
 	if err := book.SetCellStyle(sheet, "A3", "A4", blue); err != nil {
