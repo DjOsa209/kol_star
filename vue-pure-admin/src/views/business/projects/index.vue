@@ -2641,7 +2641,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('项目')"
             min-width="270"
-            align="left"
+            align="center"
             sortable
           >
             <template #default="{ row }">
@@ -2654,7 +2654,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('合作达人 / 媒体')"
             width="180"
-            align="left"
+            align="center"
             sortable
           >
             <template #default="{ row }">{{
@@ -2664,7 +2664,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('内容')"
             width="120"
-            align="left"
+            align="center"
             sortable
           >
             <template #default="{ row }">{{
@@ -2674,7 +2674,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('曝光 / 播放')"
             width="210"
-            align="left"
+            align="center"
             sortable
           >
             <template #default="{ row }">{{
@@ -2684,7 +2684,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('互动率')"
             width="180"
-            align="left"
+            align="center"
           >
             <template #default="{ row }">{{
               ratioPercent(
@@ -2696,7 +2696,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('对接人')"
             width="130"
-            align="left"
+            align="center"
             ><template #default="{ row }">{{
               row.owner || fieldLabel("未指定对接人")
             }}</template></el-table-column
@@ -2704,7 +2704,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('目标市场')"
             min-width="310"
-            align="left"
+            align="center"
           >
             <template #default="{ row }">
               <div
@@ -2765,7 +2765,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('项目日历')"
             width="210"
-            align="left"
+            align="center"
           >
             <template #default="{ row }">
               <span class="project-cycle-value">{{
@@ -2777,7 +2777,7 @@ onMounted(() => {
             :label="fieldLabel('操作')"
             width="350"
             fixed="right"
-            align="left"
+            align="center"
           >
             <template #default="{ row }">
               <div class="project-action-cell">
@@ -7119,7 +7119,7 @@ onMounted(() => {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 2px;
   white-space: nowrap;
 }
@@ -7135,7 +7135,7 @@ onMounted(() => {
   display: grid;
   min-width: 0;
   gap: 4px;
-  justify-items: start;
+  justify-items: center;
 }
 .project-name-cell strong {
   overflow: hidden;
@@ -7155,11 +7155,13 @@ onMounted(() => {
   display: grid;
   gap: 7px;
   align-items: start;
+  justify-items: center;
   min-width: 0;
 }
 .project-market-tags {
   display: flex;
   gap: 5px;
+  justify-content: center;
   min-width: 0;
 }
 .project-market-tags :deep(.el-tag) {
@@ -7176,7 +7178,7 @@ onMounted(() => {
   font-size: 10px;
 }
 .project-market-expand {
-  justify-self: start;
+  justify-self: center;
   height: auto;
   padding: 0;
   font-size: 12px;

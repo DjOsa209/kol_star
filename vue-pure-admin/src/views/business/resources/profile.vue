@@ -199,11 +199,12 @@ function domainText(row: any) {
 function marketText(row: any) {
   const parts = [
     localizedText(row, "region", ""),
-    row?.market ||
+    (locale.value === "en" ? row?.localized?.market : "") ||
+      row?.market ||
       localizedText(row, "country", "") ||
       localizedText(row, "city", "")
   ]
-    .map(item => displayText(item, ""))
+    .map(item => fieldLabel(displayText(item, "")))
     .filter(Boolean);
   return parts.length ? Array.from(new Set(parts)).join(" - ") : "-";
 }
@@ -411,12 +412,12 @@ function volatilityText(value: unknown) {
 }
 
 function stabilityText(value: unknown) {
-  if (value === null || value === undefined || value === "") return "待评估";
+  if (value === null || value === undefined || value === "") return fieldLabel("待评估");
   const number = Number(value);
-  if (!Number.isFinite(number)) return "待评估";
-  if (number <= 30) return "稳定";
-  if (number <= 60) return "较稳定";
-  return "波动较大";
+  if (!Number.isFinite(number)) return fieldLabel("待评估");
+  if (number <= 30) return fieldLabel("稳定");
+  if (number <= 60) return fieldLabel("较稳定");
+  return fieldLabel("波动较大");
 }
 
 function primaryReach(row: any) {
@@ -550,11 +551,11 @@ async function loadProfile() {
     activePlatform.value = platformAccounts(resource.value)[0]?.platform || "";
     cooperationPage.value = 1;
     avatarFailed.value = false;
-    if (!resource.value) ElMessage.warning("未找到该资源档案");
+    if (!resource.value) ElMessage.warning(fieldLabel("未找到该资源档案"));
   } catch {
     resource.value = null;
     posts.value = [];
-    ElMessage.warning("资源档案加载失败，请稍后重试");
+    ElMessage.warning(fieldLabel("资源档案加载失败，请稍后重试"));
   } finally {
     loading.value = false;
   }
@@ -591,7 +592,7 @@ onMounted(loadProfile);
               <span>{{ accountTitle(resource) }}</span>
             </div>
             <div class="profile-meta-line">
-              <span>{{ resourceKind }}</span
+              <span>{{ fieldLabel(resourceKind) }}</span
               ><i>·</i> <span>{{ domainText(resource) }}</span
               ><i>·</i> <span>{{ marketText(resource) }}</span
               ><i>·</i>
@@ -600,7 +601,7 @@ onMounted(loadProfile);
                 :key="`link-${account.platform}`"
                 type="button"
                 class="platform-link"
-                :title="`${account.platform} 主页`"
+                :title="`${account.platform} ${fieldLabel('主页')}`"
                 :disabled="!account.platformUrl"
                 @click="openUrl(account.platformUrl)"
               >
@@ -612,10 +613,10 @@ onMounted(loadProfile);
         <div class="hero-actions">
           <span class="tier-badge"
             ><IconifyIconOnline icon="ri:vip-crown-2-fill" />
-            {{ tierText(resource) }}{{ resourceKind }}</span
+            {{ tierText(resource) }} {{ fieldLabel(resourceKind) }}</span
           >
           <el-button text @click="router.push('/business/resources')">
-            <IconifyIconOnline icon="ri:arrow-left-line" /> 返回资源库
+            <IconifyIconOnline icon="ri:arrow-left-line" /> {{ fieldLabel("返回资源库") }}
           </el-button>
         </div>
       </header>
@@ -624,12 +625,12 @@ onMounted(loadProfile);
         <div class="section-heading">
           <strong
             ><IconifyIconOnline icon="ri:bar-chart-box-line" />
-            {{ resourceKind }}信息</strong
+            {{ fieldLabel(`${resourceKind}信息`) }}</strong
           >
           <div class="section-heading-side">
             <span class="refresh-note"
               ><IconifyIconOnline icon="ri:information-line" />
-              数据按周维度更新，百分比为周环比</span
+              {{ fieldLabel("数据按周维度更新，百分比为周环比") }}</span
             >
             <div class="platform-tabs">
               <button
@@ -666,11 +667,11 @@ onMounted(loadProfile);
               </span>
               <el-tooltip
                 v-if="metric.key === 'views'"
-                content="近7天单日播放量标准差 ÷ 近7天单日播放量平均值 × 100%"
+                :content="fieldLabel('近7天单日播放量标准差 ÷ 近7天单日播放量平均值 × 100%')"
                 placement="top"
               >
                 <span class="volatility"
-                  >波动指数 {{ volatilityText(activeAccount?.viewVolatility) }}
+                  >{{ fieldLabel("波动指数") }} {{ volatilityText(activeAccount?.viewVolatility) }}
                   <IconifyIconOnline icon="ri:information-line"
                 /></span>
               </el-tooltip>
@@ -680,52 +681,52 @@ onMounted(loadProfile);
             <span class="metric-icon"
               ><IconifyIconOnline icon="ri:mail-line"
             /></span>
-            <span class="metric-label">联系方式</span>
+            <span class="metric-label">{{ fieldLabel("联系方式") }}</span>
             <strong class="contact-value">{{ contactText() }}</strong>
-            <span class="contact-hint">项目上传信息</span>
+            <span class="contact-hint">{{ fieldLabel("项目上传信息") }}</span>
           </article>
         </div>
       </section>
 
       <section v-if="resourceKind === '达人'" class="profile-section">
         <div class="section-heading">
-          <strong><IconifyIconOnline icon="ri:video-line" /> 内容数据</strong>
-          <span>{{ activeAccount?.platform || "全部平台" }} · 近期作品</span>
+          <strong><IconifyIconOnline icon="ri:video-line" /> {{ fieldLabel("内容数据") }}</strong>
+          <span>{{ activeAccount?.platform || fieldLabel("全部平台") }} · {{ fieldLabel("近期作品") }}</span>
         </div>
         <div class="content-summary">
           <article>
             <span class="summary-icon is-blue"
               ><IconifyIconOnline icon="ri:eye-line"
             /></span>
-            <span>总曝光量</span>
+            <span>{{ fieldLabel("总曝光量") }}</span>
             <strong>{{ compactCount(contentTotals.views) }}</strong>
           </article>
           <article>
             <span class="summary-icon is-orange"
               ><IconifyIconOnline icon="ri:thumb-up-line"
             /></span>
-            <span>总点赞量</span>
+            <span>{{ fieldLabel("总点赞量") }}</span>
             <strong>{{ compactCount(contentTotals.likes) }}</strong>
           </article>
           <article>
             <span class="summary-icon is-green"
               ><IconifyIconOnline icon="ri:chat-3-line"
             /></span>
-            <span>总评论量</span>
+            <span>{{ fieldLabel("总评论量") }}</span>
             <strong>{{ compactCount(contentTotals.comments) }}</strong>
           </article>
           <article>
             <span class="summary-icon is-purple"
               ><IconifyIconOnline icon="ri:share-forward-line"
             /></span>
-            <span>总分享量</span>
+            <span>{{ fieldLabel("总分享量") }}</span>
             <strong>{{ compactCount(contentTotals.shares) }}</strong>
           </article>
           <article>
             <span class="summary-icon is-red"
               ><IconifyIconOnline icon="ri:bookmark-line"
             /></span>
-            <span>总收藏量</span>
+            <span>{{ fieldLabel("总收藏量") }}</span>
             <strong>{{ compactCount(contentTotals.saves) }}</strong>
           </article>
         </div>
@@ -736,17 +737,17 @@ onMounted(loadProfile);
             :key="post.id"
             type="button"
             class="content-card"
-            :title="post.title || '打开作品'"
+            :title="post.title || fieldLabel('打开作品')"
             @click="openUrl(post.postUrl)"
           >
             <span class="content-cover">
               <img
                 v-if="post.coverUrl"
                 :src="post.coverUrl"
-                :alt="post.title || '作品封面'"
+                :alt="post.title || fieldLabel('作品封面')"
               />
               <span v-else class="cover-placeholder"
-                ><PlatformIconBadge :platform="post.platform" /> 暂无封面</span
+                ><PlatformIconBadge :platform="post.platform" /> {{ fieldLabel("暂无封面") }}</span
               >
               <i class="cover-date">{{ publishedDate(post.publishedAt) }}</i>
               <i class="cover-duration">{{
@@ -777,19 +778,19 @@ onMounted(loadProfile);
             </span>
           </button>
         </div>
-        <el-empty v-else :image-size="54" description="该平台暂无已同步作品" />
+        <el-empty v-else :image-size="54" :description="fieldLabel('该平台暂无已同步作品')" />
       </section>
 
       <section v-if="resourceKind === '达人'" class="profile-section">
         <div class="section-heading">
           <strong
-            ><IconifyIconOnline icon="ri:bubble-chart-line" /> 内容分析</strong
+            ><IconifyIconOnline icon="ri:bubble-chart-line" /> {{ fieldLabel("内容分析") }}</strong
           >
-          <span>内容主题标签按作品占比 TOP5 展示</span>
+          <span>{{ fieldLabel("内容主题标签按作品占比 TOP5 展示") }}</span>
         </div>
         <div v-if="topicTags.length" class="analysis-grid">
           <article class="word-cloud-card">
-            <span class="analysis-title">词云</span>
+            <span class="analysis-title">{{ fieldLabel("词云") }}</span>
             <div class="word-cloud">
               <span
                 v-for="(tag, index) in topicTags"
@@ -801,7 +802,7 @@ onMounted(loadProfile);
             </div>
           </article>
           <article class="topic-card">
-            <span class="analysis-title">内容主题标签 · TOP5</span>
+            <span class="analysis-title">{{ fieldLabel("内容主题标签 · TOP5") }}</span>
             <div class="topic-list">
               <div v-for="(tag, index) in topicTags" :key="tag.name">
                 <span class="topic-rank">{{ index + 1 }}</span>
@@ -814,45 +815,45 @@ onMounted(loadProfile);
             </div>
           </article>
         </div>
-        <el-empty v-else :image-size="54" description="暂无可分析的内容标签" />
+        <el-empty v-else :image-size="54" :description="fieldLabel('暂无可分析的内容标签')" />
       </section>
 
       <section class="profile-section">
         <div class="section-heading">
           <strong
             ><IconifyIconOnline icon="ri:shake-hands-line" />
-            {{ resourceKind }}合作表现</strong
+            {{ fieldLabel(`${resourceKind}合作表现`) }}</strong
           >
         </div>
         <div class="cooperation-grid">
           <article class="metric-card">
-            <span class="metric-label">合作费用区间（USD）</span>
+            <span class="metric-label">{{ fieldLabel("合作费用区间（USD）") }}</span>
             <strong>{{ costRange() }}</strong>
           </article>
           <article class="metric-card">
-            <span class="metric-label">合作内容总曝光量</span>
+            <span class="metric-label">{{ fieldLabel("合作内容总曝光量") }}</span>
             <strong>{{ compactCount(cooperationStats.totalReach) }}</strong>
           </article>
           <article class="metric-card">
-            <span class="metric-label">合作内容总互动量</span>
+            <span class="metric-label">{{ fieldLabel("合作内容总互动量") }}</span>
             <strong>{{
               compactCount(cooperationStats.totalEngagements)
             }}</strong>
           </article>
           <article class="metric-card">
-            <span class="metric-label">合作次数</span>
-            <strong>{{ cooperationStats.count }}次</strong>
+            <span class="metric-label">{{ fieldLabel("合作次数") }}</span>
+            <strong>{{ cooperationStats.count }}{{ locale === "en" ? "" : "次" }}</strong>
           </article>
           <article class="metric-card">
-            <span class="metric-label">合作平均曝光量</span>
+            <span class="metric-label">{{ fieldLabel("合作平均曝光量") }}</span>
             <strong>{{ compactCount(averageReach) }}</strong>
             <div class="metric-footer">
               <el-tooltip
-                content="历次合作作品曝光量标准差 ÷ 历次合作作品曝光量平均值 × 100%"
+                :content="fieldLabel('历次合作作品曝光量标准差 ÷ 历次合作作品曝光量平均值 × 100%')"
                 placement="top"
               >
                 <span class="volatility"
-                  >波动指数 {{ volatilityText(cooperationVolatility()) }}
+                  >{{ fieldLabel("波动指数") }} {{ volatilityText(cooperationVolatility()) }}
                   <IconifyIconOnline icon="ri:information-line"
                 /></span>
               </el-tooltip>
@@ -862,15 +863,15 @@ onMounted(loadProfile);
             </div>
           </article>
           <article class="metric-card">
-            <span class="metric-label">合作平均互动率</span>
+            <span class="metric-label">{{ fieldLabel("合作平均互动率") }}</span>
             <strong>{{ engagementRate }}</strong>
           </article>
           <article class="metric-card">
-            <span class="metric-label">合作平均CPM</span>
+            <span class="metric-label">{{ fieldLabel("合作平均CPM") }}</span>
             <strong>{{ averageCpm() }}</strong>
           </article>
           <article class="metric-card note-card">
-            <span class="metric-label">{{ resourceKind }}备注</span>
+            <span class="metric-label">{{ fieldLabel(`${resourceKind}备注`) }}</span>
             <strong>{{ notesText() }}</strong>
           </article>
         </div>
@@ -880,16 +881,16 @@ onMounted(loadProfile);
         <div class="section-heading">
           <strong
             ><IconifyIconOnline icon="ri:table-line" />
-            {{ resourceKind }}合作明细</strong
+            {{ fieldLabel(`${resourceKind}合作明细`) }}</strong
           >
         </div>
         <el-table :data="pagedCooperations" border class="cooperation-table">
           <el-table-column
             prop="projectName"
-            label="项目名称"
+            :label="fieldLabel('项目名称')"
             min-width="140"
           />
-          <el-table-column label="合作形式" width="94">
+          <el-table-column :label="fieldLabel('合作形式')" min-width="145">
             <template #default="{ row }">
               <CooperationTypeTags
                 :value="row.cooperationType"
@@ -897,10 +898,10 @@ onMounted(loadProfile);
               />
             </template>
           </el-table-column>
-          <el-table-column label="发布日期" width="100">
+          <el-table-column :label="fieldLabel('发布日期')" min-width="110">
             <template #default="{ row }">{{ cooperationDate(row) }}</template>
           </el-table-column>
-          <el-table-column label="发布作品" width="116">
+          <el-table-column :label="fieldLabel('发布作品')" min-width="120">
             <template #default="{ row }">
               <button
                 v-if="cooperationLink(row)"
@@ -921,18 +922,18 @@ onMounted(loadProfile);
               <span v-else>/</span>
             </template>
           </el-table-column>
-          <el-table-column label="曝光量" width="88">
+          <el-table-column :label="fieldLabel('曝光量')" width="88">
             <template #default="{ row }">{{
               formatCount(primaryReach(row))
             }}</template>
           </el-table-column>
-          <el-table-column label="互动量" width="88">
+          <el-table-column :label="fieldLabel('互动量')" width="88">
             <template #default="{ row }">{{
               formatCount(row.engagementCount)
             }}</template>
           </el-table-column>
-          <el-table-column prop="owner" label="对接人" width="88" />
-          <el-table-column prop="vendor" label="合作供应商" min-width="120" />
+          <el-table-column prop="owner" :label="fieldLabel('对接人')" min-width="100" />
+          <el-table-column prop="vendor" :label="fieldLabel('合作供应商')" min-width="140" />
         </el-table>
         <div v-if="selectedCooperations.length" class="detail-pagination">
           <el-pagination
@@ -948,9 +949,9 @@ onMounted(loadProfile);
       </section>
     </template>
 
-    <el-empty v-else-if="!loading" description="未找到资源档案">
+    <el-empty v-else-if="!loading" :description="fieldLabel('未找到资源档案')">
       <el-button type="primary" @click="router.push('/business/resources')"
-        >返回全球资源库</el-button
+        >{{ fieldLabel("返回全球资源库") }}</el-button
       >
     </el-empty>
   </main>

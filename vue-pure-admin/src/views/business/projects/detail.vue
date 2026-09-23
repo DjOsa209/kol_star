@@ -3319,8 +3319,11 @@ onBeforeUnmount(() => {
           <div>
             <h2>{{ fieldLabel("媒体") }}</h2>
             <p>
-              Website 媒体量级采用 Traffic.cv
-              月访问量；其他媒体采用月独立访客（UMV）。
+              {{
+                fieldLabel(
+                  "Website 媒体量级采用 Traffic.cv 月访问量；其他媒体采用月独立访客（UMV）。"
+                )
+              }}
             </p>
           </div>
           <span>{{ `Media: ${mediaRows.length}` }}</span>
