@@ -281,6 +281,16 @@ func TestBuildStandardProjectImportTemplateHasProtectedTwoRowHeader(t *testing.T
 	if instructionStyle.Protection == nil || !instructionStyle.Protection.Locked {
 		t.Fatal("instruction rows must be locked")
 	}
+	if instructionStyle.Alignment == nil || instructionStyle.Alignment.Horizontal != "left" {
+		t.Fatal("instruction rows must be left aligned")
+	}
+	for _, cell := range []string{"C4", "L4"} {
+		styleID, _ := book.GetCellStyle(sheet, cell)
+		style, _ := book.GetStyle(styleID)
+		if style.Alignment == nil || style.Alignment.Horizontal != "left" {
+			t.Fatalf("%s must be left aligned", cell)
+		}
+	}
 	panes, err := book.GetPanes(sheet)
 	if err != nil || !panes.Freeze || panes.YSplit != 4 {
 		t.Fatalf("expected first four rows frozen: %#v, %v", panes, err)

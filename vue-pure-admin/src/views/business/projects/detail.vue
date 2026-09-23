@@ -33,6 +33,7 @@ import {
   updateProjectStatus
 } from "@/api/business";
 import {
+  countryOptionLabel,
   countryOptionsWithLegacyValues,
   parseProjectTargetMarkets,
   serializeProjectTargetMarkets
@@ -1296,6 +1297,22 @@ function contentTypeTag(post: any) {
   return String(
     post?.contentType || contentCooperation(post)?.contentType || ""
   ).trim();
+}
+
+function contentTypeTagClass(post: any) {
+  const type = contentTypeTag(post);
+  const tones: Record<string, string> = {
+    生活记录类: "lifestyle",
+    娱乐搞笑类: "entertainment",
+    兴趣圈层类: "community",
+    消费种草类: "review",
+    "商业/品牌类": "brand",
+    新闻资讯类: "news",
+    "动画/创意类": "creative",
+    动画创意类: "creative",
+    短剧类: "drama"
+  };
+  return `content-type-tag--${tones[type] || "other"}`;
 }
 
 function contentDisplayTitle(post: any) {
@@ -2640,7 +2657,7 @@ onBeforeUnmount(() => {
                   <el-tag
                     v-if="contentTypeTag(contentDetailView)"
                     class="content-type-tag content-detail-type-tag"
-                    type="primary"
+                    :class="contentTypeTagClass(contentDetailView)"
                     effect="plain"
                     size="small"
                     :title="fieldLabel('内容类型')"
@@ -2849,7 +2866,7 @@ onBeforeUnmount(() => {
             </div>
             <span>{{
               locale === "en"
-                ? `platforms:${platformPerformance.length}`
+                ? `Platform: ${platformPerformance.length}`
                 : `${platformPerformance.length}${fieldLabel("个平台")}`
             }}</span>
           </div>
@@ -3642,7 +3659,7 @@ onBeforeUnmount(() => {
               <el-tag
                 v-if="contentTypeTag(post)"
                 class="content-type-tag content-card-type-tag"
-                type="primary"
+                :class="contentTypeTagClass(post)"
                 effect="plain"
                 size="small"
                 :title="fieldLabel('内容类型')"
@@ -4838,19 +4855,28 @@ onBeforeUnmount(() => {
             collapse-tags
             collapse-tags-tooltip
             :max-collapse-tags="3"
-            :placeholder="fieldLabel('搜索中文、英文或国家代码')"
+            :placeholder="
+              locale === 'en'
+                ? 'Search country or code'
+                : fieldLabel('搜索中文、英文或国家代码')
+            "
             class="w-full!"
           >
             <el-option
               v-for="country in projectCountryOptions"
               :key="country.code || country.name"
-              :label="country.label"
+              :label="countryOptionLabel(country, locale)"
               :value="country.name"
             >
-              <span>{{ country.name }}</span>
-              <small class="country-option-meta">
-                {{ country.englishName }}
-                {{ country.code ? `· ${country.code}` : "" }}
+              <span>{{
+                locale === "en" ? country.englishName : country.name
+              }}</span>
+              <small v-if="country.code" class="country-option-meta">
+                {{
+                  locale === "en"
+                    ? country.code
+                    : `${country.englishName} · ${country.code}`
+                }}
               </small>
             </el-option>
           </el-select></el-form-item
@@ -6027,12 +6053,10 @@ onBeforeUnmount(() => {
 .overview-metric-card small {
   display: block;
   margin-top: 10px;
-  overflow: hidden;
-  color: #9a9ea6;
+  color: #6b7280;
   font-size: 11px;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .platform-overview-section {
   padding-top: 2px;
@@ -6180,6 +6204,7 @@ onBeforeUnmount(() => {
 }
 .creator-toolbar .toolbar-actions {
   margin-left: auto;
+  padding-right: 30px;
 }
 .creator-filter {
   width: 148px;
@@ -6201,8 +6226,10 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 .creator-part-heading > span {
-  color: #747981;
+  padding-right: 30px;
+  color: #34353a;
   font-size: 13px;
+  font-weight: 700;
   white-space: nowrap;
 }
 .media-part-heading {
@@ -6597,8 +6624,55 @@ onBeforeUnmount(() => {
   margin-bottom: 9px;
 }
 .content-type-tag {
+  --content-type-text: #475569;
+  --content-type-bg: #f1f5f9;
+  --content-type-border: #cbd5e1;
+
+  color: var(--content-type-text);
   font-weight: 600;
+  background-color: var(--content-type-bg);
+  border-color: var(--content-type-border);
   border-radius: 0;
+}
+.content-type-tag--lifestyle {
+  --content-type-text: #28614b;
+  --content-type-bg: #e9f6ed;
+  --content-type-border: #abd8ba;
+}
+.content-type-tag--entertainment {
+  --content-type-text: #963d79;
+  --content-type-bg: #fcecf6;
+  --content-type-border: #e9b7d5;
+}
+.content-type-tag--community {
+  --content-type-text: #345f91;
+  --content-type-bg: #eaf3ff;
+  --content-type-border: #b5d1ef;
+}
+.content-type-tag--review {
+  --content-type-text: #9b4d27;
+  --content-type-bg: #fff0e7;
+  --content-type-border: #edc2aa;
+}
+.content-type-tag--brand {
+  --content-type-text: #684b9b;
+  --content-type-bg: #f1ecfa;
+  --content-type-border: #c9b8e7;
+}
+.content-type-tag--news {
+  --content-type-text: #176b72;
+  --content-type-bg: #e5f5f5;
+  --content-type-border: #a5d6d6;
+}
+.content-type-tag--creative {
+  --content-type-text: #865c14;
+  --content-type-bg: #fff5d9;
+  --content-type-border: #e8cf8b;
+}
+.content-type-tag--drama {
+  --content-type-text: #a33850;
+  --content-type-bg: #fcecf0;
+  --content-type-border: #e9b7c3;
 }
 .content-card-type-tag {
   margin-bottom: 9px;

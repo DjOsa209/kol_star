@@ -480,7 +480,7 @@ func buildStandardProjectImportTemplateWithOptionsAndLanguage(options map[string
 	}
 	instructionStyle, err := book.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Color: "#000000", Family: "Arial", Size: 9},
-		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+		Alignment: &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true},
 		Border: []excelize.Border{
 			{Type: "left", Color: "#D0D0D0", Style: 1}, {Type: "right", Color: "#D0D0D0", Style: 1},
 			{Type: "top", Color: "#D0D0D0", Style: 1}, {Type: "bottom", Color: "#D0D0D0", Style: 1},

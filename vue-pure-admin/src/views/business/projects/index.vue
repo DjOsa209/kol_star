@@ -15,6 +15,7 @@ import * as XLSX from "xlsx";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
 import { fieldLabel } from "@/utils/fieldI18n";
 import {
+  countryOptionLabel,
   countryOptionsWithLegacyValues,
   parseProjectTargetMarkets,
   serializeProjectTargetMarkets,
@@ -134,6 +135,13 @@ function localizedCountryName(value: string) {
     fieldLabel(value)
   );
 }
+
+function localizedImportSheetName(value: string) {
+  return locale.value === "en" && value === "标准模板"
+    ? "Standard Template"
+    : value;
+}
+
 const standardizedImportProjectName = computed(() => {
   const division = isRegionalProjectDivision.value
     ? importProjectCountry.value
@@ -907,7 +915,7 @@ async function refreshImportProjectOptions(showError = true) {
     }
   } catch {
     importProjectOptionsError.value = "已有项目加载失败，请刷新后重试";
-    if (showError) ElMessage.error(importProjectOptionsError.value);
+    if (showError) ElMessage.error(fieldLabel(importProjectOptionsError.value));
   } finally {
     importProjectOptionsLoading.value = false;
   }
@@ -2154,7 +2162,7 @@ function importValidationSummary(rows: any[], key: "errors" | "warnings") {
       .map(localizedImportValidationMessage)
       .join(locale.value === "en" ? ", " : "、");
     return locale.value === "en"
-      ? `${row.sourceSheet || "Sheet"}, row ${row.rowNo || "-"}: ${messageText}`
+      ? `${localizedImportSheetName(row.sourceSheet || "Sheet")}, row ${row.rowNo || "-"}: ${messageText}`
       : `${row.sourceSheet || "Sheet"} 第 ${row.rowNo || "-"} 行：${messageText}`;
   });
   if (rows.length > shown.length) {
@@ -2291,14 +2299,14 @@ async function ensureImportProject() {
   if (importTargetMode.value !== "new") {
     const projectId = Number(importProjectId.value || 0);
     if (!projectId) {
-      ElMessage.warning("请选择要导入的已有项目");
+      ElMessage.warning(fieldLabel("请选择要导入的已有项目"));
       return false;
     }
     const existing = projects.value.find(
       project => Number(project.id) === projectId
     );
     if (!existing) {
-      ElMessage.warning("选择的项目不存在，请重新选择");
+      ElMessage.warning(fieldLabel("选择的项目不存在，请重新选择"));
       return false;
     }
     importProjectNameDraft.value = String(existing.name || "");
@@ -2308,14 +2316,16 @@ async function ensureImportProject() {
   const name = standardizedImportProjectName.value;
   importProjectId.value = null;
   if (!hasCompleteImportProjectName.value) {
-    ElMessage.warning("请选择总部/区域、产品线并填写项目名称");
+    ElMessage.warning(fieldLabel("请选择总部/区域、产品线并填写项目名称"));
     return false;
   }
   const existingStandardName = projects.value.find(
     project => String(project.name || "").trim() === name
   );
   if (existingStandardName) {
-    ElMessage.warning("已存在相同规范名称，请切换到“已有项目增量导入”");
+    ElMessage.warning(
+      fieldLabel("已存在相同规范名称，请切换到“已有项目增量导入”")
+    );
     return false;
   }
   importProjectCreating.value = true;
@@ -2334,19 +2344,25 @@ async function ensureImportProject() {
       cycleEndDate: importProjectCycleRange.value[1] || ""
     });
     if (res.code !== 0) {
-      ElMessage.warning(res.message || "项目创建失败");
+      ElMessage.warning(fieldLabel(res.message || "项目创建失败"));
       return false;
     }
     const id = Number(res.data?.id || 0);
     await loadData();
     const created = projects.value.find(project => Number(project.id) === id);
     if (!created) {
-      ElMessage.warning("项目已创建，但未能读取项目编号，请重新选择");
+      ElMessage.warning(
+        fieldLabel("项目已创建，但未能读取项目编号，请重新选择")
+      );
       return false;
     }
     importProjectId.value = Number(created.id);
     importProjectNameDraft.value = String(created.name || name);
-    ElMessage.success(`已创建项目「${created.name}」`);
+    ElMessage.success(
+      locale.value === "en"
+        ? `Project "${created.name}" created`
+        : `已创建项目「${created.name}」`
+    );
     return true;
   } finally {
     importProjectCreating.value = false;
@@ -2405,7 +2421,7 @@ async function handleUploadFile(file: any) {
     projectImportDialog.value = false;
     const res = await previewProjectExcelImport(rawFile);
     if (res.code !== 0) {
-      importParseError.value = res.message || "Excel 解析失败";
+      importParseError.value = fieldLabel(res.message || "Excel 解析失败");
       return;
     }
     importTargetMode.value = "new";
@@ -2428,7 +2444,9 @@ async function handleUploadFile(file: any) {
     await nextTick();
     await confirmImportPrerequisites();
   } catch {
-    importParseError.value = "Excel 解析失败，请确认文件未损坏后重试。";
+    importParseError.value = fieldLabel(
+      "Excel 解析失败，请确认文件未损坏后重试。"
+    );
     ElMessage.error(importParseError.value);
   } finally {
     importParsing.value = false;
@@ -2438,13 +2456,13 @@ async function handleUploadFile(file: any) {
 
 async function submitImport() {
   if (importProjectCreating.value) {
-    ElMessage.warning("项目正在创建，请稍候");
+    ElMessage.warning(fieldLabel("项目正在创建，请稍候"));
     return;
   }
   if (!(await confirmImportPrerequisites())) return;
   if (!(await ensureImportProject())) return;
   if (rowsForImport.value.length === 0) {
-    ElMessage.warning("没有可导入的有效行");
+    ElMessage.warning(fieldLabel("没有可导入的有效行"));
     return;
   }
   importLoading.value = true;
@@ -2467,7 +2485,7 @@ async function submitImport() {
       ? ""
       : res.data.feishuNotificationEnabled
         ? locale.value === "en"
-          ? "; platform data will sync in the background and results will be sent via Feishu"
+          ? "; platform data will sync in the background and results will be sent via Lark"
           : "；平台数据将在后台同步，完成后通过飞书通知"
         : locale.value === "en"
           ? "; platform data will sync in the background"
@@ -2482,9 +2500,11 @@ async function submitImport() {
         .slice(0, 3)
         .map(
           (item: any) =>
-            `第 ${item.row || "-"} 行：${item.message || "导入失败"}`
+            locale.value === "en"
+              ? `Row ${item.row || "-"}: ${localizedImportValidationMessage(item.message || "导入失败")}`
+              : `第 ${item.row || "-"} 行：${item.message || "导入失败"}`
         )
-        .join("；");
+        .join(locale.value === "en" ? "; " : "；");
       ElMessage.warning(
         locale.value === "en"
           ? `${res.data.failed} rows were not imported${failures ? `: ${failures}` : ""}`
@@ -2535,7 +2555,7 @@ onMounted(() => {
           >
             {{
               locale === "en"
-                ? "Lark: Connected · Push"
+                ? `Lark Push: ${importNotificationStatus.enabled ? "Connected" : "Disconnected"}`
                 : `飞书推送：${importNotificationStatus.enabled ? "已启用" : "未启用"}`
             }}
           </el-tag>
@@ -2610,7 +2630,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('项目')"
             min-width="270"
-            align="center"
+            align="left"
             sortable
           >
             <template #default="{ row }">
@@ -2623,7 +2643,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('合作达人 / 媒体')"
             width="180"
-            align="center"
+            align="left"
             sortable
           >
             <template #default="{ row }">{{
@@ -2633,7 +2653,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('内容')"
             width="120"
-            align="center"
+            align="left"
             sortable
           >
             <template #default="{ row }">{{
@@ -2643,7 +2663,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('曝光 / 播放')"
             width="210"
-            align="center"
+            align="left"
             sortable
           >
             <template #default="{ row }">{{
@@ -2653,7 +2673,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('互动率')"
             width="180"
-            align="center"
+            align="left"
           >
             <template #default="{ row }">{{
               ratioPercent(
@@ -2665,7 +2685,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('对接人')"
             width="130"
-            align="center"
+            align="left"
             ><template #default="{ row }">{{
               row.owner || fieldLabel("未指定对接人")
             }}</template></el-table-column
@@ -2673,7 +2693,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('目标市场')"
             min-width="310"
-            align="center"
+            align="left"
           >
             <template #default="{ row }">
               <div
@@ -2734,7 +2754,7 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('项目日历')"
             width="210"
-            align="center"
+            align="left"
           >
             <template #default="{ row }">
               <span class="project-cycle-value">{{
@@ -2746,7 +2766,7 @@ onMounted(() => {
             :label="fieldLabel('操作')"
             width="350"
             fixed="right"
-            align="center"
+            align="left"
           >
             <template #default="{ row }">
               <div class="project-action-cell">
@@ -2834,18 +2854,27 @@ onMounted(() => {
               collapse-tags
               collapse-tags-tooltip
               :max-collapse-tags="3"
-              :placeholder="fieldLabel('搜索中文、英文或国家代码')"
+              :placeholder="
+                locale === 'en'
+                  ? 'Search country or code'
+                  : fieldLabel('搜索中文、英文或国家代码')
+              "
               class="w-full!"
               ><el-option
                 v-for="country in projectCountryOptions"
                 :key="country.code || country.name"
-                :label="country.label"
+                :label="countryOptionLabel(country, locale)"
                 :value="country.name"
               >
-                <span>{{ country.name }}</span>
-                <small class="country-option-meta">
-                  {{ country.englishName }}
-                  {{ country.code ? `· ${country.code}` : "" }}
+                <span>{{
+                  locale === "en" ? country.englishName : country.name
+                }}</span>
+                <small v-if="country.code" class="country-option-meta">
+                  {{
+                    locale === "en"
+                      ? country.code
+                      : `${country.englishName} · ${country.code}`
+                  }}
                 </small>
               </el-option></el-select
             ></el-form-item
@@ -3062,7 +3091,7 @@ onMounted(() => {
               popper-class="import-project-select-popper"
               :loading="importProjectOptionsLoading"
               :no-data-text="
-                importProjectOptionsError || fieldLabel('暂无可选择的已有项目')
+                fieldLabel(importProjectOptionsError || '暂无可选择的已有项目')
               "
               class="import-project-select"
               :placeholder="fieldLabel('搜索并选择已有项目')"
@@ -3078,7 +3107,11 @@ onMounted(() => {
                 <div class="import-project-option">
                   <span>{{ project.name }}</span>
                   <small>
-                    {{ fieldLabel(project.targetMarket || "未设置市场") }} ·
+                    {{
+                      localizedCountryName(
+                        project.targetMarket || fieldLabel("未设置市场")
+                      )
+                    }} ·
                     {{ projectCycleText(project) }}
                   </small>
                 </div>
@@ -3116,7 +3149,7 @@ onMounted(() => {
                   <el-option
                     v-for="country in worldCountryOptions"
                     :key="country.code"
-                    :label="country.label"
+                    :label="countryOptionLabel(country, locale)"
                     :value="country.name"
                   />
                 </el-select>
@@ -3200,7 +3233,7 @@ onMounted(() => {
           show-icon
           :title="
             locale === 'en'
-              ? 'Add data to filed project will not make adjustments to historry data but only make increments'
+              ? `Add only new data to the selected project. ${duplicateImportRows.length} duplicate rows from the file or project are hidden.`
               : `增量导入仅展示并提交新增数据；已隐藏文件内或项目中已有的重复数据 ${duplicateImportRows.length} 条。`
           "
         />
@@ -3225,7 +3258,7 @@ onMounted(() => {
           :title="
               importedTargetMarkets.length
               ? locale === 'en'
-                ? `A new project will be created and the template markets will be used: ${importedTargetMarkets.join(', ')}.`
+                ? `A new project will be created and the template markets will be used: ${importedTargetMarkets.map(localizedCountryName).join(', ')}.`
                 : `确认后将创建新项目，并自动采用模板中的目标市场：${importedTargetMarkets.join('、')}。`
               : fieldLabel('确认后将创建新项目；模板未填写市场，目标市场将保持为空。')
           "
@@ -3251,75 +3284,112 @@ onMounted(() => {
             :label="fieldLabel('行号')"
             width="70"
             fixed
+            align="center"
           />
           <el-table-column
             prop="resourceName"
             :label="fieldLabel('名称')"
             min-width="150"
             show-overflow-tooltip
+            align="center"
           />
           <el-table-column
             prop="influencer"
             :label="fieldLabel('合作方主页')"
             min-width="240"
             show-overflow-tooltip
+            align="left"
           />
           <el-table-column
             prop="resourceType"
             :label="fieldLabel('类型')"
             width="120"
-          />
+            align="center"
+          >
+            <template #default="{ row }">{{
+              fieldLabel(row.resourceType)
+            }}</template>
+          </el-table-column>
           <el-table-column
             prop="category"
             :label="fieldLabel('领域')"
             min-width="170"
             show-overflow-tooltip
-          />
+            align="center"
+          >
+            <template #default="{ row }">{{
+              fieldLabel(row.category)
+            }}</template>
+          </el-table-column>
           <el-table-column
             prop="country"
             :label="fieldLabel('市场')"
             min-width="150"
             show-overflow-tooltip
-          />
+            align="center"
+          >
+            <template #default="{ row }">{{
+              localizedCountryName(row.country)
+            }}</template>
+          </el-table-column>
           <el-table-column
             prop="platform"
             :label="fieldLabel('平台')"
             min-width="150"
             show-overflow-tooltip
-          />
+            align="center"
+          >
+            <template #default="{ row }">{{
+              fieldLabel(row.platform)
+            }}</template>
+          </el-table-column>
           <el-table-column
             prop="cooperationType"
             :label="fieldLabel('合作类型')"
             min-width="210"
             show-overflow-tooltip
-          />
+            align="center"
+          >
+            <template #default="{ row }">{{
+              fieldLabel(row.cooperationType)
+            }}</template>
+          </el-table-column>
           <el-table-column
             prop="deliverableLinks"
             :label="fieldLabel('内容链接')"
             min-width="360"
             show-overflow-tooltip
+            align="left"
           />
           <el-table-column
             prop="contentType"
             :label="fieldLabel('内容类型')"
             min-width="180"
             show-overflow-tooltip
-          />
+            align="center"
+          >
+            <template #default="{ row }">{{
+              fieldLabel(row.contentType)
+            }}</template>
+          </el-table-column>
           <el-table-column
             prop="quoteAmount"
             :label="fieldLabel('成本')"
             width="110"
+            align="center"
           />
           <el-table-column
             prop="owner"
             :label="fieldLabel('对接人')"
             min-width="180"
             show-overflow-tooltip
+            align="center"
           />
           <el-table-column
             :label="fieldLabel('状态')"
             min-width="280"
             fixed="right"
+            align="left"
           >
             <template #default="{ row }">
               <el-tag
@@ -4942,7 +5012,7 @@ onMounted(() => {
               <el-option
                 v-for="country in projectCountryOptions"
                 :key="country.code || country.name"
-                :label="country.label"
+                :label="countryOptionLabel(country, locale)"
                 :value="country.name"
               /> </el-select
           ></el-form-item>
@@ -7038,7 +7108,7 @@ onMounted(() => {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 2px;
   white-space: nowrap;
 }
@@ -7054,7 +7124,7 @@ onMounted(() => {
   display: grid;
   min-width: 0;
   gap: 4px;
-  justify-items: center;
+  justify-items: start;
 }
 .project-name-cell strong {
   overflow: hidden;

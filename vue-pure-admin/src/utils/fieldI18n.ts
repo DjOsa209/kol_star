@@ -194,12 +194,30 @@ const englishFieldLabels: Record<string, string> = {
   "飞书通知已启用：导入后将在后台同步，完成后自动推送结果。":
     "Lark push activated: notifications will be pushed automatically upon completion",
   "飞书通知未启用：导入后仍会后台同步，但不会发送完成消息。":
-    "Feishu notifications are disabled: imports still sync in the background, but no completion message will be sent.",
+    "Lark push is disabled: imports still sync in the background, but no completion message will be sent.",
   完成分类后自动生成: "Generated automatically after classification",
   "确认后将创建新项目；模板未填写市场，目标市场将保持为空。":
     "A new project will be created after confirmation. No market was provided in the template, so the target market will remain empty.",
   没有可导入的有效项目: "No valid projects to import",
-  暂无可选择的已有项目: "No filed projects available",
+  暂无可选择的已有项目: "No existing projects available",
+  "已有项目加载失败，请刷新后重试":
+    "Existing projects could not be loaded. Refresh and try again.",
+  请选择要导入的已有项目: "Select an existing project to import into.",
+  "选择的项目不存在，请重新选择":
+    "The selected project no longer exists. Choose another project.",
+  "请选择总部/区域、产品线并填写项目名称":
+    "Select an HQ function or region and product line, then enter a project name.",
+  "已存在相同规范名称，请切换到“已有项目增量导入”":
+    "A project with this standard title already exists. Switch to incremental import.",
+  项目创建失败: "Project creation failed.",
+  "项目已创建，但未能读取项目编号，请重新选择":
+    "The project was created, but its ID could not be loaded. Select it again.",
+  "项目正在创建，请稍候": "The project is being created. Please wait.",
+  没有可导入的有效行: "There are no valid rows to import.",
+  "Excel 解析失败": "Could not parse the Excel file.",
+  "Excel 解析失败，请确认文件未损坏后重试。":
+    "Could not parse the Excel file. Check that it is not damaged and try again.",
+  导入失败: "Import failed.",
   项目导入失败: "Project import failed",
   增量导入完成: "Incremental import completed",
   覆盖导入完成: "Overwrite import completed",
@@ -1249,7 +1267,7 @@ const englishFieldLabels: Record<string, string> = {
   成本: "Cost",
   转赞藏评: "Shares, Likes, Saves, and Comments",
   "覆盖导入会以本次文件解析结果为准更新项目，并移除该项目中未出现在本次文件里的历史合作与项目关联；全局达人/媒体资料不会被删除。":
-    "Replace Filed Proiect will only kkeep the latest data, the historydata will be deleted"
+    "Replace import updates this project with the current file and removes past collaborations and project links absent from it. Global creator and media profiles remain available."
 };
 
 export function fieldLabel(label: string): string {
