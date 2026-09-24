@@ -4273,6 +4273,7 @@ onUnmounted(() => {
     minmax(190px, 0.8fr) minmax(370px, 1.5fr) 210px;
   gap: 0;
   align-items: stretch;
+  min-width: 1347px;
 }
 
 .compact-list-head {
@@ -5958,6 +5959,7 @@ onUnmounted(() => {
 
   .compact-resource-row {
     grid-template-columns: 1fr;
+    min-width: 0;
   }
 
   .compact-cooperation dl {
@@ -6020,11 +6022,6 @@ onUnmounted(() => {
 }
 
 @media (width > 760px) and (width <= 1180px) {
-  .compact-list-head,
-  .compact-resource-row {
-    min-width: 1320px;
-  }
-
   .resource-card__main {
     grid-template-columns:
       minmax(250px, 1.2fr) repeat(2, minmax(210px, 1fr))
