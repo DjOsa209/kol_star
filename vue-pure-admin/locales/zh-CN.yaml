@@ -68,6 +68,11 @@ panel:
   pureHiddenFooter: 隐藏页脚
   pureMultiTagsCache: 页签持久化
 menus:
+  ipOperations: IP运营
+  ipLibrary: IP资源库
+  ipRequests: IP需求管理
+  ipFeedback: 初步意向IP反馈
+  ipMarketing: 营销意见补充
   businessOperations: 资源运营
   businessAssistant: 智能资源助手
   businessResources: 全球资源库

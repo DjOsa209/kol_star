@@ -9,3 +9,5 @@
 backend/config.yaml
 backend/uploads/resource-images/*
 !backend/uploads/resource-images/.gitkeep
+backend/uploads/ip-documents/*
+!backend/uploads/ip-documents/.gitkeep

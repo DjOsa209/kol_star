@@ -1,0 +1,1438 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { ElMessage } from "element-plus";
+import * as XLSX from "xlsx";
+import {
+  getIPResource,
+  getIPRequest,
+  listIPRequests,
+  listIPResources,
+  saveIPRequest,
+  submitIPFeedback,
+  submitIPMarketing,
+  type IPRequestInput
+} from "@/api/ip";
+
+defineOptions({ name: "IPRequests" });
+const route = useRoute();
+const router = useRouter();
+const mode = ref<"list" | "new" | "detail">("list");
+const loading = ref(false);
+const saving = ref(false);
+const rows = ref<any[]>([]);
+const total = ref(0);
+const page = ref(1);
+const keyword = ref("");
+const detail = ref<{ request: any; candidates: any[] } | null>(null);
+const resourceOptions = ref<any[]>([]);
+const markets = [
+  "中国",
+  "东南亚",
+  "欧洲",
+  "中东",
+  "非洲",
+  "拉美",
+  "北美",
+  "全球"
+];
+const goals = ["新品发布", "品牌声量", "用户增长", "线下活动", "其他"];
+const channels = ["线下快闪", "短视频共创", "新品联名", "社媒互动", "媒体投放"];
+const briefFields = [
+  { key: "owner", label: "项目负责人", hint: "填写姓名或团队" },
+  { key: "projectPeriod", label: "项目周期", hint: "启动至结案的预计周期" },
+  { key: "linkedProduct", label: "关联产品", hint: "例如 NOTE / GT / HOT" },
+  {
+    key: "cooperationMode",
+    label: "合作模式",
+    hint: "整合联动 / 衍生品授权 / 营销联动"
+  },
+  {
+    key: "contacts",
+    label: "各环节对接人",
+    hint: "产品、IP营销、IMC、品牌、用户、媒介、PR"
+  },
+  {
+    key: "selectionReason",
+    label: "合作筛选理由",
+    hint: "商业潜力、品牌调性或话题契合度"
+  },
+  {
+    key: "productEvaluation",
+    label: "产品维度评估",
+    hint: "目标市场认知度、用户重叠率、机型适配渗透率"
+  },
+  {
+    key: "technicalFit",
+    label: "技术匹配程度",
+    hint: "视觉风格、系统开发与本地化难度"
+  }
+];
+const assessmentFields = [
+  {
+    key: "priceModel",
+    label: "合作价格与模式",
+    hint: "一次性授权、年度保底或保底加分成"
+  },
+  {
+    key: "licenseContent",
+    label: "授权内容",
+    hint: "商标、形象、内容或线下活动"
+  },
+  {
+    key: "licenseTerritory",
+    label: "授权区域",
+    hint: "全球、多区域或单点区域"
+  },
+  {
+    key: "ipResources",
+    label: "IP方可提供资源",
+    hint: "素材、游戏活动、官方宣发、KOL等"
+  },
+  {
+    key: "brandResources",
+    label: "Infinix侧需提供资源",
+    hint: "硬件、系统、营销、渠道等"
+  },
+  {
+    key: "businessRisk",
+    label: "商务风险评估",
+    hint: "合规、预算、竞品冲突等"
+  },
+  { key: "publicRisk", label: "舆情与地缘风险", hint: "政治、舆情等问题" },
+  {
+    key: "ownershipClarity",
+    label: "版权归属清晰度",
+    hint: "主体、授权链及待核实问题"
+  },
+  {
+    key: "pastCases",
+    label: "相关合作案例",
+    hint: "过往联名数据及玩法（选填）"
+  },
+  {
+    key: "relatedDocuments",
+    label: "相关文档与纪要",
+    hint: "协议、排期、预算、对接纪要（选填）"
+  },
+  {
+    key: "notes",
+    label: "特殊约束与备注",
+    hint: "排他、监修或时间限制（选填）"
+  }
+];
+const marketingFields = [
+  {
+    key: "recentTrend",
+    label: "IMC · 近一年热度趋势",
+    hint: "上升 / 平稳 / 下跌及依据"
+  },
+  {
+    key: "socialFollowers",
+    label: "IMC · 社媒粉丝总数",
+    hint: "平台及粉丝规模"
+  },
+  {
+    key: "brandValue",
+    label: "IMC · 品牌调性价值",
+    hint: "话题、品牌增益和年轻化效果"
+  },
+  {
+    key: "ugcForecast",
+    label: "品牌运营 · 用户内容预测",
+    hint: "UGC产出、二创意愿、用户黏性"
+  },
+  {
+    key: "audienceMatch",
+    label: "用户运营 · 受众匹配",
+    hint: "IP受众与品牌受众的匹配度"
+  },
+  {
+    key: "cpmValue",
+    label: "媒体投放 · CPM价值",
+    hint: "预估ROI及投放成本对比（选填）"
+  },
+  { key: "prOpinion", label: "PR · 舆情判断", hint: "舆论风险与公关建议" }
+];
+function objectValue(value: unknown): Record<string, any> {
+  if (value && typeof value === "object" && !Array.isArray(value))
+    return value as Record<string, any>;
+  try {
+    const parsed = JSON.parse(String(value || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+const statusText: Record<string, string> = {
+  draft: "草稿",
+  submitted: "待IP组反馈",
+  ip_reviewed: "待营销补充",
+  marketing_reviewed: "营销意见已提交"
+};
+const initialForm = (): IPRequestInput => ({
+  projectName: "",
+  department: "",
+  markets: [],
+  expectedLaunch: "",
+  goal: "",
+  description: "",
+  budgetCurrency: "CNY",
+  budgetMin: null,
+  budgetMax: null,
+  externalRecommendation: "",
+  candidateIds: [],
+  submit: false,
+  brief: { externalIPs: [] }
+});
+const form = ref<IPRequestInput>(initialForm());
+const feedback = ref<any[]>([]);
+const addCandidateID = ref<number | null>(null);
+const marketing = ref({
+  marketHeat: "",
+  fanAudience: "",
+  commercialValue: "",
+  marketingRisks: "",
+  marketingChannels: [] as string[],
+  marketingComments: "",
+  marketingProfile: {} as Record<string, string>
+});
+const menuKind = computed(() =>
+  route.path.endsWith("/feedback")
+    ? "feedback"
+    : route.path.endsWith("/marketing")
+      ? "marketing"
+      : "requests"
+);
+const pageTitle = computed(() =>
+  menuKind.value === "feedback"
+    ? "初步意向IP反馈"
+    : menuKind.value === "marketing"
+      ? "营销意见补充"
+      : "IP需求管理"
+);
+const pageSubtitle = computed(() =>
+  menuKind.value === "feedback"
+    ? "评估意向IP的合作可行性与推荐顺序"
+    : menuKind.value === "marketing"
+      ? "补充市场热度、商业价值与传播建议"
+      : "提起需求并追踪IP合作评估进度"
+);
+const canFeedback = computed(
+  () => detail.value?.request.status === "submitted"
+);
+const canMarketing = computed(
+  () => detail.value?.request.status === "ip_reviewed"
+);
+
+function arrayValue(value: unknown): string[] {
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(String(value || "[]"));
+  } catch {
+    return [];
+  }
+}
+function priceText(row: any) {
+  if (row.budgetMin == null && row.budgetMax == null) return "待填写";
+  const symbol =
+    row.budgetCurrency === "USD"
+      ? "$"
+      : row.budgetCurrency === "EUR"
+        ? "€"
+        : "¥";
+  return `${symbol}${Number(row.budgetMin || 0).toLocaleString()} – ${symbol}${Number(row.budgetMax || 0).toLocaleString()}`;
+}
+async function loadRows() {
+  loading.value = true;
+  try {
+    const status =
+      menuKind.value === "feedback"
+        ? "submitted"
+        : menuKind.value === "marketing"
+          ? "ip_reviewed"
+          : "";
+    const result = await listIPRequests({
+      keyword: keyword.value,
+      status,
+      page: page.value,
+      pageSize: 20
+    });
+    rows.value = result.data.list || [];
+    total.value = result.data.total || 0;
+  } finally {
+    loading.value = false;
+  }
+}
+async function loadResources() {
+  const result = await listIPResources({ keyword: "", page: 1, pageSize: 200 });
+  resourceOptions.value = result.data.list || [];
+}
+function goList() {
+  router.push({ path: route.path });
+}
+function goNew() {
+  form.value = initialForm();
+  router.push({ path: "/business/ip/requests", query: { mode: "new" } });
+}
+function goDetail(id: number) {
+  router.push({ path: route.path, query: { id: String(id) } });
+}
+async function loadDetail(id: number) {
+  loading.value = true;
+  try {
+    detail.value = (await getIPRequest(id)).data;
+    feedback.value = detail.value.candidates.map((row, index) => ({
+      ipId: Number(row.ipId),
+      name: row.name,
+      priorityOrder: Number(row.priorityOrder) || index + 1,
+      feasibility: row.feasibility || "",
+      recommendation: row.recommendation || "",
+      reason: row.reason || "",
+      assessment: objectValue(row.assessment)
+    }));
+    if (detail.value.request.status === "submitted") await loadResources();
+    const item = detail.value.request;
+    marketing.value = {
+      marketHeat: item.marketHeat || "",
+      fanAudience: item.fanAudience || "",
+      commercialValue: item.commercialValue || "",
+      marketingRisks: item.marketingRisks || "",
+      marketingChannels: arrayValue(item.marketingChannels),
+      marketingComments: item.marketingComments || "",
+      marketingProfile: objectValue(item.marketingProfile)
+    };
+  } finally {
+    loading.value = false;
+  }
+}
+function addFeedbackCandidate() {
+  const id = addCandidateID.value;
+  if (!id || feedback.value.some(row => row.ipId === id)) return;
+  if (feedback.value.length >= 5) {
+    ElMessage.warning("最多评估5个IP");
+    return;
+  }
+  feedback.value.push({
+    ipId: id,
+    name: selectedIP(id)?.name || "IP",
+    priorityOrder: feedback.value.length + 1,
+    feasibility: "",
+    recommendation: "",
+    reason: "",
+    assessment: {}
+  });
+  addCandidateID.value = null;
+}
+function editDraft() {
+  if (!detail.value) return;
+  const item = detail.value.request;
+  form.value = {
+    id: Number(item.id),
+    projectName: item.projectName,
+    department: item.department,
+    markets: arrayValue(item.markets),
+    expectedLaunch: item.expectedLaunch || "",
+    goal: item.goal,
+    description: item.description,
+    budgetCurrency: item.budgetCurrency || "CNY",
+    budgetMin: item.budgetMin == null ? null : Number(item.budgetMin),
+    budgetMax: item.budgetMax == null ? null : Number(item.budgetMax),
+    externalRecommendation: item.externalRecommendation || "",
+    candidateIds: detail.value.candidates.map(row => Number(row.ipId)),
+    submit: false,
+    brief: {
+      ...objectValue(item.brief),
+      externalIPs: objectValue(item.brief).externalIPs || []
+    }
+  };
+  mode.value = "new";
+  loadResources();
+}
+function openLibrary() {
+  window.open(
+    router.resolve("/business/ip/resources").href,
+    "_blank",
+    "noopener"
+  );
+}
+function openIP(id: number) {
+  window.open(
+    router.resolve({ path: "/business/ip/resources", query: { id } }).href,
+    "_blank",
+    "noopener"
+  );
+}
+function selectedIP(id: number) {
+  return resourceOptions.value.find(row => Number(row.id) === id);
+}
+async function exportEvaluation(candidate: any) {
+  if (!detail.value) return;
+  const resource = (await getIPResource(Number(candidate.ipId))).data.resource;
+  const request = detail.value.request;
+  const profile = objectValue(resource.profile);
+  const brief = objectValue(request.brief);
+  const assessment = objectValue(candidate.assessment);
+  const opinion = objectValue(request.marketingProfile);
+  const rows: [string, string, unknown][] = [
+    ["基础信息", "IP名称", resource.name],
+    ["基础信息", "介绍", resource.summary],
+    ["基础信息", "市场/区域", arrayValue(resource.markets).join("、")],
+    ["基础信息", "IP生命周期分类", profile.lifecycle],
+    ["基础信息", "合作筛选理由", brief.selectionReason],
+    ["受众情况", "性别占比", profile.genderRatio],
+    ["受众情况", "主要年龄", profile.ageRange],
+    ["受众情况", "消费力评价", profile.spendingPower],
+    ["受众情况", "用户内容预测", opinion.ugcForecast],
+    ["市场影响力", "IP热度", request.marketHeat],
+    ["市场影响力", "注册用户/赛事参与", profile.registeredUsers],
+    ["市场影响力", "近一年热度", opinion.recentTrend],
+    ["市场影响力", "社媒粉丝总数", opinion.socialFollowers],
+    ["市场影响力", "品牌调性价值", opinion.brandValue],
+    ["产品匹配", "联动产品", brief.linkedProduct],
+    ["产品匹配", "产品维度评估", brief.productEvaluation],
+    ["产品匹配", "技术匹配程度", brief.technicalFit],
+    ["商业化", "销售转化力", profile.salesROI],
+    ["商业化", "CPM价值", opinion.cpmValue],
+    ["联动条款", "合作模式", brief.cooperationMode],
+    ["联动条款", "合作价格", assessment.priceModel],
+    ["联动条款", "合作时间", brief.projectPeriod],
+    ["联动条款", "授权内容", assessment.licenseContent],
+    ["联动条款", "授权区域", assessment.licenseTerritory],
+    ["联动条款", "IP方可提供资源", assessment.ipResources],
+    ["联动条款", "Infinix侧需提供资源", assessment.brandResources],
+    ["商务判断", "风险评估", assessment.businessRisk],
+    ["商务判断", "合作案例", assessment.pastCases],
+    ["商务判断", "相关文档/纪要", assessment.relatedDocuments],
+    ["商务判断", "备注", assessment.notes],
+    ["商务判断", "初判断", candidate.recommendation],
+    ["法务判断", "舆情风险", assessment.publicRisk],
+    ["法务判断", "版权归属清晰度", assessment.ownershipClarity]
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ["项目", request.projectName, "意向IP", resource.name],
+    ["类别", "字段", "评估内容"],
+    ...rows.map(([category, field, value]) => [
+      category,
+      field,
+      value || "待补充"
+    ])
+  ]);
+  sheet["!cols"] = [{ wch: 16 }, { wch: 28 }, { wch: 65 }];
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, "完整评估表");
+  XLSX.writeFile(book, `${request.projectName}_${resource.name}_评估表.xlsx`);
+}
+async function save(submit: boolean) {
+  const item = form.value;
+  if (
+    !item.projectName.trim() ||
+    !item.department.trim() ||
+    !item.markets.length ||
+    !item.goal ||
+    !item.description.trim()
+  ) {
+    ElMessage.warning("请填写项目、部门、目标市场、合作目标和需求说明");
+    return;
+  }
+  if (
+    submit &&
+    (item.budgetMin == null ||
+      item.budgetMax == null ||
+      item.budgetMin > item.budgetMax)
+  ) {
+    ElMessage.warning("请填写有效的授权费用预算范围");
+    return;
+  }
+  if (
+    submit &&
+    !item.candidateIds.length &&
+    !item.externalRecommendation.trim() &&
+    !item.brief.externalIPs.length
+  ) {
+    ElMessage.warning("请选择意向IP或填写库外IP推荐");
+    return;
+  }
+  if (
+    item.brief.externalIPs.some(
+      (candidate: any) => !candidate.name?.trim() || !candidate.reason?.trim()
+    )
+  ) {
+    ElMessage.warning("库外IP请填写名称与选择理由");
+    return;
+  }
+  saving.value = true;
+  try {
+    const result = await saveIPRequest({ ...item, submit });
+    ElMessage.success(submit ? "需求已提交，等待IP组反馈" : "草稿已保存");
+    if (Number(route.query.id) === Number(result.data.id)) {
+      mode.value = "detail";
+      await loadDetail(Number(result.data.id));
+    } else
+      router.push({
+        path: "/business/ip/requests",
+        query: { id: String(result.data.id) }
+      });
+  } finally {
+    saving.value = false;
+  }
+}
+async function sendFeedback() {
+  if (!detail.value) return;
+  if (!feedback.value.length) {
+    ElMessage.warning("请先为需求关联意向IP");
+    return;
+  }
+  if (
+    feedback.value.some(
+      row => !row.feasibility || !row.recommendation || !row.reason.trim()
+    )
+  ) {
+    ElMessage.warning("请填写每个IP的可行性、推荐意见和理由");
+    return;
+  }
+  saving.value = true;
+  try {
+    await submitIPFeedback({
+      requestId: Number(detail.value.request.id),
+      candidates: feedback.value
+    });
+    ElMessage.success("IP反馈已提交，等待营销意见补充");
+    await loadDetail(Number(detail.value.request.id));
+  } finally {
+    saving.value = false;
+  }
+}
+async function sendMarketing() {
+  if (!detail.value) return;
+  if (!marketing.value.marketingComments.trim()) {
+    ElMessage.warning("请填写营销补充意见");
+    return;
+  }
+  saving.value = true;
+  try {
+    await submitIPMarketing({
+      requestId: Number(detail.value.request.id),
+      ...marketing.value
+    });
+    ElMessage.success("营销意见已提交");
+    await loadDetail(Number(detail.value.request.id));
+  } finally {
+    saving.value = false;
+  }
+}
+function syncRoute() {
+  const id = Number(route.query.id);
+  if (id > 0) {
+    mode.value = "detail";
+    loadDetail(id);
+  } else if (route.query.mode === "new" && menuKind.value === "requests") {
+    mode.value = "new";
+    form.value = initialForm();
+    loadResources();
+  } else {
+    mode.value = "list";
+    loadRows();
+  }
+}
+watch(() => route.fullPath, syncRoute);
+onMounted(syncRoute);
+</script>
+
+<template>
+  <div v-loading="loading" class="ip-request-page">
+    <div class="ip-header">
+      <div>
+        <div class="ip-kicker">IP OPERATIONS / REQUEST WORKFLOW</div>
+        <h1>
+          {{
+            mode === "list"
+              ? pageTitle
+              : mode === "new"
+                ? "提起IP需求"
+                : detail?.request.projectName || "需求详情"
+          }}
+        </h1>
+        <p>
+          {{
+            mode === "list"
+              ? pageSubtitle
+              : mode === "new"
+                ? "明确合作目标和授权预算，提交给IP组评估"
+                : "查看需求、IP反馈与营销意见"
+          }}
+        </p>
+      </div>
+      <div>
+        <el-button v-if="mode !== 'list'" @click="goList">返回列表</el-button
+        ><el-button
+          v-if="menuKind === 'requests' && mode === 'list'"
+          class="ip-primary"
+          @click="goNew"
+          >＋ 提起IP需求</el-button
+        >
+      </div>
+    </div>
+
+    <template v-if="mode === 'list'"
+      ><div class="ip-card">
+        <div class="ip-search">
+          <el-input
+            v-model="keyword"
+            placeholder="搜索项目名称"
+            clearable
+            @keyup.enter="
+              page = 1;
+              loadRows();
+            "
+          /><el-button
+            class="ip-primary"
+            @click="
+              page = 1;
+              loadRows();
+            "
+            >搜索</el-button
+          ><span>共 {{ total }} 条需求</span>
+        </div>
+        <el-table :data="rows" empty-text="暂无符合条件的IP需求" stripe
+          ><el-table-column label="项目名称" min-width="220"
+            ><template #default="scope"
+              ><button class="ip-link" @click="goDetail(scope.row.id)">
+                {{ scope.row.projectName }}</button
+              ><small
+                >{{ scope.row.department }} · {{ scope.row.createdAt }}</small
+              ></template
+            ></el-table-column
+          ><el-table-column label="目标市场" min-width="150"
+            ><template #default="scope">{{
+              arrayValue(scope.row.markets).join(" / ")
+            }}</template></el-table-column
+          ><el-table-column
+            prop="goal"
+            label="合作目标"
+            min-width="120"
+          /><el-table-column label="授权费用预算" min-width="180"
+            ><template #default="scope">{{
+              priceText(scope.row)
+            }}</template></el-table-column
+          ><el-table-column
+            prop="candidateCount"
+            label="意向IP"
+            width="90"
+          /><el-table-column label="进度" width="160"
+            ><template #default="scope"
+              ><el-tag
+                :type="
+                  scope.row.status === 'marketing_reviewed'
+                    ? 'success'
+                    : scope.row.status === 'draft'
+                      ? 'info'
+                      : 'warning'
+                "
+                >{{ statusText[scope.row.status] || scope.row.status }}</el-tag
+              ></template
+            ></el-table-column
+          ><el-table-column label="操作" width="115"
+            ><template #default="scope"
+              ><el-button link type="primary" @click="goDetail(scope.row.id)">{{
+                menuKind === "feedback"
+                  ? "填写反馈"
+                  : menuKind === "marketing"
+                    ? "补充意见"
+                    : "查看详情"
+              }}</el-button></template
+            ></el-table-column
+          ></el-table
+        >
+        <div class="ip-pager">
+          <el-pagination
+            v-model:current-page="page"
+            :page-size="20"
+            layout="total, prev, pager, next"
+            :total="total"
+            @current-change="loadRows"
+          />
+        </div></div
+    ></template>
+
+    <template v-else-if="mode === 'new'"
+      ><div class="ip-steps">
+        <span class="active">1 基本信息</span
+        ><span class="active">2 初步意向IP</span><span>3 确认提交</span>
+      </div>
+      <div class="ip-grid">
+        <div class="ip-stack">
+          <div class="ip-card">
+            <h2>项目基本信息</h2>
+            <div class="ip-form-grid">
+              <label
+                >项目名称 *<el-input
+                  v-model="form.projectName"
+                  placeholder="请输入项目名称" /></label
+              ><label
+                >需求发起部门 *<el-input
+                  v-model="form.department"
+                  placeholder="例如：产品组" /></label
+              ><label
+                >目标市场 *<el-select
+                  v-model="form.markets"
+                  multiple
+                  filterable
+                  allow-create
+                  default-first-option
+                  placeholder="请选择目标市场"
+                  ><el-option
+                    v-for="market in markets"
+                    :key="market"
+                    :label="market"
+                    :value="market" /></el-select></label
+              ><label
+                >预计上线时间<el-date-picker
+                  v-model="form.expectedLaunch"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  placeholder="请选择日期" /></label
+              ><label
+                >授权费用预算 *
+                <div class="ip-budget">
+                  <el-select v-model="form.budgetCurrency"
+                    ><el-option label="CNY ¥" value="CNY" /><el-option
+                      label="USD $"
+                      value="USD" /><el-option
+                      label="EUR €"
+                      value="EUR" /></el-select
+                  ><el-input-number
+                    v-model="form.budgetMin"
+                    :min="0"
+                    :controls="false"
+                    placeholder="最低预算"
+                  /><span>—</span
+                  ><el-input-number
+                    v-model="form.budgetMax"
+                    :min="0"
+                    :controls="false"
+                    placeholder="最高预算"
+                  />
+                </div>
+                <small>预计授权费用，不含执行费用</small></label
+              ><label
+                >合作目标 *<el-select v-model="form.goal" placeholder="请选择"
+                  ><el-option
+                    v-for="goal in goals"
+                    :key="goal"
+                    :label="goal"
+                    :value="goal" /></el-select></label
+              ><label class="ip-span"
+                >项目背景与需求说明 *<el-input
+                  v-model="form.description"
+                  type="textarea"
+                  :rows="3"
+                  maxlength="2000"
+                  show-word-limit
+                  placeholder="说明合作背景、希望达成的目标与执行方向"
+              /></label>
+              <label
+                v-for="field in briefFields"
+                :key="field.key"
+                class="ip-span"
+              >
+                {{ field.label
+                }}<el-input
+                  v-model="form.brief[field.key]"
+                  :placeholder="field.hint"
+                />
+              </label>
+            </div>
+          </div>
+          <div class="ip-card">
+            <div class="ip-card-head">
+              <div>
+                <h2>初步意向IP</h2>
+                <p>
+                  最多5个意向IP；可前往资源库查看完整档案、版权资料及历史合作。
+                </p>
+              </div>
+              <el-button @click="openLibrary">前往IP资源库 ↗</el-button>
+            </div>
+            <el-select
+              v-model="form.candidateIds"
+              multiple
+              filterable
+              placeholder="搜索并选择资源库中的IP"
+              style="width: 100%"
+              :multiple-limit="5"
+              ><el-option
+                v-for="item in resourceOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="Number(item.id)"
+            /></el-select>
+            <div v-if="form.candidateIds.length" class="ip-selected">
+              <div
+                v-for="id in form.candidateIds"
+                :key="id"
+                class="ip-selected-item"
+              >
+                <div>
+                  <strong>{{ selectedIP(id)?.name || "IP" }}</strong
+                  ><small
+                    >{{ selectedIP(id)?.ipType }} ·
+                    {{ arrayValue(selectedIP(id)?.markets).join(" / ") }}</small
+                  >
+                </div>
+                <el-button link type="primary" @click="openIP(id)"
+                  >查看IP详情 ↗</el-button
+                >
+              </div>
+            </div>
+            <label class="ip-other"
+              >其他IP推荐（选填）<el-input
+                v-model="form.externalRecommendation"
+                type="textarea"
+                :rows="2"
+                placeholder="资源库外的IP名称、链接或推荐理由"
+              /><small
+                >库外推荐会随需求提交，由IP组评估后再决定是否入库。</small
+              ></label
+            >
+            <div class="ip-other">
+              <div class="ip-card-head">
+                <strong>库外IP意向（最多3个，选填）</strong>
+                <el-button
+                  :disabled="form.brief.externalIPs.length >= 3"
+                  @click="
+                    form.brief.externalIPs.push({
+                      name: '',
+                      rightsOwner: '',
+                      reason: '',
+                      productEvaluation: '',
+                      technicalFit: ''
+                    })
+                  "
+                  >＋ 添加</el-button
+                >
+              </div>
+              <div
+                v-for="(item, index) in form.brief.externalIPs"
+                :key="index"
+                class="ip-candidate"
+              >
+                <div class="ip-card-head">
+                  <strong>库外IP {{ Number(index) + 1 }}</strong
+                  ><el-button
+                    link
+                    type="danger"
+                    @click="form.brief.externalIPs.splice(index, 1)"
+                    >移除</el-button
+                  >
+                </div>
+                <div class="ip-form-grid">
+                  <label>IP名称<el-input v-model="item.name" /></label>
+                  <label>版权方<el-input v-model="item.rightsOwner" /></label>
+                  <label class="ip-span"
+                    >选择理由<el-input v-model="item.reason"
+                  /></label>
+                  <label class="ip-span"
+                    >产品维度评估<el-input
+                      v-model="item.productEvaluation"
+                      placeholder="市场认知、用户重叠、机型适配"
+                  /></label>
+                  <label class="ip-span"
+                    >技术匹配程度<el-input
+                      v-model="item.technicalFit"
+                      placeholder="视觉、开发和本地化难度"
+                  /></label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="ip-stack">
+          <div class="ip-card">
+            <h2>需求摘要</h2>
+            <dl>
+              <dt>项目</dt>
+              <dd>{{ form.projectName || "待填写" }}</dd>
+              <dt>市场</dt>
+              <dd>{{ form.markets.join(" / ") || "待选择" }}</dd>
+              <dt>授权预算</dt>
+              <dd>{{ priceText(form) }}</dd>
+              <dt>意向IP</dt>
+              <dd>{{ form.candidateIds.length }} 个</dd>
+            </dl>
+            <div class="ip-note">提交后流转至IP组进行初步意向反馈。</div>
+          </div>
+        </div>
+      </div>
+      <div class="ip-bottom">
+        <el-button :loading="saving" @click="save(false)">保存草稿</el-button
+        ><el-button class="ip-primary" :loading="saving" @click="save(true)"
+          >提交需求 →</el-button
+        >
+      </div></template
+    >
+
+    <template v-else-if="mode === 'detail' && detail"
+      ><div class="ip-card">
+        <div class="ip-detail-title">
+          <div>
+            <h2>{{ detail.request.projectName }}</h2>
+            <p>
+              {{ detail.request.department }} ·
+              {{ arrayValue(detail.request.markets).join(" / ") }} ·
+              {{ detail.request.createdAt }}
+            </p>
+          </div>
+          <el-tag
+            :type="
+              detail.request.status === 'marketing_reviewed'
+                ? 'success'
+                : 'warning'
+            "
+            >{{ statusText[detail.request.status] }}</el-tag
+          >
+        </div>
+        <div class="ip-timeline">
+          <span :class="{ done: detail.request.status !== 'draft' }"
+            >需求已提交</span
+          ><span
+            :class="{
+              done: ['ip_reviewed', 'marketing_reviewed'].includes(
+                detail.request.status
+              )
+            }"
+            >IP组评估</span
+          ><span
+            :class="{ done: detail.request.status === 'marketing_reviewed' }"
+            >营销意见补充</span
+          ><span>意向IP确认</span>
+        </div>
+        <div class="ip-summary">
+          <span
+            >合作目标：<strong>{{ detail.request.goal }}</strong></span
+          ><span
+            >授权预算：<strong>{{ priceText(detail.request) }}</strong></span
+          ><span
+            >预计上线：<strong>{{
+              detail.request.expectedLaunch || "待确定"
+            }}</strong></span
+          >
+        </div>
+        <p>{{ detail.request.description }}</p>
+        <p v-if="detail.request.externalRecommendation">
+          <strong>库外IP推荐：</strong
+          >{{ detail.request.externalRecommendation }}
+        </p>
+        <div
+          v-if="Object.keys(objectValue(detail.request.brief)).length"
+          class="ip-form-grid"
+        >
+          <div v-for="field in briefFields" :key="field.key">
+            <strong>{{ field.label }}：</strong
+            >{{ objectValue(detail.request.brief)[field.key] || "待补充" }}
+          </div>
+          <div
+            v-for="(item, index) in objectValue(detail.request.brief)
+              .externalIPs || []"
+            :key="index"
+            class="ip-span"
+          >
+            <strong>库外IP {{ Number(index) + 1 }}：</strong>{{ item.name }} ·
+            {{ item.rightsOwner }} · {{ item.reason }}
+          </div>
+        </div>
+        <el-button v-if="detail.request.status === 'draft'" @click="editDraft"
+          >继续编辑草稿</el-button
+        >
+      </div>
+      <div class="ip-grid">
+        <div class="ip-stack">
+          <div class="ip-card">
+            <h2>初步意向IP反馈</h2>
+            <p v-if="!feedback.length">
+              暂无资源库内的意向IP。可先在资源库新建，再在下方加入评估。
+            </p>
+            <div v-if="canFeedback" class="ip-add-candidate">
+              <el-select
+                v-model="addCandidateID"
+                filterable
+                placeholder="从IP资源库补充评估对象"
+                ><el-option
+                  v-for="item in resourceOptions.filter(
+                    row =>
+                      !feedback.some(
+                        candidate => candidate.ipId === Number(row.id)
+                      )
+                  )"
+                  :key="item.id"
+                  :label="item.name"
+                  :value="Number(item.id)" /></el-select
+              ><el-button @click="addFeedbackCandidate">加入评估</el-button
+              ><el-button @click="openLibrary">前往IP资源库 ↗</el-button>
+            </div>
+            <div
+              v-for="(item, index) in feedback"
+              :key="item.ipId"
+              class="ip-candidate"
+            >
+              <div class="ip-card-head">
+                <div>
+                  <strong>{{ item.name }}</strong
+                  ><small>意向IP {{ index + 1 }}</small>
+                </div>
+                <el-button link type="primary" @click="openIP(item.ipId)"
+                  >查看IP详情 ↗</el-button
+                >
+                <el-button link @click="exportEvaluation(item)"
+                  >导出完整评估表</el-button
+                >
+              </div>
+              <div class="ip-form-grid">
+                <label
+                  >可行性判断<el-select
+                    v-model="item.feasibility"
+                    :disabled="!canFeedback"
+                    ><el-option label="可行" value="可行" /><el-option
+                      label="需进一步评估"
+                      value="需进一步评估" /><el-option
+                      label="不可行"
+                      value="不可行" /></el-select></label
+                ><label
+                  >推荐意见<el-select
+                    v-model="item.recommendation"
+                    :disabled="!canFeedback"
+                    ><el-option label="推荐" value="推荐" /><el-option
+                      label="有条件推荐"
+                      value="有条件推荐" /><el-option
+                      label="不推荐"
+                      value="不推荐" /></el-select></label
+                ><label
+                  >优先级<el-input-number
+                    v-model="item.priorityOrder"
+                    :min="1"
+                    :max="5"
+                    :disabled="!canFeedback" /></label
+                ><label class="ip-span"
+                  >理由说明<el-input
+                    v-model="item.reason"
+                    type="textarea"
+                    :rows="2"
+                    :disabled="!canFeedback"
+                    placeholder="受众匹配、市场覆盖、档期和授权风险"
+                /></label>
+                <label
+                  v-for="field in assessmentFields"
+                  :key="field.key"
+                  class="ip-span"
+                >
+                  {{ field.label
+                  }}<el-input
+                    v-model="item.assessment[field.key]"
+                    :disabled="!canFeedback"
+                    :placeholder="field.hint"
+                  />
+                </label>
+              </div>
+            </div>
+            <div v-if="canFeedback" class="ip-bottom">
+              <el-button
+                class="ip-primary"
+                :loading="saving"
+                @click="sendFeedback"
+                >提交IP反馈</el-button
+              >
+            </div>
+          </div>
+          <div class="ip-card">
+            <h2>营销评估与建议</h2>
+            <div
+              v-if="
+                canMarketing || detail.request.status === 'marketing_reviewed'
+              "
+              class="ip-form-grid"
+            >
+              <label
+                >市场热度<el-input
+                  v-model="marketing.marketHeat"
+                  :disabled="!canMarketing"
+                  placeholder="市场关注度和热度趋势" /></label
+              ><label
+                >商业价值<el-input
+                  v-model="marketing.commercialValue"
+                  :disabled="!canMarketing"
+                  placeholder="合作潜力与预算判断" /></label
+              ><label class="ip-span"
+                >粉丝受众<el-input
+                  v-model="marketing.fanAudience"
+                  type="textarea"
+                  :rows="2"
+                  :disabled="!canMarketing" /></label
+              ><label class="ip-span"
+                >风险与提醒<el-input
+                  v-model="marketing.marketingRisks"
+                  type="textarea"
+                  :rows="2"
+                  :disabled="!canMarketing" /></label
+              ><label class="ip-span"
+                >推荐传播方向<el-checkbox-group
+                  v-model="marketing.marketingChannels"
+                  :disabled="!canMarketing"
+                  ><el-checkbox
+                    v-for="channel in channels"
+                    :key="channel"
+                    :value="channel"
+                    >{{ channel }}</el-checkbox
+                  ></el-checkbox-group
+                ></label
+              ><label class="ip-span"
+                >补充意见 *<el-input
+                  v-model="marketing.marketingComments"
+                  type="textarea"
+                  :rows="3"
+                  :disabled="!canMarketing"
+                  placeholder="填写营销补充意见"
+              /></label>
+              <label
+                v-for="field in marketingFields"
+                :key="field.key"
+                class="ip-span"
+              >
+                {{ field.label
+                }}<el-input
+                  v-model="marketing.marketingProfile[field.key]"
+                  :disabled="!canMarketing"
+                  :placeholder="field.hint"
+                />
+              </label>
+            </div>
+            <p v-else>待IP组提交初步反馈后，由营销团队补充意见。</p>
+            <div v-if="canMarketing" class="ip-bottom">
+              <el-button
+                class="ip-primary"
+                :loading="saving"
+                @click="sendMarketing"
+                >提交营销意见</el-button
+              >
+            </div>
+          </div>
+        </div>
+        <div class="ip-stack">
+          <div class="ip-card">
+            <h2>评估依据</h2>
+            <p>结合受众匹配、市场覆盖、档期可用性和授权风险评估。</p>
+            <div class="ip-note">
+              IP反馈和营销意见会记录在同一需求中，便于后续意向确认。
+            </div>
+          </div>
+          <div class="ip-card">
+            <h2>协作进度</h2>
+            <p>1. 产品组提起需求</p>
+            <p>2. IP组反馈意向IP</p>
+            <p>3. 营销组补充意见</p>
+            <p>4. 需求方确认意向</p>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.ip-request-page {
+  min-height: calc(100vh - 150px);
+  padding: 28px;
+  color: #161a1d;
+  background: #f7f7f4;
+}
+
+.ip-header,
+.ip-card-head,
+.ip-detail-title,
+.ip-search,
+.ip-bottom,
+.ip-add-candidate {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ip-header {
+  margin-bottom: 22px;
+}
+
+.ip-header h1 {
+  margin: 5px 0;
+  font-size: 30px;
+}
+
+.ip-header p,
+.ip-card p {
+  margin: 4px 0;
+  color: #777e86;
+}
+
+.ip-kicker {
+  font: 700 11px monospace;
+  color: #8c9500;
+  letter-spacing: 2px;
+}
+
+.ip-primary {
+  font-weight: 700;
+  color: #111 !important;
+  background: #caff00 !important;
+  border-color: #caff00 !important;
+}
+
+.ip-primary:hover {
+  background: #b7eb00 !important;
+}
+
+.ip-card {
+  padding: 22px;
+  margin-bottom: 16px;
+  background: #fff;
+  border: 1px solid #e2e3dc;
+  border-radius: 12px;
+  box-shadow: 0 3px 16px #20240b08;
+}
+
+.ip-card h2 {
+  margin: 0 0 15px;
+  font-size: 18px;
+}
+
+.ip-search {
+  justify-content: flex-start;
+  margin-bottom: 18px;
+}
+
+.ip-search .el-input {
+  max-width: 450px;
+}
+
+.ip-search span {
+  margin-left: auto;
+  color: #90969b;
+}
+
+.ip-link {
+  padding: 0;
+  font-weight: 700;
+  color: #17191d;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+.ip-link:hover {
+  color: #698000;
+}
+
+.ip-link + small,
+.ip-selected-item small,
+.ip-candidate small {
+  display: block;
+  margin-top: 4px;
+  color: #9b9fa4;
+}
+
+.ip-pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.ip-steps,
+.ip-timeline {
+  display: flex;
+  gap: 12px;
+  justify-content: space-around;
+  padding: 15px;
+  margin-bottom: 18px;
+  background: white;
+  border: 1px solid #e2e3dc;
+  border-radius: 10px;
+}
+
+.ip-steps span,
+.ip-timeline span {
+  font-weight: 600;
+  color: #a3a8a8;
+}
+
+.ip-steps .active,
+.ip-timeline .done {
+  color: #678500;
+}
+
+.ip-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 16px;
+}
+
+.ip-stack {
+  min-width: 0;
+}
+
+.ip-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 24px;
+}
+
+.ip-form-grid label,
+.ip-other {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.ip-form-grid small,
+.ip-other small {
+  font-weight: 400;
+  color: #969b9e;
+}
+
+.ip-span {
+  grid-column: 1/-1;
+}
+
+.ip-budget {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ip-budget .el-select {
+  flex: none;
+  width: 110px;
+}
+
+.ip-budget .el-input-number {
+  width: 100%;
+  min-width: 0;
+}
+
+.ip-selected {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 15px 0;
+}
+
+.ip-selected-item,
+.ip-candidate {
+  padding: 12px;
+  border: 1px solid #e8e9e3;
+  border-radius: 8px;
+}
+
+.ip-selected-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ip-other {
+  margin-top: 18px;
+}
+
+.ip-bottom {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.ip-card dl {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 16px;
+}
+
+.ip-card dt {
+  color: #858b91;
+}
+
+.ip-card dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ip-note {
+  padding: 14px;
+  margin-top: 22px;
+  color: #557000;
+  background: #f2f8e8;
+  border: 1px solid #e4edd2;
+  border-radius: 8px;
+}
+
+.ip-detail-title h2 {
+  margin-bottom: 4px;
+  font-size: 22px;
+}
+
+.ip-summary {
+  display: flex;
+  gap: 30px;
+  padding: 16px 0;
+  margin-bottom: 15px;
+  color: #858b91;
+  border-bottom: 1px solid #eceee9;
+}
+
+.ip-summary strong {
+  color: #15191c;
+}
+
+.ip-candidate {
+  margin-bottom: 14px;
+}
+
+.ip-candidate .ip-card-head {
+  margin-bottom: 15px;
+}
+
+.ip-add-candidate {
+  justify-content: flex-start;
+  margin-bottom: 16px;
+}
+
+.ip-add-candidate .el-select {
+  width: 330px;
+}
+
+@media (width <= 1100px) {
+  .ip-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (width <= 700px) {
+  .ip-request-page {
+    padding: 16px;
+  }
+
+  .ip-header,
+  .ip-search,
+  .ip-summary,
+  .ip-add-candidate {
+    flex-wrap: wrap;
+  }
+
+  .ip-form-grid,
+  .ip-selected {
+    grid-template-columns: 1fr;
+  }
+
+  .ip-steps,
+  .ip-timeline {
+    font-size: 12px;
+  }
+}
+</style>

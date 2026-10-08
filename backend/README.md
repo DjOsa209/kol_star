@@ -27,6 +27,8 @@ mysql:
 
 The default address is `:8080`. The frontend development proxy points `/api` to `http://localhost:8080`.
 
+For an existing database, apply `migrations/042_ip_operations.sql` and then `migrations/043_ip_assessment_details.sql` before using **IP运营**. They add the IP resource library, request workflow, detailed assessment fields, and the new role menus. IP PDFs and visual assets are stored privately under `uploads/ip-documents/` and served only through authenticated endpoints.
+
 You can also load another config file:
 
 ```bash

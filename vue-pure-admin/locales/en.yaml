@@ -68,6 +68,11 @@ panel:
   pureHiddenFooter: Hidden Footer
   pureMultiTagsCache: MultiTags Cache
 menus:
+  ipOperations: IP Operations
+  ipLibrary: IP Library
+  ipRequests: IP Requests
+  ipFeedback: Initial IP Feedback
+  ipMarketing: Marketing Input
   businessOperations: Resource Operations
   businessAssistant: Resource Intelligence Assistant
   businessResources: Global Resource Library
