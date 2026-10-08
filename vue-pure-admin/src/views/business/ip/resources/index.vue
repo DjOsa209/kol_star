@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useUserStoreHook } from "@/store/modules/user";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
+import VuePdfEmbed from "vue-pdf-embed";
 import {
   deleteIPFile,
   getIPResource,
@@ -173,6 +174,10 @@ const caseTitle = ref("");
 const caseSummary = ref("");
 const previewVisible = ref(false);
 const previewURL = ref("");
+const previewPage = ref(1);
+const previewPageCount = ref(0);
+const previewLoading = ref(false);
+const previewError = ref("");
 const importFileName = ref("");
 const importRows = ref<IPResourceInput[]>([]);
 const importPreview = ref<any[]>([]);
@@ -515,13 +520,26 @@ async function openFile(file: any, download = false) {
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = file.originalName;
+    document.body.appendChild(anchor);
     anchor.click();
+    anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 60000);
   } else {
     if (previewURL.value) URL.revokeObjectURL(previewURL.value);
     previewURL.value = url;
+    previewPage.value = 1;
+    previewPageCount.value = 0;
+    previewLoading.value = true;
+    previewError.value = "";
     previewVisible.value = true;
   }
+}
+function pdfLoaded(doc: { numPages: number }) {
+  previewPageCount.value = doc.numPages;
+}
+function pdfFailed() {
+  previewLoading.value = false;
+  previewError.value = "PDF无法预览，请下载文件查看";
 }
 async function removeFile(file: any) {
   await ElMessageBox.confirm(`删除「${file.originalName}」？`, "确认删除", {
@@ -747,6 +765,7 @@ watch(previewVisible, open => {
 });
 onMounted(syncRoute);
 onUnmounted(() => {
+  if (previewURL.value) URL.revokeObjectURL(previewURL.value);
   if (visualURL.value) URL.revokeObjectURL(visualURL.value);
   if (drawerVisualURL.value) URL.revokeObjectURL(drawerVisualURL.value);
   for (const url of Object.values(thumbUrls.value)) URL.revokeObjectURL(url);
@@ -1570,13 +1589,33 @@ onUnmounted(() => {
         </div>
       </template>
     </template>
-    <el-dialog v-model="previewVisible" title="PDF预览" width="80%" top="5vh"
-      ><iframe
-        v-if="previewURL"
-        :src="previewURL"
-        class="ip-pdf"
-        title="PDF预览"
-    /></el-dialog>
+    <el-dialog v-model="previewVisible" title="PDF预览" width="80%" top="5vh">
+      <div v-if="previewURL" class="ip-pdf-preview">
+        <div v-if="previewPageCount > 1" class="ip-pdf-toolbar">
+          <el-button :disabled="previewPage <= 1" @click="previewPage--"
+            >上一页</el-button
+          >
+          <span>{{ previewPage }} / {{ previewPageCount }}</span>
+          <el-button
+            :disabled="previewPage >= previewPageCount"
+            @click="previewPage++"
+            >下一页</el-button
+          >
+        </div>
+        <div v-if="previewError" class="ip-pdf-error">{{ previewError }}</div>
+        <div v-else v-loading="previewLoading" class="ip-pdf">
+          <vue-pdf-embed
+            :key="previewURL"
+            :source="previewURL"
+            :page="previewPage"
+            @loaded="pdfLoaded"
+            @rendered="previewLoading = false"
+            @loading-failed="pdfFailed"
+            @rendering-failed="pdfFailed"
+          />
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -2230,8 +2269,21 @@ onUnmounted(() => {
 
 .ip-pdf {
   width: 100%;
-  height: 70vh;
-  border: 0;
+  min-height: 55vh;
+  max-height: 70vh;
+  overflow: auto;
+}
+.ip-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.ip-pdf-error {
+  padding: 48px 16px;
+  text-align: center;
+  color: #737373;
 }
 
 .ip-visual {
