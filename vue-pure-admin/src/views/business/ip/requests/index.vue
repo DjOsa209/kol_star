@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import * as XLSX from "xlsx";
@@ -26,6 +26,7 @@ const page = ref(1);
 const keyword = ref("");
 const detail = ref<{ request: any; candidates: any[] } | null>(null);
 const resourceOptions = ref<any[]>([]);
+const librarySelectionKey = ref("");
 const markets = [
   "中国",
   "东南亚",
@@ -43,6 +44,12 @@ const briefFields = [
   { key: "projectPeriod", label: "项目周期", hint: "启动至结案的预计周期" },
   { key: "linkedProduct", label: "关联产品", hint: "例如 NOTE / GT / HOT" },
   {
+    key: "targetIPType",
+    label: "目标IP类型",
+    hint: "例如体育赛事、游戏或动漫"
+  },
+  { key: "targetIPCount", label: "目标IP数量", hint: "预计需要评估的IP数量" },
+  {
     key: "cooperationMode",
     label: "合作模式",
     hint: "整合联动 / 衍生品授权 / 营销联动"
@@ -52,21 +59,7 @@ const briefFields = [
     label: "各环节对接人",
     hint: "产品、IP营销、IMC、品牌、用户、媒介、PR"
   },
-  {
-    key: "selectionReason",
-    label: "合作筛选理由",
-    hint: "商业潜力、品牌调性或话题契合度"
-  },
-  {
-    key: "productEvaluation",
-    label: "产品维度评估",
-    hint: "目标市场认知度、用户重叠率、机型适配渗透率"
-  },
-  {
-    key: "technicalFit",
-    label: "技术匹配程度",
-    hint: "视觉风格、系统开发与本地化难度"
-  }
+  { key: "projectNotes", label: "项目补充说明", hint: "其他协作约束（选填）" }
 ];
 const assessmentFields = [
   {
@@ -121,7 +114,54 @@ const assessmentFields = [
     hint: "排他、监修或时间限制（选填）"
   }
 ];
+const scoreFields = [
+  { key: "audienceMatch", label: "受众匹配", weight: 0.3 },
+  { key: "marketCoverage", label: "市场覆盖", weight: 0.25 },
+  { key: "scheduleAvailability", label: "档期可用性", weight: 0.25 },
+  { key: "licenseRisk", label: "授权风险控制", weight: 0.2 }
+];
+function weightedScore(assessment: Record<string, any>): number | null {
+  const scores = objectValue(assessment.scoreDimensions);
+  if (
+    scoreFields.some(
+      field =>
+        scores[field.key] === null ||
+        scores[field.key] === undefined ||
+        scores[field.key] === "" ||
+        !Number.isFinite(Number(scores[field.key])) ||
+        Number(scores[field.key]) < 0 ||
+        Number(scores[field.key]) > 100
+    )
+  )
+    return null;
+  return Math.round(
+    scoreFields.reduce(
+      (total, field) => total + Number(scores[field.key]) * field.weight,
+      0
+    )
+  );
+}
 const marketingFields = [
+  {
+    key: "marketHeat",
+    label: "IMC · IP热度",
+    hint: "顶流 / 一线 / 二线 / 区域热门"
+  },
+  {
+    key: "fanAudience",
+    label: "IMC · 粉丝受众",
+    hint: "核心粉丝画像与覆盖市场"
+  },
+  {
+    key: "commercialValue",
+    label: "IMC · 商业价值",
+    hint: "预估商业转化与品牌收益"
+  },
+  {
+    key: "marketingRisks",
+    label: "IMC · 短板与风险",
+    hint: "档期、舆情或执行风险"
+  },
   {
     key: "recentTrend",
     label: "IMC · 近一年热度趋势",
@@ -185,10 +225,11 @@ const initialForm = (): IPRequestInput => ({
   externalRecommendation: "",
   candidateIds: [],
   submit: false,
-  brief: { externalIPs: [] }
+  brief: { externalIPs: [], candidateEvaluations: {} }
 });
 const form = ref<IPRequestInput>(initialForm());
 const feedback = ref<any[]>([]);
+const marketingCandidates = ref<Record<string, Record<string, string>>>({});
 const addCandidateID = ref<number | null>(null);
 const marketing = ref({
   marketHeat: "",
@@ -197,7 +238,7 @@ const marketing = ref({
   marketingRisks: "",
   marketingChannels: [] as string[],
   marketingComments: "",
-  marketingProfile: {} as Record<string, string>
+  marketingProfile: {} as Record<string, any>
 });
 const menuKind = computed(() =>
   route.path.endsWith("/feedback")
@@ -291,10 +332,20 @@ async function loadDetail(id: number) {
       feasibility: row.feasibility || "",
       recommendation: row.recommendation || "",
       reason: row.reason || "",
-      assessment: objectValue(row.assessment)
+      assessment: {
+        ...objectValue(row.assessment),
+        scoreDimensions: objectValue(
+          objectValue(row.assessment).scoreDimensions
+        )
+      }
     }));
     if (detail.value.request.status === "submitted") await loadResources();
     const item = detail.value.request;
+    const savedOpinions = objectValue(item.marketingProfile);
+    marketingCandidates.value = objectValue(savedOpinions.candidates);
+    for (const row of detail.value.candidates) {
+      marketingCandidates.value[String(row.ipId)] ||= {};
+    }
     marketing.value = {
       marketHeat: item.marketHeat || "",
       fanAudience: item.fanAudience || "",
@@ -302,7 +353,7 @@ async function loadDetail(id: number) {
       marketingRisks: item.marketingRisks || "",
       marketingChannels: arrayValue(item.marketingChannels),
       marketingComments: item.marketingComments || "",
-      marketingProfile: objectValue(item.marketingProfile)
+      marketingProfile: savedOpinions
     };
   } finally {
     loading.value = false;
@@ -311,8 +362,8 @@ async function loadDetail(id: number) {
 function addFeedbackCandidate() {
   const id = addCandidateID.value;
   if (!id || feedback.value.some(row => row.ipId === id)) return;
-  if (feedback.value.length >= 5) {
-    ElMessage.warning("最多评估5个IP");
+  if (feedback.value.length >= 8) {
+    ElMessage.warning("最多评估8个IP（含IP组追加建议）");
     return;
   }
   feedback.value.push({
@@ -322,7 +373,7 @@ function addFeedbackCandidate() {
     feasibility: "",
     recommendation: "",
     reason: "",
-    assessment: {}
+    assessment: { scoreDimensions: {} }
   });
   addCandidateID.value = null;
 }
@@ -345,18 +396,59 @@ function editDraft() {
     submit: false,
     brief: {
       ...objectValue(item.brief),
-      externalIPs: objectValue(item.brief).externalIPs || []
+      externalIPs: objectValue(item.brief).externalIPs || [],
+      candidateEvaluations: objectValue(item.brief).candidateEvaluations || {}
     }
   };
   mode.value = "new";
   loadResources();
 }
 function openLibrary() {
+  if (mode.value === "new") {
+    librarySelectionKey.value ||= `ip-request-${crypto.randomUUID()}`;
+    window.open(
+      router.resolve({
+        path: "/business/ip/resources",
+        query: {
+          selectForRequest: "1",
+          selectionKey: librarySelectionKey.value,
+          selected: form.value.candidateIds.join(",")
+        }
+      }).href,
+      "_blank",
+      "noopener"
+    );
+    return;
+  }
   window.open(
     router.resolve("/business/ip/resources").href,
     "_blank",
     "noopener"
   );
+}
+async function syncLibrarySelection() {
+  if (!librarySelectionKey.value || mode.value !== "new") return;
+  const saved = localStorage.getItem(librarySelectionKey.value);
+  if (!saved) return;
+  localStorage.removeItem(librarySelectionKey.value);
+  try {
+    form.value.candidateIds = JSON.parse(saved)
+      .map(Number)
+      .filter((id: number) => id > 0)
+      .slice(0, 5);
+    await loadResources();
+    for (const id of form.value.candidateIds) {
+      if (!selectedIP(id))
+        resourceOptions.value.push((await getIPResource(id)).data.resource);
+    }
+    ensureCandidateEvaluations();
+    ElMessage.success("已从IP资源库加入意向清单");
+  } catch {
+    ElMessage.warning("IP选择结果读取失败，请重新选择");
+  }
+}
+function onLibraryStorage(event: StorageEvent) {
+  if (event.key === librarySelectionKey.value) syncLibrarySelection();
 }
 function openIP(id: number) {
   window.open(
@@ -365,54 +457,138 @@ function openIP(id: number) {
     "noopener"
   );
 }
+function openExternalIP(item: any) {
+  window.open(
+    router.resolve({
+      path: "/business/ip/resources",
+      query: {
+        mode: "new",
+        name: item.name,
+        rightsOwner: item.rightsOwner,
+        summary: item.reason,
+        imageStyle: item.imageUrl
+      }
+    }).href,
+    "_blank",
+    "noopener"
+  );
+}
 function selectedIP(id: number) {
   return resourceOptions.value.find(row => Number(row.id) === id);
 }
+function ensureCandidateEvaluations() {
+  const evaluations = (form.value.brief.candidateEvaluations ||= {});
+  for (const id of form.value.candidateIds) {
+    evaluations[id] ||= { reason: "", productEvaluation: "", technicalFit: "" };
+  }
+}
+watch(() => form.value.candidateIds, ensureCandidateEvaluations, {
+  deep: true
+});
 async function exportEvaluation(candidate: any) {
   if (!detail.value) return;
-  const resource = (await getIPResource(Number(candidate.ipId))).data.resource;
+  const resourceDetail = (await getIPResource(Number(candidate.ipId))).data;
+  const resource = resourceDetail.resource;
   const request = detail.value.request;
   const profile = objectValue(resource.profile);
   const brief = objectValue(request.brief);
   const assessment = objectValue(candidate.assessment);
-  const opinion = objectValue(request.marketingProfile);
+  const savedOpinions = objectValue(request.marketingProfile);
+  const opinion = objectValue(
+    objectValue(savedOpinions.candidates)[candidate.ipId]
+  );
+  const candidateBrief = objectValue(
+    objectValue(brief.candidateEvaluations)[candidate.ipId]
+  );
+  const copyrightFiles = resourceDetail.files
+    .filter((file: any) => file.fileKind === "copyright")
+    .map((file: any) => file.originalName);
+  const caseSummaries = resourceDetail.cases.map((item: any) => {
+    const names = resourceDetail.files
+      .filter((file: any) => Number(file.caseId) === Number(item.id))
+      .map((file: any) => file.originalName);
+    return [item.title, item.summary, ...names].filter(Boolean).join("；");
+  });
   const rows: [string, string, unknown][] = [
-    ["基础信息", "IP名称", resource.name],
-    ["基础信息", "介绍", resource.summary],
+    ["基础信息", "IP(艺人/游戏/动漫/赛事等)名称", resource.name],
+    [
+      "基础信息",
+      "介绍",
+      [resource.summary, ...copyrightFiles].filter(Boolean).join("；")
+    ],
     ["基础信息", "市场/区域", arrayValue(resource.markets).join("、")],
     ["基础信息", "IP生命周期分类", profile.lifecycle],
-    ["基础信息", "合作筛选理由", brief.selectionReason],
-    ["受众情况", "性别占比", profile.genderRatio],
-    ["受众情况", "主要年龄", profile.ageRange],
-    ["受众情况", "消费力评价", profile.spendingPower],
-    ["受众情况", "用户内容预测", opinion.ugcForecast],
-    ["市场影响力", "IP热度", request.marketHeat],
-    ["市场影响力", "注册用户/赛事参与", profile.registeredUsers],
-    ["市场影响力", "近一年热度", opinion.recentTrend],
-    ["市场影响力", "社媒粉丝总数", opinion.socialFollowers],
-    ["市场影响力", "品牌调性价值", opinion.brandValue],
+    [
+      "基础信息",
+      "合作筛选理由",
+      candidateBrief.reason || brief.selectionReason
+    ],
+    ["受众情况", "用户画像-性别占比", profile.genderRatio],
+    ["受众情况", "用户画像-主要年龄", profile.ageRange],
+    ["受众情况", "用户画像-消费力评价", profile.spendingPower],
+    [
+      "受众情况",
+      "用户内容预测",
+      opinion.ugcForecast || savedOpinions.ugcForecast
+    ],
+    ["市场影响力", "IP热度", opinion.marketHeat || request.marketHeat],
+    ["市场影响力", "注册用户", profile.registeredUsers],
+    [
+      "市场影响力",
+      "近一年热度",
+      opinion.recentTrend || savedOpinions.recentTrend
+    ],
+    [
+      "市场影响力",
+      "声量价值",
+      opinion.socialFollowers || savedOpinions.socialFollowers
+    ],
+    [
+      "市场影响力",
+      "品牌调性价值",
+      opinion.brandValue || savedOpinions.brandValue
+    ],
     ["产品匹配", "联动产品", brief.linkedProduct],
-    ["产品匹配", "产品维度评估", brief.productEvaluation],
-    ["产品匹配", "技术匹配程度", brief.technicalFit],
-    ["商业化", "销售转化力", profile.salesROI],
-    ["商业化", "CPM价值", opinion.cpmValue],
+    [
+      "产品匹配",
+      "产品维度评估指标汇总",
+      candidateBrief.productEvaluation || brief.productEvaluation
+    ],
+    [
+      "产品匹配",
+      "技术匹配程度",
+      candidateBrief.technicalFit || brief.technicalFit
+    ],
+    ["商业化/带货潜力", "销售转换力", profile.salesROI],
+    ["商业化/带货潜力", "CPM价值", opinion.cpmValue || savedOpinions.cpmValue],
     ["联动条款", "合作模式", brief.cooperationMode],
     ["联动条款", "合作价格", assessment.priceModel],
     ["联动条款", "合作时间", brief.projectPeriod],
     ["联动条款", "授权内容", assessment.licenseContent],
-    ["联动条款", "授权区域", assessment.licenseTerritory],
+    ["联动条款", "授权区域范围", assessment.licenseTerritory],
     ["联动条款", "IP方可提供资源", assessment.ipResources],
     ["联动条款", "Infinix侧需提供资源", assessment.brandResources],
     ["商务判断", "风险评估", assessment.businessRisk],
-    ["商务判断", "合作案例", assessment.pastCases],
+    [
+      "商务判断",
+      "合作案例",
+      [assessment.pastCases, ...caseSummaries].filter(Boolean).join("；")
+    ],
     ["商务判断", "相关文档/纪要", assessment.relatedDocuments],
     ["商务判断", "备注", assessment.notes],
     ["商务判断", "初判断", candidate.recommendation],
-    ["法务判断", "舆情风险", assessment.publicRisk],
+    ["法务判断", "风险评估", assessment.publicRisk],
     ["法务判断", "版权归属清晰度", assessment.ownershipClarity]
   ];
   const sheet = XLSX.utils.aoa_to_sheet([
-    ["项目", request.projectName, "意向IP", resource.name],
+    [
+      "项目",
+      request.projectName,
+      "意向IP",
+      resource.name,
+      "综合评分",
+      weightedScore(assessment) ?? "待评分"
+    ],
     ["类别", "字段", "评估内容"],
     ...rows.map(([category, field, value]) => [
       category,
@@ -428,11 +604,12 @@ async function exportEvaluation(candidate: any) {
 async function save(submit: boolean) {
   const item = form.value;
   if (
-    !item.projectName.trim() ||
-    !item.department.trim() ||
-    !item.markets.length ||
-    !item.goal ||
-    !item.description.trim()
+    submit &&
+    (!item.projectName.trim() ||
+      !item.department.trim() ||
+      !item.markets.length ||
+      !item.goal ||
+      !item.description.trim())
   ) {
     ElMessage.warning("请填写项目、部门、目标市场、合作目标和需求说明");
     return;
@@ -448,6 +625,35 @@ async function save(submit: boolean) {
   }
   if (
     submit &&
+    [
+      "owner",
+      "projectPeriod",
+      "linkedProduct",
+      "cooperationMode",
+      "contacts",
+      "targetIPType",
+      "targetIPCount"
+    ].some(key => !String(item.brief[key] || "").trim())
+  ) {
+    ElMessage.warning(
+      "请补齐负责人、项目周期、关联产品、合作模式、对接人及目标IP信息"
+    );
+    return;
+  }
+  if (
+    submit &&
+    item.candidateIds.some(id =>
+      ["reason", "productEvaluation", "technicalFit"].some(
+        key =>
+          !String(item.brief.candidateEvaluations?.[id]?.[key] || "").trim()
+      )
+    )
+  ) {
+    ElMessage.warning("请补齐每个库内意向IP的选择理由、产品评估和技术匹配");
+    return;
+  }
+  if (
+    submit &&
     !item.candidateIds.length &&
     !item.externalRecommendation.trim() &&
     !item.brief.externalIPs.length
@@ -456,11 +662,17 @@ async function save(submit: boolean) {
     return;
   }
   if (
+    submit &&
     item.brief.externalIPs.some(
-      (candidate: any) => !candidate.name?.trim() || !candidate.reason?.trim()
+      (candidate: any) =>
+        !candidate.name?.trim() ||
+        !candidate.rightsOwner?.trim() ||
+        !candidate.reason?.trim() ||
+        !candidate.productEvaluation?.trim() ||
+        !candidate.technicalFit?.trim()
     )
   ) {
-    ElMessage.warning("库外IP请填写名称与选择理由");
+    ElMessage.warning("库外IP请补齐名称、版权方、选择理由、产品评估和技术匹配");
     return;
   }
   saving.value = true;
@@ -479,13 +691,14 @@ async function save(submit: boolean) {
     saving.value = false;
   }
 }
-async function sendFeedback() {
+async function sendFeedback(saveDraft = false) {
   if (!detail.value) return;
   if (!feedback.value.length) {
     ElMessage.warning("请先为需求关联意向IP");
     return;
   }
   if (
+    !saveDraft &&
     feedback.value.some(
       row => !row.feasibility || !row.recommendation || !row.reason.trim()
     )
@@ -493,31 +706,95 @@ async function sendFeedback() {
     ElMessage.warning("请填写每个IP的可行性、推荐意见和理由");
     return;
   }
+  const priorities = feedback.value.map(row => Number(row.priorityOrder));
+  if (
+    !saveDraft &&
+    (new Set(priorities).size !== priorities.length ||
+      priorities.some(value => value < 1 || value > priorities.length))
+  ) {
+    ElMessage.warning("请设置不重复的推荐顺序");
+    return;
+  }
+  const required = [
+    "licenseContent",
+    "licenseTerritory",
+    "ipResources",
+    "brandResources",
+    "businessRisk",
+    "publicRisk",
+    "ownershipClarity"
+  ];
+  if (
+    !saveDraft &&
+    feedback.value.some(row =>
+      required.some(key => !String(row.assessment[key] || "").trim())
+    )
+  ) {
+    ElMessage.warning("请补齐每个IP的授权、资源、商务与舆情风险信息");
+    return;
+  }
+  if (
+    !saveDraft &&
+    feedback.value.some(row => weightedScore(row.assessment) === null)
+  ) {
+    ElMessage.warning("请为每个IP填写四项0至100分的评估分数");
+    return;
+  }
   saving.value = true;
   try {
     await submitIPFeedback({
       requestId: Number(detail.value.request.id),
+      saveDraft,
       candidates: feedback.value
     });
-    ElMessage.success("IP反馈已提交，等待营销意见补充");
+    ElMessage.success(
+      saveDraft ? "IP评估草稿已保存" : "IP反馈已提交，等待营销意见补充"
+    );
     await loadDetail(Number(detail.value.request.id));
   } finally {
     saving.value = false;
   }
 }
-async function sendMarketing() {
+async function sendMarketing(saveDraft = false) {
   if (!detail.value) return;
-  if (!marketing.value.marketingComments.trim()) {
+  if (!saveDraft && !marketing.value.marketingComments.trim()) {
     ElMessage.warning("请填写营销补充意见");
+    return;
+  }
+  const required = [
+    "marketHeat",
+    "fanAudience",
+    "commercialValue",
+    "marketingRisks",
+    "recentTrend",
+    "socialFollowers",
+    "ugcForecast",
+    "audienceMatch",
+    "prOpinion"
+  ];
+  if (
+    !saveDraft &&
+    detail.value.candidates.some(candidate =>
+      required.some(
+        key => !marketingCandidates.value[String(candidate.ipId)]?.[key]?.trim()
+      )
+    )
+  ) {
+    ElMessage.warning("请补齐每个意向IP的IMC、品牌运营、用户运营和PR意见");
     return;
   }
   saving.value = true;
   try {
     await submitIPMarketing({
       requestId: Number(detail.value.request.id),
-      ...marketing.value
+      saveDraft,
+      ...marketing.value,
+      marketingProfile: {
+        ...marketing.value.marketingProfile,
+        candidates: marketingCandidates.value
+      }
     });
-    ElMessage.success("营销意见已提交");
+    ElMessage.success(saveDraft ? "营销意见草稿已保存" : "营销意见已提交");
     await loadDetail(Number(detail.value.request.id));
   } finally {
     saving.value = false;
@@ -538,7 +815,15 @@ function syncRoute() {
   }
 }
 watch(() => route.fullPath, syncRoute);
-onMounted(syncRoute);
+onMounted(() => {
+  syncRoute();
+  window.addEventListener("focus", syncLibrarySelection);
+  window.addEventListener("storage", onLibraryStorage);
+});
+onUnmounted(() => {
+  window.removeEventListener("focus", syncLibrarySelection);
+  window.removeEventListener("storage", onLibraryStorage);
+});
 </script>
 
 <template>
@@ -785,6 +1070,25 @@ onMounted(syncRoute);
                 <el-button link type="primary" @click="openIP(id)"
                   >查看IP详情 ↗</el-button
                 >
+                <div class="ip-form-grid ip-span">
+                  <label
+                    >选择理由<el-input
+                      v-model="form.brief.candidateEvaluations[id].reason"
+                      placeholder="商业潜力、品牌调性或话题契合"
+                  /></label>
+                  <label
+                    >产品维度评估<el-input
+                      v-model="
+                        form.brief.candidateEvaluations[id].productEvaluation
+                      "
+                      placeholder="认知度、用户重叠率、机型适配"
+                  /></label>
+                  <label class="ip-span"
+                    >技术匹配程度<el-input
+                      v-model="form.brief.candidateEvaluations[id].technicalFit"
+                      placeholder="视觉惊喜度、开发及本地化难度"
+                  /></label>
+                </div>
               </div>
             </div>
             <label class="ip-other"
@@ -806,6 +1110,7 @@ onMounted(syncRoute);
                     form.brief.externalIPs.push({
                       name: '',
                       rightsOwner: '',
+                      imageUrl: '',
                       reason: '',
                       productEvaluation: '',
                       technicalFit: ''
@@ -831,6 +1136,17 @@ onMounted(syncRoute);
                 <div class="ip-form-grid">
                   <label>IP名称<el-input v-model="item.name" /></label>
                   <label>版权方<el-input v-model="item.rightsOwner" /></label>
+                  <label class="ip-span"
+                    >IP形象示意链接<el-input
+                      v-model="item.imageUrl"
+                      placeholder="https://..."
+                  /></label>
+                  <img
+                    v-if="item.imageUrl"
+                    :src="item.imageUrl"
+                    alt="库外IP形象示意"
+                    class="ip-external-image"
+                  />
                   <label class="ip-span"
                     >选择理由<el-input v-model="item.reason"
                   /></label>
@@ -941,6 +1257,9 @@ onMounted(syncRoute);
           >
             <strong>库外IP {{ Number(index) + 1 }}：</strong>{{ item.name }} ·
             {{ item.rightsOwner }} · {{ item.reason }}
+            <el-button link @click="openExternalIP(item)"
+              >补充并入库 ↗</el-button
+            >
           </div>
         </div>
         <el-button v-if="detail.request.status === 'draft'" @click="editDraft"
@@ -971,6 +1290,7 @@ onMounted(syncRoute);
                   :value="Number(item.id)" /></el-select
               ><el-button @click="addFeedbackCandidate">加入评估</el-button
               ><el-button @click="openLibrary">前往IP资源库 ↗</el-button>
+              <el-button @click="loadResources">刷新IP列表</el-button>
             </div>
             <div
               v-for="(item, index) in feedback"
@@ -982,12 +1302,27 @@ onMounted(syncRoute);
                   <strong>{{ item.name }}</strong
                   ><small>意向IP {{ index + 1 }}</small>
                 </div>
+                <strong class="ip-score"
+                  >{{ weightedScore(item.assessment) ?? "—" }} / 100</strong
+                >
                 <el-button link type="primary" @click="openIP(item.ipId)"
                   >查看IP详情 ↗</el-button
                 >
                 <el-button link @click="exportEvaluation(item)"
                   >导出完整评估表</el-button
                 >
+              </div>
+              <div class="ip-score-grid">
+                <label v-for="field in scoreFields" :key="field.key">
+                  {{ field.label }} · {{ Math.round(field.weight * 100) }}%
+                  <el-input-number
+                    v-model="item.assessment.scoreDimensions[field.key]"
+                    :min="0"
+                    :max="100"
+                    :precision="0"
+                    :disabled="!canFeedback"
+                  />
+                </label>
               </div>
               <div class="ip-form-grid">
                 <label
@@ -1003,16 +1338,16 @@ onMounted(syncRoute);
                   >推荐意见<el-select
                     v-model="item.recommendation"
                     :disabled="!canFeedback"
-                    ><el-option label="推荐" value="推荐" /><el-option
-                      label="有条件推荐"
-                      value="有条件推荐" /><el-option
-                      label="不推荐"
-                      value="不推荐" /></el-select></label
+                    ><el-option label="优先合作" value="优先合作" /><el-option
+                      label="备选合作"
+                      value="备选合作" /><el-option
+                      label="暂不合作"
+                      value="暂不合作" /></el-select></label
                 ><label
                   >优先级<el-input-number
                     v-model="item.priorityOrder"
                     :min="1"
-                    :max="5"
+                    :max="8"
                     :disabled="!canFeedback" /></label
                 ><label class="ip-span"
                   >理由说明<el-input
@@ -1037,10 +1372,13 @@ onMounted(syncRoute);
               </div>
             </div>
             <div v-if="canFeedback" class="ip-bottom">
+              <el-button :loading="saving" @click="sendFeedback(true)"
+                >保存草稿</el-button
+              >
               <el-button
                 class="ip-primary"
                 :loading="saving"
-                @click="sendFeedback"
+                @click="sendFeedback(false)"
                 >提交IP反馈</el-button
               >
             </div>
@@ -1094,25 +1432,45 @@ onMounted(syncRoute);
                   :disabled="!canMarketing"
                   placeholder="填写营销补充意见"
               /></label>
-              <label
-                v-for="field in marketingFields"
-                :key="field.key"
-                class="ip-span"
-              >
-                {{ field.label
-                }}<el-input
-                  v-model="marketing.marketingProfile[field.key]"
-                  :disabled="!canMarketing"
-                  :placeholder="field.hint"
-                />
-              </label>
             </div>
+            <template
+              v-if="
+                canMarketing || detail.request.status === 'marketing_reviewed'
+              "
+            >
+              <div
+                v-for="candidate in detail.candidates"
+                :key="candidate.ipId"
+                class="ip-candidate"
+              >
+                <h3>{{ candidate.name }} · 分IP意见</h3>
+                <div class="ip-form-grid">
+                  <label
+                    v-for="field in marketingFields"
+                    :key="field.key"
+                    class="ip-span"
+                  >
+                    {{ field.label
+                    }}<el-input
+                      v-model="
+                        marketingCandidates[String(candidate.ipId)][field.key]
+                      "
+                      :disabled="!canMarketing"
+                      :placeholder="field.hint"
+                    />
+                  </label>
+                </div>
+              </div>
+            </template>
             <p v-else>待IP组提交初步反馈后，由营销团队补充意见。</p>
             <div v-if="canMarketing" class="ip-bottom">
+              <el-button :loading="saving" @click="sendMarketing(true)"
+                >保存意见草稿</el-button
+              >
               <el-button
                 class="ip-primary"
                 :loading="saving"
-                @click="sendMarketing"
+                @click="sendMarketing(false)"
                 >提交营销意见</el-button
               >
             </div>
@@ -1335,8 +1693,15 @@ onMounted(syncRoute);
 
 .ip-selected-item {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.ip-external-image {
+  max-width: 180px;
+  max-height: 120px;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .ip-other {
@@ -1398,6 +1763,35 @@ onMounted(syncRoute);
   margin-bottom: 15px;
 }
 
+.ip-score {
+  margin-left: auto;
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.ip-score-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background: #f8faf4;
+  border: 1px solid #e5e9dc;
+  border-radius: 8px;
+}
+
+.ip-score-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ip-score-grid .el-input-number {
+  width: 100%;
+}
+
 .ip-add-candidate {
   justify-content: flex-start;
   margin-bottom: 16px;
@@ -1410,6 +1804,10 @@ onMounted(syncRoute);
 @media (width <= 1100px) {
   .ip-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ip-score-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1426,7 +1824,8 @@ onMounted(syncRoute);
   }
 
   .ip-form-grid,
-  .ip-selected {
+  .ip-selected,
+  .ip-score-grid {
     grid-template-columns: 1fr;
   }
 

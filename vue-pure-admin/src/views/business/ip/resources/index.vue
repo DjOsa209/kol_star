@@ -20,6 +20,10 @@ defineOptions({ name: "IPResources" });
 const router = useRouter();
 const route = useRoute();
 const mode = ref<"list" | "form" | "detail">("list");
+const selectingForRequest = computed(
+  () => route.query.selectForRequest === "1"
+);
+const selectedForRequest = ref<number[]>([]);
 const activeTab = ref<"single" | "bulk">("single");
 const loading = ref(false);
 const saving = ref(false);
@@ -30,9 +34,12 @@ const filter = reactive({
   keyword: "",
   ipType: "",
   status: "",
+  market: "",
+  completeness: "",
   page: 1,
   pageSize: 20
 });
+const updatedRange = ref<string[]>([]);
 const types = [
   "体育IP",
   "动画/影视",
@@ -76,6 +83,11 @@ const profileFields = [
     key: "salesROI",
     label: "历史销售转化力",
     hint: "如有联名合作ROI，可在此说明"
+  },
+  {
+    key: "showcase",
+    label: "IP展示与合作表现",
+    hint: "代表作品、其他品牌案例及与本品牌的历史表现"
   },
   {
     key: "cooperationTips",
@@ -160,7 +172,11 @@ function priceText(item: any) {
 async function loadList() {
   loading.value = true;
   try {
-    const result = await listIPResources({ ...filter });
+    const result = await listIPResources({
+      ...filter,
+      updatedFrom: updatedRange.value[0] || "",
+      updatedTo: updatedRange.value[1] || ""
+    });
     rows.value = result.data.list || [];
     total.value = result.data.total || 0;
     stats.value = result.data.stats || {
@@ -181,7 +197,34 @@ function goNew(tab: "single" | "bulk" = "single") {
   router.push({ path: "/business/ip/resources", query: { mode: "new", tab } });
 }
 function goDetail(id: number) {
+  if (selectingForRequest.value) {
+    window.open(
+      router.resolve({
+        path: "/business/ip/resources",
+        query: { id: String(id) }
+      }).href,
+      "_blank",
+      "noopener"
+    );
+    return;
+  }
   router.push({ path: "/business/ip/resources", query: { id: String(id) } });
+}
+function toggleForRequest(id: number) {
+  if (selectedForRequest.value.includes(id))
+    selectedForRequest.value = selectedForRequest.value.filter(
+      value => value !== id
+    );
+  else if (selectedForRequest.value.length < 5)
+    selectedForRequest.value.push(id);
+  else ElMessage.warning("最多选择5个意向IP");
+}
+function confirmForRequest() {
+  const key = String(route.query.selectionKey || "");
+  if (!key) return;
+  localStorage.setItem(key, JSON.stringify(selectedForRequest.value));
+  ElMessage.success("已加入需求意向清单，请返回需求页面");
+  window.close();
 }
 async function loadDetail(id: number) {
   loading.value = true;
@@ -561,6 +604,13 @@ async function runImport() {
   }
 }
 function syncRoute() {
+  if (selectingForRequest.value && route.query.selected) {
+    selectedForRequest.value = String(route.query.selected)
+      .split(",")
+      .map(Number)
+      .filter(value => value > 0)
+      .slice(0, 5);
+  }
   const id = Number(route.query.id);
   if (id > 0) {
     mode.value = "detail";
@@ -568,6 +618,11 @@ function syncRoute() {
   } else if (route.query.mode === "new") {
     mode.value = "form";
     form.value = emptyForm();
+    form.value.name = String(route.query.name || "");
+    form.value.rightsOwner = String(route.query.rightsOwner || "");
+    form.value.summary = String(route.query.summary || "");
+    if (route.query.imageStyle)
+      form.value.profile.imageStyle = String(route.query.imageStyle);
     activeTab.value = route.query.tab === "bulk" ? "bulk" : "single";
   } else {
     mode.value = "list";
@@ -612,6 +667,12 @@ onMounted(syncRoute);
         <el-button v-if="mode !== 'list'" @click="goList">返回资源库</el-button>
         <el-button v-if="mode === 'list'" class="ip-primary" @click="goNew()"
           >＋ 新增IP</el-button
+        >
+        <el-button
+          v-if="mode === 'list' && selectingForRequest"
+          class="ip-primary"
+          @click="confirmForRequest"
+          >确认选择 {{ selectedForRequest.length }} 个IP</el-button
         >
         <el-button
           v-if="mode === 'detail'"
@@ -659,6 +720,34 @@ onMounted(syncRoute);
               :label="status"
               :value="status"
           /></el-select>
+          <el-select
+            v-model="filter.market"
+            placeholder="目标市场"
+            clearable
+            filterable
+          >
+            <el-option
+              v-for="market in markets"
+              :key="market"
+              :label="market"
+              :value="market"
+            />
+          </el-select>
+          <el-select
+            v-model="filter.completeness"
+            placeholder="资料完成度"
+            clearable
+          >
+            <el-option label="资料完整" value="complete" />
+            <el-option label="待补充" value="incomplete" />
+          </el-select>
+          <el-date-picker
+            v-model="updatedRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            start-placeholder="更新起始"
+            end-placeholder="更新截止"
+          />
           <el-button
             class="ip-primary"
             @click="
@@ -669,6 +758,13 @@ onMounted(syncRoute);
           >
         </div>
         <el-table :data="rows" empty-text="暂无IP，点击右上角新增" stripe>
+          <el-table-column v-if="selectingForRequest" label="选择" width="65">
+            <template #default="scope"
+              ><el-checkbox
+                :model-value="selectedForRequest.includes(Number(scope.row.id))"
+                @change="toggleForRequest(Number(scope.row.id))"
+            /></template>
+          </el-table-column>
           <el-table-column prop="name" label="IP名称" min-width="220"
             ><template #default="scope"
               ><button class="ip-link" @click="goDetail(scope.row.id)">
@@ -709,6 +805,13 @@ onMounted(syncRoute);
               ></template
             ></el-table-column
           >
+          <el-table-column label="资料完成度" width="130">
+            <template #default="scope"
+              ><el-progress
+                :percentage="Number(scope.row.completeness || 0)"
+                :show-text="true"
+            /></template>
+          </el-table-column>
           <el-table-column prop="updatedAt" label="最近更新" min-width="145" />
           <el-table-column label="操作" width="100"
             ><template #default="scope"

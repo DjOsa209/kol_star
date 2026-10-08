@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -84,20 +85,80 @@ func ipExternalValid(brief map[string]any) bool {
 	}
 	for _, item := range items {
 		candidate, ok := item.(map[string]any)
-		if !ok || strings.TrimSpace(fmt.Sprint(candidate["name"])) == "" || strings.TrimSpace(fmt.Sprint(candidate["reason"])) == "" || candidate["name"] == nil || candidate["reason"] == nil {
+		if !ok || ipMapText(candidate, "name") == "" || ipMapText(candidate, "rightsOwner") == "" || ipMapText(candidate, "reason") == "" || ipMapText(candidate, "productEvaluation") == "" || ipMapText(candidate, "technicalFit") == "" {
 			return false
 		}
 	}
 	return true
 }
 
+func ipMapText(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func ipBriefValid(brief map[string]any, candidateIDs []int64) bool {
+	for _, key := range []string{"owner", "projectPeriod", "linkedProduct", "cooperationMode", "contacts", "targetIPType", "targetIPCount"} {
+		if ipMapText(brief, key) == "" {
+			return false
+		}
+	}
+	evaluations, _ := brief["candidateEvaluations"].(map[string]any)
+	for _, id := range candidateIDs {
+		item, _ := evaluations[strconv.FormatInt(id, 10)].(map[string]any)
+		for _, key := range []string{"reason", "productEvaluation", "technicalFit"} {
+			if ipMapText(item, key) == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func ipWeightedScore(assessment map[string]any) (float64, bool) {
+	dimensions, ok := assessment["scoreDimensions"].(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	weighted := 0.0
+	for _, field := range []struct {
+		Key    string
+		Weight float64
+	}{
+		{"audienceMatch", 0.3},
+		{"marketCoverage", 0.25},
+		{"scheduleAvailability", 0.25},
+		{"licenseRisk", 0.2},
+	} {
+		score, ok := dimensions[field.Key].(float64)
+		if !ok || math.IsNaN(score) || math.IsInf(score, 0) || score < 0 || score > 100 {
+			return 0, false
+		}
+		weighted += score * field.Weight
+	}
+	return math.Round(weighted), true
+}
+
+const ipCompletenessSQL = `(case when rights_owner<>'' then 1 else 0 end +
+	case when coalesce(summary,'')<>'' then 1 else 0 end +
+	case when price_min is not null and price_max is not null then 1 else 0 end +
+	case when coalesce(json_unquote(json_extract(profile,'$.lifecycle')),'')<>'' then 1 else 0 end +
+	case when coalesce(json_unquote(json_extract(profile,'$.genderRatio')),'')<>'' then 1 else 0 end +
+	case when coalesce(json_unquote(json_extract(profile,'$.ageRange')),'')<>'' then 1 else 0 end +
+	case when exists (select 1 from biz_ip_files f where f.ip_id=biz_ip_resources.id and f.file_kind='copyright') then 1 else 0 end +
+	case when exists (select 1 from biz_ip_files f where f.ip_id=biz_ip_resources.id and f.file_kind='visual') then 1 else 0 end)`
+
 func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 	var filter struct {
-		Keyword  string `json:"keyword"`
-		IPType   string `json:"ipType"`
-		Status   string `json:"status"`
-		Page     int    `json:"page"`
-		PageSize int    `json:"pageSize"`
+		Keyword      string `json:"keyword"`
+		IPType       string `json:"ipType"`
+		Status       string `json:"status"`
+		Market       string `json:"market"`
+		Completeness string `json:"completeness"`
+		UpdatedFrom  string `json:"updatedFrom"`
+		UpdatedTo    string `json:"updatedTo"`
+		Page         int    `json:"page"`
+		PageSize     int    `json:"pageSize"`
 	}
 	if !readIPJSON(w, r, &filter) {
 		return
@@ -123,6 +184,23 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 		where += " and cooperation_status = ?"
 		args = append(args, filter.Status)
 	}
+	if filter.Market != "" {
+		where += " and markets like ?"
+		args = append(args, "%"+strings.TrimSpace(filter.Market)+"%")
+	}
+	if filter.Completeness == "complete" {
+		where += " and " + ipCompletenessSQL + " = 8"
+	} else if filter.Completeness == "incomplete" {
+		where += " and " + ipCompletenessSQL + " < 8"
+	}
+	if filter.UpdatedFrom != "" {
+		where += " and date(updated_at) >= ?"
+		args = append(args, filter.UpdatedFrom)
+	}
+	if filter.UpdatedTo != "" {
+		where += " and date(updated_at) <= ?"
+		args = append(args, filter.UpdatedTo)
+	}
 	var total int
 	if err := a.DB().QueryRowContext(r.Context(), "select count(*) from biz_ip_resources"+where, args...).Scan(&total); err != nil {
 		writeDBError(w, err)
@@ -132,6 +210,7 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.queryMaps(r.Context(), `select id, name, ip_type as ipType, rights_owner as rightsOwner,
 		markets, audience, cooperation_status as cooperationStatus, currency,
 		price_min as priceMin, price_max as priceMax,
+		(`+ipCompletenessSQL+` * 12.5) as completeness,
 		date_format(updated_at, '%Y-%m-%d %H:%i') as updatedAt
 		from biz_ip_resources`+where+` order by updated_at desc, id desc limit ? offset ?`, listArgs...)
 	if err != nil {
@@ -598,9 +677,12 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ProjectName = strings.TrimSpace(item.ProjectName)
-	if item.ProjectName == "" || item.Department == "" || len(item.Markets) == 0 || item.Goal == "" || item.Description == "" || !ipValidRange(item.BudgetMin, item.BudgetMax) || (item.Submit && (item.BudgetMin == nil || item.BudgetMax == nil)) {
+	if !ipValidRange(item.BudgetMin, item.BudgetMax) || (item.Submit && (item.ProjectName == "" || item.Department == "" || len(item.Markets) == 0 || item.Goal == "" || item.Description == "" || item.BudgetMin == nil || item.BudgetMax == nil)) {
 		writeError(w, http.StatusBadRequest, 400, "请填写项目、市场、目标、说明及有效授权预算")
 		return
+	}
+	if !item.Submit && item.ProjectName == "" {
+		item.ProjectName = "未命名需求"
 	}
 	if len(item.CandidateIDs) > 5 {
 		writeError(w, http.StatusBadRequest, 400, "最多选择5个意向IP")
@@ -610,8 +692,12 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, 400, "最多推荐3个库外IP")
 		return
 	}
-	if !ipExternalValid(item.Brief) {
-		writeError(w, http.StatusBadRequest, 400, "库外IP需填写名称和选择理由")
+	if item.Submit && !ipExternalValid(item.Brief) {
+		writeError(w, http.StatusBadRequest, 400, "库外IP信息不完整")
+		return
+	}
+	if item.Submit && !ipBriefValid(item.Brief, item.CandidateIDs) {
+		writeError(w, http.StatusBadRequest, 400, "请补齐项目与各意向IP的评估信息")
 		return
 	}
 	if item.Submit && len(item.CandidateIDs) == 0 && strings.TrimSpace(item.ExternalRecommendation) == "" && ipExternalCount(item.Brief) == 0 {
@@ -728,6 +814,7 @@ func (a *app) ipRequestDetail(w http.ResponseWriter, r *http.Request) {
 func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		RequestID  int64 `json:"requestId"`
+		SaveDraft  bool  `json:"saveDraft"`
 		Candidates []struct {
 			IPID           int64          `json:"ipId"`
 			PriorityOrder  int            `json:"priorityOrder"`
@@ -740,7 +827,7 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 	if !readIPJSON(w, r, &input) {
 		return
 	}
-	if input.RequestID <= 0 || len(input.Candidates) == 0 || len(input.Candidates) > 5 {
+	if input.RequestID <= 0 || len(input.Candidates) == 0 || len(input.Candidates) > 8 {
 		writeError(w, http.StatusBadRequest, 400, "请选择待评估IP")
 		return
 	}
@@ -750,10 +837,41 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	var requestStatus string
+	if err := tx.QueryRowContext(r.Context(), "select status from biz_ip_requests where id=? for update", input.RequestID).Scan(&requestStatus); err != nil || requestStatus != "submitted" {
+		writeError(w, http.StatusConflict, 409, "需求未处于待IP反馈状态")
+		return
+	}
+	seenIPs := map[int64]bool{}
+	seenPriorities := map[int]bool{}
 	for _, candidate := range input.Candidates {
-		if candidate.Feasibility == "" || candidate.Recommendation == "" || strings.TrimSpace(candidate.Reason) == "" {
+		if candidate.IPID <= 0 || seenIPs[candidate.IPID] {
+			writeError(w, http.StatusBadRequest, 400, "评估IP不可重复")
+			return
+		}
+		seenIPs[candidate.IPID] = true
+		if !input.SaveDraft && (candidate.Feasibility == "" || candidate.Recommendation == "" || strings.TrimSpace(candidate.Reason) == "") {
 			writeError(w, http.StatusBadRequest, 400, "请填写每个IP的可行性、推荐意见和理由")
 			return
+		}
+		if !input.SaveDraft {
+			if candidate.PriorityOrder < 1 || candidate.PriorityOrder > len(input.Candidates) || seenPriorities[candidate.PriorityOrder] {
+				writeError(w, http.StatusBadRequest, 400, "请为意向IP设置不重复的推荐排序")
+				return
+			}
+			seenPriorities[candidate.PriorityOrder] = true
+			for _, key := range []string{"licenseContent", "licenseTerritory", "ipResources", "brandResources", "businessRisk", "publicRisk", "ownershipClarity"} {
+				if ipMapText(candidate.Assessment, key) == "" {
+					writeError(w, http.StatusBadRequest, 400, "请补齐授权、资源和风险评估信息")
+					return
+				}
+			}
+			score, ok := ipWeightedScore(candidate.Assessment)
+			if !ok {
+				writeError(w, http.StatusBadRequest, 400, "请填写四项0至100分的IP评估分数")
+				return
+			}
+			candidate.Assessment["overallScore"] = score
 		}
 		result, err := tx.ExecContext(r.Context(), `insert into biz_ip_request_candidates (request_id,ip_id,priority_order,feasibility,recommendation,reason,assessment)
 			select ?,id,?,?,?,?,? from biz_ip_resources where id=?
@@ -776,15 +894,11 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	result, err := tx.ExecContext(r.Context(), "update biz_ip_requests set status='ip_reviewed' where id=? and status='submitted'", input.RequestID)
-	if err != nil {
-		writeDBError(w, err)
-		return
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		writeError(w, http.StatusConflict, 409, "需求未处于待IP反馈状态")
-		return
+	if !input.SaveDraft {
+		if _, err := tx.ExecContext(r.Context(), "update biz_ip_requests set status='ip_reviewed' where id=?", input.RequestID); err != nil {
+			writeDBError(w, err)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		writeDBError(w, err)
@@ -796,6 +910,7 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 func (a *app) ipRequestMarketing(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		RequestID         int64          `json:"requestId"`
+		SaveDraft         bool           `json:"saveDraft"`
 		MarketHeat        string         `json:"marketHeat"`
 		FanAudience       string         `json:"fanAudience"`
 		CommercialValue   string         `json:"commercialValue"`
@@ -807,12 +922,43 @@ func (a *app) ipRequestMarketing(w http.ResponseWriter, r *http.Request) {
 	if !readIPJSON(w, r, &input) {
 		return
 	}
-	if input.RequestID <= 0 || strings.TrimSpace(input.MarketingComments) == "" {
+	if input.RequestID <= 0 || (!input.SaveDraft && strings.TrimSpace(input.MarketingComments) == "") {
 		writeError(w, http.StatusBadRequest, 400, "请填写营销补充意见")
 		return
 	}
-	result, err := a.DB().ExecContext(r.Context(), `update biz_ip_requests set market_heat=?,fan_audience=?,commercial_value=?,marketing_risks=?,marketing_channels=?,marketing_comments=?,marketing_profile=?,status='marketing_reviewed' where id=? and status='ip_reviewed'`,
-		input.MarketHeat, input.FanAudience, input.CommercialValue, input.MarketingRisks, ipJSON(input.MarketingChannels), input.MarketingComments, ipJSON(input.MarketingProfile), input.RequestID)
+	if !input.SaveDraft {
+		opinions, _ := input.MarketingProfile["candidates"].(map[string]any)
+		rows, err := a.DB().QueryContext(r.Context(), "select ip_id from biz_ip_request_candidates where request_id=?", input.RequestID)
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ipID int64
+			if err := rows.Scan(&ipID); err != nil {
+				writeDBError(w, err)
+				return
+			}
+			entry, _ := opinions[strconv.FormatInt(ipID, 10)].(map[string]any)
+			for _, key := range []string{"marketHeat", "fanAudience", "commercialValue", "marketingRisks", "recentTrend", "socialFollowers", "ugcForecast", "audienceMatch", "prOpinion"} {
+				if ipMapText(entry, key) == "" {
+					writeError(w, http.StatusBadRequest, 400, "请补齐每个IP的IMC、品牌运营、用户运营和PR意见")
+					return
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			writeDBError(w, err)
+			return
+		}
+	}
+	status := "marketing_reviewed"
+	if input.SaveDraft {
+		status = "ip_reviewed"
+	}
+	result, err := a.DB().ExecContext(r.Context(), `update biz_ip_requests set market_heat=?,fan_audience=?,commercial_value=?,marketing_risks=?,marketing_channels=?,marketing_comments=?,marketing_profile=?,status=? where id=? and status='ip_reviewed'`,
+		input.MarketHeat, input.FanAudience, input.CommercialValue, input.MarketingRisks, ipJSON(input.MarketingChannels), input.MarketingComments, ipJSON(input.MarketingProfile), status, input.RequestID)
 	if err != nil {
 		writeDBError(w, err)
 		return
