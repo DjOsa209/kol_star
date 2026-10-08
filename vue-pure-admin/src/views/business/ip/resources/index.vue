@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useUserStoreHook } from "@/store/modules/user";
 import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
 import {
@@ -27,6 +28,7 @@ const selectedForRequest = ref<number[]>([]);
 const activeTab = ref<"single" | "bulk">("single");
 const loading = ref(false);
 const saving = ref(false);
+const advancedFilters = ref(false);
 const rows = ref<any[]>([]);
 const total = ref(0);
 const stats = ref({ total: 0, cooperable: 0, pendingFiles: 0, recent: 0 });
@@ -123,7 +125,46 @@ const emptyForm = (): IPResourceInput => ({
   profile: {}
 });
 const form = ref<IPResourceInput>(emptyForm());
+function manualDraftKey() {
+  return `ip-resource-draft:${useUserStoreHook().username || "current"}`;
+}
+function saveManualDraft() {
+  localStorage.setItem(
+    manualDraftKey(),
+    JSON.stringify({
+      form: form.value,
+      caseTitle: caseTitle.value,
+      caseSummary: caseSummary.value
+    })
+  );
+  ElMessage.success("文字草稿已保存在当前浏览器，附件需重新选择");
+}
+function restoreManualDraft() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(manualDraftKey()) || "null");
+    if (!saved?.form || typeof saved.form !== "object") return;
+    form.value = {
+      ...emptyForm(),
+      ...saved.form,
+      id: undefined,
+      markets: Array.isArray(saved.form.markets) ? saved.form.markets : [],
+      profile: objectValue(saved.form.profile)
+    };
+    caseTitle.value = String(saved.caseTitle || "");
+    caseSummary.value = String(saved.caseSummary || "");
+  } catch {
+    localStorage.removeItem(manualDraftKey());
+  }
+}
 const detail = ref<{ resource: any; cases: any[]; files: any[] } | null>(null);
+const drawerVisible = ref(false);
+const drawerLoading = ref(false);
+const drawerDetail = ref<{ resource: any; cases: any[]; files: any[] } | null>(
+  null
+);
+const drawerVisualURL = ref("");
+const thumbUrls = ref<Record<number, string>>({});
+const thumbFileIds = ref<Record<number, number>>({});
 const copyrightFiles = ref<File[]>([]);
 const visualFile = ref<File | null>(null);
 const visualURL = ref("");
@@ -185,12 +226,76 @@ async function loadList() {
       pendingFiles: 0,
       recent: 0
     };
+    const activeIds = new Set(rows.value.map(row => Number(row.id)));
+    for (const [id, url] of Object.entries(thumbUrls.value)) {
+      const row = rows.value.find(item => Number(item.id) === Number(id));
+      if (
+        !activeIds.has(Number(id)) ||
+        Number(row?.visualFileId) !== thumbFileIds.value[Number(id)]
+      ) {
+        URL.revokeObjectURL(url);
+        delete thumbUrls.value[Number(id)];
+        delete thumbFileIds.value[Number(id)];
+      }
+    }
+    void Promise.allSettled(
+      rows.value
+        .filter(row => row.visualFileId && !thumbUrls.value[Number(row.id)])
+        .map(async row => {
+          const blob = await readIPFile(Number(row.visualFileId));
+          if (
+            rows.value.some(
+              item =>
+                Number(item.id) === Number(row.id) &&
+                Number(item.visualFileId) === Number(row.visualFileId)
+            )
+          ) {
+            thumbUrls.value[Number(row.id)] = URL.createObjectURL(blob);
+            thumbFileIds.value[Number(row.id)] = Number(row.visualFileId);
+          }
+        })
+    );
   } finally {
     loading.value = false;
   }
 }
+function resetFilters() {
+  Object.assign(filter, {
+    keyword: "",
+    ipType: "",
+    status: "",
+    market: "",
+    completeness: "",
+    page: 1
+  });
+  updatedRange.value = [];
+  loadList();
+}
 function goList() {
+  drawerVisible.value = false;
   router.push({ path: "/business/ip/resources" });
+}
+async function openDrawer(id: number) {
+  drawerVisible.value = true;
+  drawerLoading.value = true;
+  drawerDetail.value = null;
+  try {
+    drawerDetail.value = (await getIPResource(id)).data;
+    if (drawerVisualURL.value) URL.revokeObjectURL(drawerVisualURL.value);
+    drawerVisualURL.value = "";
+    const visual = drawerDetail.value.files.find(
+      file => file.fileKind === "visual"
+    );
+    if (visual)
+      drawerVisualURL.value = URL.createObjectURL(
+        await readIPFile(Number(visual.id))
+      );
+  } catch {
+    drawerVisible.value = false;
+    ElMessage.error("IP档案加载失败，请重试");
+  } finally {
+    drawerLoading.value = false;
+  }
 }
 function goNew(tab: "single" | "bulk" = "single") {
   activeTab.value = tab;
@@ -208,6 +313,7 @@ function goDetail(id: number) {
     );
     return;
   }
+  drawerVisible.value = false;
   router.push({ path: "/business/ip/resources", query: { id: String(id) } });
 }
 function toggleForRequest(id: number) {
@@ -345,6 +451,7 @@ async function saveManual() {
     caseTitle.value = "";
     caseSummary.value = "";
     ElMessage.success(item.id ? "IP资料已更新" : "IP已创建");
+    if (!item.id) localStorage.removeItem(manualDraftKey());
     if (Number(route.query.id) === id) {
       mode.value = "detail";
       await loadDetail(id);
@@ -618,6 +725,8 @@ function syncRoute() {
   } else if (route.query.mode === "new") {
     mode.value = "form";
     form.value = emptyForm();
+    if (!route.query.name && !route.query.rightsOwner && !route.query.summary)
+      restoreManualDraft();
     form.value.name = String(route.query.name || "");
     form.value.rightsOwner = String(route.query.rightsOwner || "");
     form.value.summary = String(route.query.summary || "");
@@ -637,13 +746,20 @@ watch(previewVisible, open => {
   }
 });
 onMounted(syncRoute);
+onUnmounted(() => {
+  if (visualURL.value) URL.revokeObjectURL(visualURL.value);
+  if (drawerVisualURL.value) URL.revokeObjectURL(drawerVisualURL.value);
+  for (const url of Object.values(thumbUrls.value)) URL.revokeObjectURL(url);
+});
 </script>
 
 <template>
   <div v-loading="loading" class="ip-page">
     <div class="ip-head">
       <div>
-        <div class="ip-eyebrow">IP OPERATIONS / RESOURCE LIBRARY</div>
+        <div v-if="mode !== 'list'" class="ip-eyebrow">
+          IP资源库 / {{ mode === "detail" ? detail?.resource.name : "新增IP" }}
+        </div>
         <h1>
           {{
             mode === "list"
@@ -686,16 +802,36 @@ onMounted(syncRoute);
     <template v-if="mode === 'list'">
       <div class="ip-stats">
         <div class="ip-stat">
-          <span>IP总数</span><strong>{{ stats.total }}</strong>
+          <div class="ip-stat-icon">
+            <IconifyIconOnline icon="ri:stack-line" />
+          </div>
+          <div>
+            <span>IP总数</span><strong>{{ stats.total }}</strong>
+          </div>
         </div>
         <div class="ip-stat">
-          <span>可合作</span><strong>{{ stats.cooperable }}</strong>
+          <div class="ip-stat-icon">
+            <IconifyIconOnline icon="ri:group-line" />
+          </div>
+          <div>
+            <span>可合作</span><strong>{{ stats.cooperable }}</strong>
+          </div>
         </div>
         <div class="ip-stat">
-          <span>待版权资料</span><strong>{{ stats.pendingFiles }}</strong>
+          <div class="ip-stat-icon">
+            <IconifyIconOnline icon="ri:file-list-3-line" />
+          </div>
+          <div>
+            <span>待版权资料</span><strong>{{ stats.pendingFiles }}</strong>
+          </div>
         </div>
         <div class="ip-stat">
-          <span>近30天新增</span><strong>{{ stats.recent }}</strong>
+          <div class="ip-stat-icon">
+            <IconifyIconOnline icon="ri:line-chart-line" />
+          </div>
+          <div>
+            <span>近30天新增</span><strong>{{ stats.recent }}</strong>
+          </div>
         </div>
       </div>
       <div class="ip-card">
@@ -733,6 +869,20 @@ onMounted(syncRoute);
               :value="market"
             />
           </el-select>
+          <el-button
+            class="ip-primary"
+            @click="
+              filter.page = 1;
+              loadList();
+            "
+            >搜索</el-button
+          >
+          <el-button @click="resetFilters">重置</el-button>
+          <el-button link @click="advancedFilters = !advancedFilters">{{
+            advancedFilters ? "收起筛选" : "高级筛选"
+          }}</el-button>
+        </div>
+        <div v-if="advancedFilters" class="ip-filter ip-advanced-filter">
           <el-select
             v-model="filter.completeness"
             placeholder="资料完成度"
@@ -748,14 +898,6 @@ onMounted(syncRoute);
             start-placeholder="更新起始"
             end-placeholder="更新截止"
           />
-          <el-button
-            class="ip-primary"
-            @click="
-              filter.page = 1;
-              loadList();
-            "
-            >搜索</el-button
-          >
         </div>
         <el-table :data="rows" empty-text="暂无IP，点击右上角新增" stripe>
           <el-table-column v-if="selectingForRequest" label="选择" width="65">
@@ -765,16 +907,30 @@ onMounted(syncRoute);
                 @change="toggleForRequest(Number(scope.row.id))"
             /></template>
           </el-table-column>
-          <el-table-column prop="name" label="IP名称" min-width="220"
+          <el-table-column prop="name" label="IP名称" min-width="260"
             ><template #default="scope"
-              ><button class="ip-link" @click="goDetail(scope.row.id)">
-                {{ scope.row.name }}</button
-              ><small>{{
-                scope.row.rightsOwner || "版权方待补充"
-              }}</small></template
+              ><div class="ip-name-cell">
+                <img
+                  v-if="thumbUrls[Number(scope.row.id)]"
+                  :src="thumbUrls[Number(scope.row.id)]"
+                  :alt="scope.row.name"
+                />
+                <div v-else class="ip-name-empty">IP</div>
+                <div>
+                  <button class="ip-link" @click="openDrawer(scope.row.id)">
+                    {{ scope.row.name }}</button
+                  ><small>{{
+                    scope.row.summary || scope.row.rightsOwner || "版权方待补充"
+                  }}</small>
+                </div>
+              </div></template
             ></el-table-column
           >
-          <el-table-column prop="ipType" label="类型" min-width="110" />
+          <el-table-column label="类型" min-width="110"
+            ><template #default="scope"
+              ><el-tag effect="light">{{ scope.row.ipType }}</el-tag></template
+            ></el-table-column
+          >
           <el-table-column label="覆盖市场" min-width="150"
             ><template #default="scope">{{
               arrayValue(scope.row.markets).join(" / ")
@@ -815,8 +971,8 @@ onMounted(syncRoute);
           <el-table-column prop="updatedAt" label="最近更新" min-width="145" />
           <el-table-column label="操作" width="100"
             ><template #default="scope"
-              ><el-button link type="primary" @click="goDetail(scope.row.id)"
-                >查看详情</el-button
+              ><el-button link type="primary" @click="openDrawer(scope.row.id)"
+                >查看档案</el-button
               ></template
             ></el-table-column
           >
@@ -831,30 +987,117 @@ onMounted(syncRoute);
           />
         </div>
       </div>
+      <el-drawer
+        v-model="drawerVisible"
+        title="IP档案"
+        size="420px"
+        class="ip-resource-drawer"
+      >
+        <div v-loading="drawerLoading" class="ip-drawer-content">
+          <template v-if="drawerDetail">
+            <div class="ip-drawer-intro">
+              <img
+                v-if="drawerVisualURL"
+                :src="drawerVisualURL"
+                :alt="drawerDetail.resource.name"
+              />
+              <div>
+                <h2>{{ drawerDetail.resource.name }}</h2>
+                <el-tag>{{ drawerDetail.resource.ipType }}</el-tag>
+                <p>{{ drawerDetail.resource.audience || "受众待补充" }}</p>
+              </div>
+            </div>
+            <p>{{ drawerDetail.resource.summary || "暂无IP简介" }}</p>
+            <div class="ip-drawer-section">
+              <h3>核心信息</h3>
+              <dl class="ip-dl">
+                <dt>版权方</dt>
+                <dd>{{ drawerDetail.resource.rightsOwner || "待补充" }}</dd>
+                <dt>覆盖市场</dt>
+                <dd>
+                  {{ arrayValue(drawerDetail.resource.markets).join(" / ") }}
+                </dd>
+                <dt>合作状态</dt>
+                <dd>{{ drawerDetail.resource.cooperationStatus }}</dd>
+              </dl>
+            </div>
+            <div class="ip-drawer-section">
+              <h3>参考权益价格</h3>
+              <strong class="ip-price">{{
+                priceText(drawerDetail.resource)
+              }}</strong>
+              <p class="ip-muted">供参考，根据具体需求更新</p>
+            </div>
+            <div class="ip-drawer-section">
+              <h3>可查看资料</h3>
+              <div
+                v-for="file in drawerDetail.files.filter(
+                  item => item.fileKind !== 'visual'
+                )"
+                :key="file.id"
+                class="ip-file"
+              >
+                <span
+                  ><b class="ip-file-icon">PDF</b>{{ file.originalName }}</span
+                >
+                <el-button link @click="openFile(file)">预览</el-button>
+              </div>
+              <p
+                v-if="
+                  !drawerDetail.files.some(item => item.fileKind !== 'visual')
+                "
+                class="ip-muted"
+              >
+                暂无附件
+              </p>
+            </div>
+            <el-button
+              class="ip-primary ip-drawer-action"
+              @click="goDetail(Number(drawerDetail.resource.id))"
+              >查看详情 →</el-button
+            >
+          </template>
+        </div>
+      </el-drawer>
     </template>
 
     <template v-else-if="mode === 'detail' && detail">
+      <div class="ip-card ip-hero">
+        <div class="ip-hero-media">
+          <img v-if="visualURL" :src="visualURL" :alt="detail.resource.name" />
+          <div v-else class="ip-hero-empty">暂无IP形象</div>
+          <label class="ip-hero-upload"
+            >＋ 上传形象<input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              @change="addVisual"
+          /></label>
+        </div>
+        <div class="ip-hero-copy">
+          <strong>{{ detail.resource.name }}</strong>
+          <p>
+            {{
+              detail.resource.summary ||
+              "暂无IP简介，请补充背景、特点和影响力。"
+            }}
+          </p>
+          <div class="ip-hero-tags">
+            <el-tag>{{ detail.resource.ipType }}</el-tag>
+            <el-tag type="success">{{
+              detail.resource.cooperationStatus
+            }}</el-tag>
+            <el-tag
+              v-if="objectValue(detail.resource.profile).lifecycle"
+              type="info"
+            >
+              {{ objectValue(detail.resource.profile).lifecycle }}
+            </el-tag>
+          </div>
+        </div>
+      </div>
       <div class="ip-detail-grid">
         <div class="ip-stack">
-          <div class="ip-card">
-            <div class="ip-card-head">
-              <h2>IP形象</h2>
-              <label class="ip-upload-inline"
-                >＋ 上传图片<input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  hidden
-                  @change="addVisual"
-              /></label>
-            </div>
-            <img
-              v-if="visualURL"
-              :src="visualURL"
-              alt="IP形象"
-              class="ip-visual"
-            />
-            <p v-else class="ip-muted">暂无形象资料</p>
-          </div>
           <div class="ip-card">
             <h2>基础权益价格范围</h2>
             <div class="ip-price">{{ priceText(detail.resource) }}</div>
@@ -882,7 +1125,7 @@ onMounted(syncRoute);
               class="ip-file"
             >
               <span
-                >📄 {{ file.originalName }}
+                ><b class="ip-file-icon">PDF</b>{{ file.originalName }}
                 <small
                   >{{ (Number(file.sizeBytes) / 1024 / 1024).toFixed(1) }} MB ·
                   {{ file.createdAt }}</small
@@ -914,7 +1157,9 @@ onMounted(syncRoute);
                 :key="file.id"
                 class="ip-file"
               >
-                <span>📄 {{ file.originalName }}</span>
+                <span
+                  ><b class="ip-file-icon">PDF</b>{{ file.originalName }}</span
+                >
                 <div>
                   <el-button link @click="openFile(file)">预览</el-button
                   ><el-button link @click="openFile(file, true)">下载</el-button
@@ -972,8 +1217,13 @@ onMounted(syncRoute);
             </dl>
           </div>
           <div class="ip-card">
-            <h2>IP介绍</h2>
-            <p>{{ detail.resource.summary || "暂无介绍" }}</p>
+            <h2>合作建议与授权</h2>
+            <p>
+              {{
+                objectValue(detail.resource.profile).cooperationTips ||
+                "暂无合作建议"
+              }}
+            </p>
             <h3>授权范围与限制</h3>
             <p>{{ detail.resource.licenseNotes || "待版权方补充" }}</p>
           </div>
@@ -1004,7 +1254,7 @@ onMounted(syncRoute);
           <div class="ip-stack">
             <div class="ip-card">
               <h2>基础信息</h2>
-              <div class="ip-form-grid">
+              <div class="ip-form-grid ip-basic-grid">
                 <label
                   >IP名称 *<el-input
                     v-model="form.name"
@@ -1063,18 +1313,6 @@ onMounted(syncRoute);
                     :rows="3"
                     placeholder="背景、特点和影响力"
                 /></label>
-              </div>
-            </div>
-            <div class="ip-card">
-              <h2>受众与影响力</h2>
-              <div class="ip-form-grid">
-                <label v-for="field in profileFields" :key="field.key">
-                  {{ field.label }}
-                  <el-input
-                    v-model="form.profile[field.key]"
-                    :placeholder="field.hint"
-                  />
-                </label>
               </div>
             </div>
             <div class="ip-card">
@@ -1152,6 +1390,27 @@ onMounted(syncRoute);
                 >
               </div>
             </div>
+            <div class="ip-card ip-optional-profile">
+              <el-collapse>
+                <el-collapse-item name="profile">
+                  <template #title>
+                    <div>
+                      <h2>补充档案信息（选填）</h2>
+                      <p>完善受众、影响力和合作建议，便于后续需求匹配。</p>
+                    </div>
+                  </template>
+                  <div class="ip-form-grid">
+                    <label v-for="field in profileFields" :key="field.key">
+                      {{ field.label }}
+                      <el-input
+                        v-model="form.profile[field.key]"
+                        :placeholder="field.hint"
+                      />
+                    </label>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
           </div>
           <div class="ip-stack">
             <div class="ip-card">
@@ -1160,10 +1419,26 @@ onMounted(syncRoute);
               <p>价格仅作参考，以最终授权报价为准。</p>
               <p>上传的PDF会显示在IP详情页。</p>
             </div>
+            <div class="ip-card">
+              <h2>历史合作</h2>
+              <div
+                v-for="item in detail?.cases || []"
+                :key="item.id"
+                class="ip-case"
+              >
+                <strong>{{ item.title }}</strong>
+                <p>{{ item.summary }}</p>
+              </div>
+              <p v-if="!detail?.cases?.length" class="ip-muted">
+                暂无历史合作案例，可在左侧补充结案资料。
+              </p>
+            </div>
           </div>
         </div>
         <div class="ip-bottom">
-          <el-button @click="goList">取消</el-button
+          <el-button v-if="!form.id" @click="saveManualDraft"
+            >保存草稿</el-button
+          ><el-button v-else @click="goList">取消</el-button
           ><el-button
             class="ip-primary"
             :loading="saving"
@@ -1173,12 +1448,34 @@ onMounted(syncRoute);
         </div>
       </template>
       <template v-else>
-        <div class="ip-card ip-import-step">
-          <span class="ip-step">1</span>
-          <div>
-            <h2>下载模板</h2>
-            <p>按模板填写，一行一个IP；价格为参考范围。</p>
-            <el-button @click="downloadTemplate">下载IP导入模板.xlsx</el-button>
+        <div class="ip-import-top">
+          <div class="ip-card ip-import-step">
+            <span class="ip-step">1</span>
+            <div class="ip-import-main">
+              <div>
+                <h2>下载模板</h2>
+                <p>先下载 Excel 模板，按要求填写后再上传文件。</p>
+                <el-button @click="downloadTemplate"
+                  >下载IP导入模板.xlsx</el-button
+                >
+              </div>
+              <div class="ip-template-fields">
+                <strong>模板主要字段</strong>
+                <div>
+                  <span>IP名称 *</span><span>IP类型 *</span>
+                  <span>覆盖市场 *</span><span>版权方</span>
+                  <span>合作状态</span><span>参考价格范围</span>
+                  <span>目标受众</span><span>联系人</span>
+                </div>
+                <small>一行一个IP，价格填写参考范围。</small>
+              </div>
+            </div>
+          </div>
+          <div class="ip-card ip-import-rules">
+            <h2>导入规则</h2>
+            <p>1. 按名称与版权方检查重复</p>
+            <p>2. 错误行修正后可重新校验</p>
+            <p>3. 已有IP不会被覆盖</p>
           </div>
         </div>
         <div class="ip-card ip-import-step">
@@ -1190,23 +1487,27 @@ onMounted(syncRoute);
               .xls，最多500条。PDF为可选；文件名使用“导入编号_版权介绍.pdf”或“导入编号_结案.pdf”，导入后自动关联。
             </p>
             <div class="ip-batch-upload">
-              <label class="ip-upload"
+              <label class="ip-upload ip-upload-drop"
                 ><input
                   type="file"
                   accept=".xlsx,.xls"
                   @change="readImport"
-                />{{ importFileName || "选择Excel文件" }}</label
-              ><label class="ip-upload"
+                /><strong>选择Excel文件</strong
+                ><small>{{
+                  importFileName || "点击上传已填写的导入模板"
+                }}</small></label
+              ><label class="ip-upload ip-upload-drop"
                 ><input
                   type="file"
                   accept="application/pdf,.pdf"
                   multiple
                   @change="readBatchFiles"
-                />{{
+                /><strong>添加PDF附件（可选）</strong
+                ><small>{{
                   batchFiles.length
                     ? `已选${batchFiles.length}份PDF`
-                    : "添加PDF附件（可选）"
-                }}</label
+                    : "按模板中的导入编号关联，可一次上传多份"
+                }}</small></label
               >
             </div>
           </div>
@@ -1281,17 +1582,34 @@ onMounted(syncRoute);
 
 <style scoped>
 .ip-batch-upload {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 12px;
 }
 
+.ip-upload-drop {
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  width: 100% !important;
+  min-height: 88px;
+  padding: 14px !important;
+  text-align: center;
+  border-color: #cfd6c9 !important;
+}
+
+.ip-upload-drop small {
+  margin-top: 5px;
+  font-weight: 400;
+  color: #8a9195;
+}
+
 .ip-page {
   min-height: calc(100vh - 150px);
-  padding: 28px;
+  padding: 16px 28px 36px;
   color: #17191d;
-  background: #f7f7f4;
+  background: #f8f8f6;
 }
 
 .ip-head,
@@ -1306,7 +1624,7 @@ onMounted(syncRoute);
 }
 
 .ip-head {
-  margin-bottom: 22px;
+  margin-bottom: 14px;
 }
 
 .ip-head h1 {
@@ -1322,9 +1640,9 @@ onMounted(syncRoute);
 }
 
 .ip-eyebrow {
-  font: 700 11px monospace;
-  color: #8c9500;
-  letter-spacing: 2px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #858d92;
 }
 
 .ip-primary {
@@ -1341,18 +1659,18 @@ onMounted(syncRoute);
 .ip-card,
 .ip-stat {
   background: white;
-  border: 1px solid #e2e3dc;
-  border-radius: 12px;
-  box-shadow: 0 3px 16px #20240b08;
+  border: 1px solid #dedfdb;
+  border-radius: 9px;
+  box-shadow: 0 2px 10px #20240b06;
 }
 
 .ip-card {
-  padding: 22px;
+  padding: 18px;
   margin-bottom: 16px;
 }
 
 .ip-card h2 {
-  margin: 0 0 15px;
+  margin: 0 0 11px;
   font-size: 18px;
 }
 
@@ -1369,7 +1687,23 @@ onMounted(syncRoute);
 }
 
 .ip-stat {
-  padding: 20px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  min-height: 90px;
+  padding: 18px 22px;
+}
+
+.ip-stat-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  font-size: 25px;
+  color: #17191d;
+  background: #f7f8f3;
+  border-radius: 50%;
 }
 
 .ip-stat span {
@@ -1383,6 +1717,7 @@ onMounted(syncRoute);
 }
 
 .ip-filter {
+  flex-wrap: wrap;
   justify-content: flex-start;
   margin-bottom: 18px;
 }
@@ -1393,6 +1728,14 @@ onMounted(syncRoute);
 
 .ip-filter .el-select {
   width: 170px;
+}
+
+.ip-advanced-filter {
+  padding: 12px;
+  margin-top: -8px;
+  background: #f8faf2;
+  border: 1px solid #e8eddc;
+  border-radius: 7px;
 }
 
 .ip-link {
@@ -1415,6 +1758,46 @@ onMounted(syncRoute);
   color: #9b9fa4;
 }
 
+.ip-name-cell {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ip-name-cell img,
+.ip-name-empty {
+  flex: none;
+  width: 58px;
+  height: 62px;
+  border-radius: 6px;
+}
+
+.ip-name-cell img {
+  object-fit: cover;
+}
+
+.ip-name-empty {
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: #6e7d34;
+  background: #edf4d8;
+}
+
+.ip-name-cell > div:last-child {
+  min-width: 0;
+}
+
+.ip-name-cell small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #8c9296;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .ip-muted {
   font-size: 12px !important;
   color: #90969b;
@@ -1430,6 +1813,73 @@ onMounted(syncRoute);
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
   gap: 16px;
+}
+
+.ip-hero {
+  display: grid;
+  grid-template-columns: minmax(230px, 36%) minmax(0, 1fr);
+  gap: 28px;
+  min-height: 220px;
+}
+
+.ip-hero-media {
+  position: relative;
+  min-height: 185px;
+}
+
+.ip-hero-media img,
+.ip-hero-empty {
+  width: 100%;
+  height: 100%;
+  max-height: 250px;
+  border-radius: 6px;
+}
+
+.ip-hero-media img {
+  object-fit: cover;
+}
+
+.ip-hero-empty {
+  display: grid;
+  place-items: center;
+  color: #8e9697;
+  background: #f0f1ed;
+  border: 1px dashed #c9cec6;
+}
+
+.ip-hero-upload {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #161a1d;
+  cursor: pointer;
+  background: #fff;
+  border-radius: 5px;
+}
+
+.ip-hero-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.ip-hero-copy > strong {
+  font-size: 20px;
+}
+
+.ip-hero-copy p {
+  max-width: 750px;
+  margin: 12px 0 18px;
+  line-height: 1.8;
+}
+
+.ip-hero-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .ip-stack {
@@ -1472,6 +1922,73 @@ onMounted(syncRoute);
   overflow-wrap: anywhere;
 }
 
+.ip-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 32px;
+  margin-right: 10px;
+  font-size: 10px;
+  color: #fff;
+  vertical-align: middle;
+  background: #e94340;
+  border-radius: 4px;
+}
+
+.ip-drawer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 70vh;
+  padding: 0 4px 22px;
+}
+
+.ip-drawer-intro {
+  display: grid;
+  grid-template-columns: 98px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.ip-drawer-intro img {
+  width: 98px;
+  height: 112px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.ip-drawer-intro h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.ip-drawer-content > p {
+  margin: 0;
+  line-height: 1.7;
+  color: #646c72;
+}
+
+.ip-drawer-section {
+  padding-top: 14px;
+  border-top: 1px solid #e8e9e3;
+}
+
+.ip-drawer-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.ip-drawer-section .ip-dl {
+  gap: 10px;
+  font-size: 13px;
+}
+
+.ip-drawer-action {
+  width: 100%;
+  margin-top: auto;
+}
+
 .ip-case {
   padding: 14px;
   margin-bottom: 12px;
@@ -1499,12 +2016,12 @@ onMounted(syncRoute);
 .ip-tabs {
   display: flex;
   gap: 0;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .ip-tabs button {
   min-width: 220px;
-  padding: 12px 28px;
+  padding: 9px 28px;
   font-weight: 700;
   cursor: pointer;
   background: #fff;
@@ -1533,7 +2050,36 @@ onMounted(syncRoute);
 .ip-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 24px;
+  gap: 14px 24px;
+}
+
+.ip-optional-profile :deep(.el-collapse) {
+  border: 0;
+}
+
+.ip-optional-profile :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 48px;
+  line-height: 1.5;
+  border: 0;
+}
+
+.ip-optional-profile :deep(.el-collapse-item__wrap) {
+  border: 0;
+}
+
+.ip-optional-profile :deep(.el-collapse-item__content) {
+  padding: 18px 0 0;
+}
+
+.ip-optional-profile h2 {
+  margin: 0 0 4px;
+}
+
+.ip-optional-profile p {
+  margin: 0;
+  font-weight: 400;
+  color: #8a9195;
 }
 
 .ip-form-grid label {
@@ -1541,6 +2087,21 @@ onMounted(syncRoute);
   flex-direction: column;
   gap: 8px;
   font-weight: 600;
+}
+
+.ip-basic-grid label {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.ip-basic-grid label.ip-span {
+  align-items: start;
+}
+
+.ip-basic-grid label.ip-span > .el-textarea {
+  width: 100%;
 }
 
 .ip-form-grid label small {
@@ -1589,13 +2150,66 @@ onMounted(syncRoute);
 }
 
 .ip-bottom {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   justify-content: flex-end;
+  padding: 12px 20px;
   margin-top: 16px;
+  background: #fffffff2;
+  border-top: 1px solid #e6e8e3;
 }
 
 .ip-import-step {
   display: flex;
   gap: 18px;
+}
+
+.ip-import-main {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 1fr);
+  gap: 18px;
+}
+
+.ip-template-fields {
+  padding: 14px;
+  background: #f7f8f5;
+  border-radius: 8px;
+}
+
+.ip-template-fields > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+
+.ip-template-fields span::before {
+  margin-right: 5px;
+  color: #80a000;
+  content: "✓";
+}
+
+.ip-template-fields small {
+  color: #8a9195;
+}
+
+.ip-import-top {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 16px;
+}
+
+.ip-import-rules {
+  background: #fafff0;
+  border-color: #e4efc9;
+}
+
+.ip-import-rules p {
+  padding: 9px 0;
+  border-bottom: 1px solid #e4efc9;
 }
 
 .ip-step {
@@ -1633,6 +2247,14 @@ onMounted(syncRoute);
     grid-template-columns: 1fr;
   }
 
+  .ip-import-top {
+    grid-template-columns: 1fr;
+  }
+
+  .ip-hero {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .ip-stats {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -1650,7 +2272,10 @@ onMounted(syncRoute);
 
   .ip-form-grid,
   .ip-case-form,
-  .ip-stats {
+  .ip-stats,
+  .ip-hero,
+  .ip-import-main,
+  .ip-batch-upload {
     grid-template-columns: 1fr;
   }
 

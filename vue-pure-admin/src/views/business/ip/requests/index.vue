@@ -8,6 +8,7 @@ import {
   getIPRequest,
   listIPRequests,
   listIPResources,
+  readIPFile,
   saveIPRequest,
   submitIPFeedback,
   submitIPMarketing,
@@ -26,7 +27,22 @@ const page = ref(1);
 const keyword = ref("");
 const detail = ref<{ request: any; candidates: any[] } | null>(null);
 const resourceOptions = ref<any[]>([]);
-const librarySelectionKey = ref("");
+const ipImageUrls = ref<Record<number, string>>({});
+const librarySelectionKey = ref(`ip-request-${crypto.randomUUID()}`);
+const libraryHref = computed(
+  () =>
+    router.resolve({
+      path: "/business/ip/resources",
+      query:
+        mode.value === "new"
+          ? {
+              selectForRequest: "1",
+              selectionKey: librarySelectionKey.value,
+              selected: form.value.candidateIds.join(",")
+            }
+          : {}
+    }).href
+);
 const markets = [
   "中国",
   "东南亚",
@@ -310,6 +326,25 @@ async function loadRows() {
 async function loadResources() {
   const result = await listIPResources({ keyword: "", page: 1, pageSize: 200 });
   resourceOptions.value = result.data.list || [];
+  await loadIPImages(
+    resourceOptions.value.filter(item =>
+      form.value.candidateIds.includes(Number(item.id))
+    ),
+    "id"
+  );
+}
+async function loadIPImages(items: any[], idKey: string) {
+  await Promise.allSettled(
+    items
+      .filter(
+        item => item.visualFileId && !ipImageUrls.value[Number(item[idKey])]
+      )
+      .map(async item => {
+        const id = Number(item[idKey]);
+        const blob = await readIPFile(Number(item.visualFileId));
+        ipImageUrls.value[id] = URL.createObjectURL(blob);
+      })
+  );
 }
 function goList() {
   router.push({ path: route.path });
@@ -325,6 +360,7 @@ async function loadDetail(id: number) {
   loading.value = true;
   try {
     detail.value = (await getIPRequest(id)).data;
+    await loadIPImages(detail.value.candidates, "ipId");
     feedback.value = detail.value.candidates.map((row, index) => ({
       ipId: Number(row.ipId),
       name: row.name,
@@ -403,29 +439,6 @@ function editDraft() {
   mode.value = "new";
   loadResources();
 }
-function openLibrary() {
-  if (mode.value === "new") {
-    librarySelectionKey.value ||= `ip-request-${crypto.randomUUID()}`;
-    window.open(
-      router.resolve({
-        path: "/business/ip/resources",
-        query: {
-          selectForRequest: "1",
-          selectionKey: librarySelectionKey.value,
-          selected: form.value.candidateIds.join(",")
-        }
-      }).href,
-      "_blank",
-      "noopener"
-    );
-    return;
-  }
-  window.open(
-    router.resolve("/business/ip/resources").href,
-    "_blank",
-    "noopener"
-  );
-}
 async function syncLibrarySelection() {
   if (!librarySelectionKey.value || mode.value !== "new") return;
   const saved = localStorage.getItem(librarySelectionKey.value);
@@ -438,9 +451,21 @@ async function syncLibrarySelection() {
       .slice(0, 5);
     await loadResources();
     for (const id of form.value.candidateIds) {
-      if (!selectedIP(id))
-        resourceOptions.value.push((await getIPResource(id)).data.resource);
+      if (!selectedIP(id)) {
+        const result = (await getIPResource(id)).data;
+        resourceOptions.value.push({
+          ...result.resource,
+          visualFileId: result.files.find(file => file.fileKind === "visual")
+            ?.id
+        });
+      }
     }
+    await loadIPImages(
+      resourceOptions.value.filter(item =>
+        form.value.candidateIds.includes(Number(item.id))
+      ),
+      "id"
+    );
     ensureCandidateEvaluations();
     ElMessage.success("已从IP资源库加入意向清单");
   } catch {
@@ -450,12 +475,11 @@ async function syncLibrarySelection() {
 function onLibraryStorage(event: StorageEvent) {
   if (event.key === librarySelectionKey.value) syncLibrarySelection();
 }
-function openIP(id: number) {
-  window.open(
-    router.resolve({ path: "/business/ip/resources", query: { id } }).href,
-    "_blank",
-    "noopener"
-  );
+function ipDetailHref(id: number) {
+  return router.resolve({
+    path: "/business/ip/resources",
+    query: { id }
+  }).href;
 }
 function openExternalIP(item: any) {
   window.open(
@@ -476,6 +500,11 @@ function openExternalIP(item: any) {
 function selectedIP(id: number) {
   return resourceOptions.value.find(row => Number(row.id) === id);
 }
+function removeCandidate(id: number) {
+  form.value.candidateIds = form.value.candidateIds.filter(
+    value => value !== id
+  );
+}
 function ensureCandidateEvaluations() {
   const evaluations = (form.value.brief.candidateEvaluations ||= {});
   for (const id of form.value.candidateIds) {
@@ -485,6 +514,17 @@ function ensureCandidateEvaluations() {
 watch(() => form.value.candidateIds, ensureCandidateEvaluations, {
   deep: true
 });
+watch(
+  () => form.value.candidateIds,
+  () =>
+    loadIPImages(
+      resourceOptions.value.filter(item =>
+        form.value.candidateIds.includes(Number(item.id))
+      ),
+      "id"
+    ),
+  { deep: true }
+);
 async function exportEvaluation(candidate: any) {
   if (!detail.value) return;
   const resourceDetail = (await getIPResource(Number(candidate.ipId))).data;
@@ -823,6 +863,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("focus", syncLibrarySelection);
   window.removeEventListener("storage", onLibraryStorage);
+  for (const url of Object.values(ipImageUrls.value)) URL.revokeObjectURL(url);
 });
 </script>
 
@@ -830,14 +871,18 @@ onUnmounted(() => {
   <div v-loading="loading" class="ip-request-page">
     <div class="ip-header">
       <div>
-        <div class="ip-kicker">IP OPERATIONS / REQUEST WORKFLOW</div>
+        <div v-if="mode !== 'list'" class="ip-kicker">
+          需求管理 / {{ mode === "new" ? "提起IP需求" : pageTitle }}
+        </div>
         <h1>
           {{
             mode === "list"
               ? pageTitle
               : mode === "new"
                 ? "提起IP需求"
-                : detail?.request.projectName || "需求详情"
+                : menuKind === "requests"
+                  ? detail?.request.projectName || "需求详情"
+                  : pageTitle
           }}
         </h1>
         <p>
@@ -846,7 +891,9 @@ onUnmounted(() => {
               ? pageSubtitle
               : mode === "new"
                 ? "明确合作目标和授权预算，提交给IP组评估"
-                : "查看需求、IP反馈与营销意见"
+                : menuKind === "requests"
+                  ? "查看需求、IP反馈与营销意见"
+                  : pageSubtitle
           }}
         </p>
       </div>
@@ -944,8 +991,11 @@ onUnmounted(() => {
 
     <template v-else-if="mode === 'new'"
       ><div class="ip-steps">
-        <span class="active">1 基本信息</span
-        ><span class="active">2 初步意向IP</span><span>3 确认提交</span>
+        <span class="active"><b>1</b>基本信息</span>
+        <span :class="{ active: form.candidateIds.length > 0 }"
+          ><b>2</b>初步意向IP</span
+        >
+        <span><b>3</b>确认提交</span>
       </div>
       <div class="ip-grid">
         <div class="ip-stack">
@@ -1018,17 +1068,6 @@ onUnmounted(() => {
                   show-word-limit
                   placeholder="说明合作背景、希望达成的目标与执行方向"
               /></label>
-              <label
-                v-for="field in briefFields"
-                :key="field.key"
-                class="ip-span"
-              >
-                {{ field.label
-                }}<el-input
-                  v-model="form.brief[field.key]"
-                  :placeholder="field.hint"
-                />
-              </label>
             </div>
           </div>
           <div class="ip-card">
@@ -1039,7 +1078,13 @@ onUnmounted(() => {
                   最多5个意向IP；可前往资源库查看完整档案、版权资料及历史合作。
                 </p>
               </div>
-              <el-button @click="openLibrary">前往IP资源库 ↗</el-button>
+              <a
+                class="ip-outline-link"
+                :href="libraryHref"
+                target="_blank"
+                rel="noopener"
+                >前往IP资源库 ↗</a
+              >
             </div>
             <el-select
               v-model="form.candidateIds"
@@ -1060,15 +1105,29 @@ onUnmounted(() => {
                 :key="id"
                 class="ip-selected-item"
               >
-                <div>
-                  <strong>{{ selectedIP(id)?.name || "IP" }}</strong
-                  ><small
-                    >{{ selectedIP(id)?.ipType }} ·
-                    {{ arrayValue(selectedIP(id)?.markets).join(" / ") }}</small
-                  >
+                <div class="ip-selected-main">
+                  <img
+                    v-if="ipImageUrls[id]"
+                    :src="ipImageUrls[id]"
+                    :alt="selectedIP(id)?.name"
+                  />
+                  <div>
+                    <strong>{{ selectedIP(id)?.name || "IP" }}</strong
+                    ><small
+                      >{{ selectedIP(id)?.ipType }} ·
+                      {{
+                        arrayValue(selectedIP(id)?.markets).join(" / ")
+                      }}</small
+                    >
+                  </div>
+                  <el-button link @click="removeCandidate(id)">移除</el-button>
                 </div>
-                <el-button link type="primary" @click="openIP(id)"
-                  >查看IP详情 ↗</el-button
+                <a
+                  class="ip-text-link"
+                  :href="ipDetailHref(id)"
+                  target="_blank"
+                  rel="noopener"
+                  >查看IP详情 ↗</a
                 >
                 <div class="ip-form-grid ip-span">
                   <label
@@ -1164,15 +1223,42 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          <div class="ip-card ip-optional-brief">
+            <el-collapse>
+              <el-collapse-item name="brief">
+                <template #title>
+                  <div>
+                    <h2>补充项目资料（选填）</h2>
+                    <p>填写项目周期、负责人和合作模式等信息，便于后续协同。</p>
+                  </div>
+                </template>
+                <div class="ip-form-grid">
+                  <label
+                    v-for="field in briefFields"
+                    :key="field.key"
+                    class="ip-span"
+                  >
+                    {{ field.label
+                    }}<el-input
+                      v-model="form.brief[field.key]"
+                      :placeholder="field.hint"
+                    />
+                  </label>
+                </div>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
         </div>
         <div class="ip-stack">
           <div class="ip-card">
             <h2>需求摘要</h2>
             <dl>
-              <dt>项目</dt>
-              <dd>{{ form.projectName || "待填写" }}</dd>
+              <dt>发起部门</dt>
+              <dd>{{ form.department || "待填写" }}</dd>
               <dt>市场</dt>
               <dd>{{ form.markets.join(" / ") || "待选择" }}</dd>
+              <dt>目标</dt>
+              <dd>{{ form.goal || "待选择" }}</dd>
               <dt>授权预算</dt>
               <dd>{{ priceText(form) }}</dd>
               <dt>意向IP</dt>
@@ -1212,18 +1298,18 @@ onUnmounted(() => {
         </div>
         <div class="ip-timeline">
           <span :class="{ done: detail.request.status !== 'draft' }"
-            >需求已提交</span
+            ><b>1</b>需求已提交</span
           ><span
             :class="{
               done: ['ip_reviewed', 'marketing_reviewed'].includes(
                 detail.request.status
               )
             }"
-            >IP组评估</span
+            ><b>2</b>IP组评估</span
           ><span
             :class="{ done: detail.request.status === 'marketing_reviewed' }"
-            >营销意见补充</span
-          ><span>意向IP确认</span>
+            ><b>3</b>营销意见补充</span
+          ><span><b>4</b>意向IP确认</span>
         </div>
         <div class="ip-summary">
           <span
@@ -1268,8 +1354,9 @@ onUnmounted(() => {
       </div>
       <div class="ip-grid">
         <div class="ip-stack">
-          <div class="ip-card">
-            <h2>初步意向IP反馈</h2>
+          <div v-if="menuKind !== 'marketing'" class="ip-card">
+            <h2>IP组评估</h2>
+            <p>请根据评估结果填写推荐意见，并给出优先级排序。</p>
             <p v-if="!feedback.length">
               暂无资源库内的意向IP。可先在资源库新建，再在下方加入评估。
             </p>
@@ -1289,7 +1376,13 @@ onUnmounted(() => {
                   :label="item.name"
                   :value="Number(item.id)" /></el-select
               ><el-button @click="addFeedbackCandidate">加入评估</el-button
-              ><el-button @click="openLibrary">前往IP资源库 ↗</el-button>
+              ><a
+                class="ip-outline-link"
+                :href="libraryHref"
+                target="_blank"
+                rel="noopener"
+                >前往IP资源库 ↗</a
+              >
               <el-button @click="loadResources">刷新IP列表</el-button>
             </div>
             <div
@@ -1298,31 +1391,30 @@ onUnmounted(() => {
               class="ip-candidate"
             >
               <div class="ip-card-head">
-                <div>
-                  <strong>{{ item.name }}</strong
-                  ><small>意向IP {{ index + 1 }}</small>
+                <div class="ip-candidate-identity">
+                  <img
+                    v-if="ipImageUrls[item.ipId]"
+                    :src="ipImageUrls[item.ipId]"
+                    :alt="item.name"
+                  />
+                  <div>
+                    <strong>{{ item.name }}</strong
+                    ><small>意向IP {{ index + 1 }}</small>
+                  </div>
                 </div>
                 <strong class="ip-score"
                   >{{ weightedScore(item.assessment) ?? "—" }} / 100</strong
                 >
-                <el-button link type="primary" @click="openIP(item.ipId)"
-                  >查看IP详情 ↗</el-button
+                <a
+                  class="ip-text-link"
+                  :href="ipDetailHref(item.ipId)"
+                  target="_blank"
+                  rel="noopener"
+                  >查看IP详情 ↗</a
                 >
                 <el-button link @click="exportEvaluation(item)"
                   >导出完整评估表</el-button
                 >
-              </div>
-              <div class="ip-score-grid">
-                <label v-for="field in scoreFields" :key="field.key">
-                  {{ field.label }} · {{ Math.round(field.weight * 100) }}%
-                  <el-input-number
-                    v-model="item.assessment.scoreDimensions[field.key]"
-                    :min="0"
-                    :max="100"
-                    :precision="0"
-                    :disabled="!canFeedback"
-                  />
-                </label>
               </div>
               <div class="ip-form-grid">
                 <label
@@ -1357,19 +1449,37 @@ onUnmounted(() => {
                     :disabled="!canFeedback"
                     placeholder="受众匹配、市场覆盖、档期和授权风险"
                 /></label>
-                <label
-                  v-for="field in assessmentFields"
-                  :key="field.key"
-                  class="ip-span"
-                >
-                  {{ field.label
-                  }}<el-input
-                    v-model="item.assessment[field.key]"
-                    :disabled="!canFeedback"
-                    :placeholder="field.hint"
-                  />
-                </label>
               </div>
+              <el-collapse class="ip-assessment-collapse">
+                <el-collapse-item title="评分与授权明细" :name="item.ipId">
+                  <div class="ip-score-grid">
+                    <label v-for="field in scoreFields" :key="field.key">
+                      {{ field.label }} · {{ Math.round(field.weight * 100) }}%
+                      <el-input-number
+                        v-model="item.assessment.scoreDimensions[field.key]"
+                        :min="0"
+                        :max="100"
+                        :precision="0"
+                        :disabled="!canFeedback"
+                      />
+                    </label>
+                  </div>
+                  <div class="ip-form-grid">
+                    <label
+                      v-for="field in assessmentFields"
+                      :key="field.key"
+                      class="ip-span"
+                    >
+                      {{ field.label }}
+                      <el-input
+                        v-model="item.assessment[field.key]"
+                        :disabled="!canFeedback"
+                        :placeholder="field.hint"
+                      />
+                    </label>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
             </div>
             <div v-if="canFeedback" class="ip-bottom">
               <el-button :loading="saving" @click="sendFeedback(true)"
@@ -1383,38 +1493,63 @@ onUnmounted(() => {
               >
             </div>
           </div>
-          <div class="ip-card">
+          <div v-if="menuKind !== 'feedback'" class="ip-card">
             <h2>营销评估与建议</h2>
             <div
               v-if="
                 canMarketing || detail.request.status === 'marketing_reviewed'
               "
-              class="ip-form-grid"
+              class="ip-marketing-grid"
             >
-              <label
-                >市场热度<el-input
+              <label class="ip-metric-row">
+                <span
+                  ><strong>市场热度</strong
+                  ><small>综合社媒讨论度、搜索趋势及同类案例表现</small></span
+                >
+                <el-input
                   v-model="marketing.marketHeat"
                   :disabled="!canMarketing"
-                  placeholder="市场关注度和热度趋势" /></label
-              ><label
-                >商业价值<el-input
-                  v-model="marketing.commercialValue"
-                  :disabled="!canMarketing"
-                  placeholder="合作潜力与预算判断" /></label
-              ><label class="ip-span"
-                >粉丝受众<el-input
+                  placeholder="填写热度等级与依据"
+                />
+              </label>
+              <label class="ip-metric-row">
+                <span
+                  ><strong>粉丝受众</strong
+                  ><small>核心受众画像及匹配度分析</small></span
+                >
+                <el-input
                   v-model="marketing.fanAudience"
                   type="textarea"
                   :rows="2"
-                  :disabled="!canMarketing" /></label
-              ><label class="ip-span"
-                >风险与提醒<el-input
+                  :disabled="!canMarketing"
+                />
+              </label>
+              <label class="ip-metric-row">
+                <span
+                  ><strong>商业价值</strong
+                  ><small>基于过往合作案例与转化潜力评估</small></span
+                >
+                <el-input
+                  v-model="marketing.commercialValue"
+                  :disabled="!canMarketing"
+                  placeholder="填写商业价值与预算判断"
+                />
+              </label>
+              <label class="ip-metric-row ip-metric-risk">
+                <span
+                  ><strong>风险与提醒</strong
+                  ><small>潜在风险点及应对建议</small></span
+                >
+                <el-input
                   v-model="marketing.marketingRisks"
                   type="textarea"
                   :rows="2"
-                  :disabled="!canMarketing" /></label
-              ><label class="ip-span"
-                >推荐传播方向<el-checkbox-group
+                  :disabled="!canMarketing"
+                />
+              </label>
+              <label class="ip-channel-row">
+                <strong>推荐传播方向</strong>
+                <el-checkbox-group
                   v-model="marketing.marketingChannels"
                   :disabled="!canMarketing"
                   ><el-checkbox
@@ -1423,15 +1558,18 @@ onUnmounted(() => {
                     :value="channel"
                     >{{ channel }}</el-checkbox
                   ></el-checkbox-group
-                ></label
-              ><label class="ip-span"
-                >补充意见 *<el-input
+                >
+              </label>
+              <label class="ip-channel-row">
+                <strong>补充意见 *</strong>
+                <el-input
                   v-model="marketing.marketingComments"
                   type="textarea"
                   :rows="3"
                   :disabled="!canMarketing"
                   placeholder="填写营销补充意见"
-              /></label>
+                />
+              </label>
             </div>
             <template
               v-if="
@@ -1477,19 +1615,72 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="ip-stack">
-          <div class="ip-card">
+          <div v-if="menuKind !== 'marketing'" class="ip-card">
             <h2>评估依据</h2>
-            <p>结合受众匹配、市场覆盖、档期可用性和授权风险评估。</p>
+            <p>基于以下维度进行综合评估，供参考。</p>
+            <div
+              v-for="field in scoreFields"
+              :key="field.key"
+              class="ip-weight-row"
+            >
+              <span>{{ field.label }}</span>
+              <strong>{{ Math.round(field.weight * 100) }}%</strong>
+            </div>
             <div class="ip-note">
-              IP反馈和营销意见会记录在同一需求中，便于后续意向确认。
+              当前评分是初步判断，需结合后续沟通进一步确认。
+            </div>
+          </div>
+          <div v-if="menuKind === 'marketing'" class="ip-card">
+            <h2>IP组反馈摘要</h2>
+            <div
+              v-for="item in feedback"
+              :key="item.ipId"
+              class="ip-feedback-summary"
+            >
+              <img
+                v-if="ipImageUrls[item.ipId]"
+                :src="ipImageUrls[item.ipId]"
+                :alt="item.name"
+              />
+              <div>
+                <strong>{{ item.name }}</strong>
+                <small
+                  >{{ item.recommendation }} · 优先级
+                  {{ item.priorityOrder }}</small
+                >
+                <p>{{ item.reason }}</p>
+              </div>
             </div>
           </div>
           <div class="ip-card">
-            <h2>协作进度</h2>
-            <p>1. 产品组提起需求</p>
-            <p>2. IP组反馈意向IP</p>
-            <p>3. 营销组补充意见</p>
-            <p>4. 需求方确认意向</p>
+            <h2>协作记录</h2>
+            <div class="ip-record">
+              <b>1</b
+              ><span
+                >需求已提交<small>{{ detail.request.createdAt }}</small></span
+              >
+            </div>
+            <div class="ip-record">
+              <b>2</b
+              ><span
+                >IP组评估<small>{{
+                  detail.request.status === "submitted" ? "待进行" : "已完成"
+                }}</small></span
+              >
+            </div>
+            <div class="ip-record">
+              <b>3</b
+              ><span
+                >营销意见补充<small>{{
+                  detail.request.status === "marketing_reviewed"
+                    ? "已完成"
+                    : "待进行"
+                }}</small></span
+              >
+            </div>
+            <div class="ip-record">
+              <b>4</b><span>意向IP确认<small>待进行</small></span>
+            </div>
           </div>
         </div>
       </div>
@@ -1500,9 +1691,9 @@ onUnmounted(() => {
 <style scoped>
 .ip-request-page {
   min-height: calc(100vh - 150px);
-  padding: 28px;
+  padding: 16px 28px 36px;
   color: #161a1d;
-  background: #f7f7f4;
+  background: #f8f8f6;
 }
 
 .ip-header,
@@ -1518,7 +1709,7 @@ onUnmounted(() => {
 }
 
 .ip-header {
-  margin-bottom: 22px;
+  margin-bottom: 14px;
 }
 
 .ip-header h1 {
@@ -1533,9 +1724,9 @@ onUnmounted(() => {
 }
 
 .ip-kicker {
-  font: 700 11px monospace;
-  color: #8c9500;
-  letter-spacing: 2px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #858d92;
 }
 
 .ip-primary {
@@ -1550,16 +1741,16 @@ onUnmounted(() => {
 }
 
 .ip-card {
-  padding: 22px;
+  padding: 18px;
   margin-bottom: 16px;
   background: #fff;
-  border: 1px solid #e2e3dc;
-  border-radius: 12px;
-  box-shadow: 0 3px 16px #20240b08;
+  border: 1px solid #dedfdb;
+  border-radius: 9px;
+  box-shadow: 0 2px 10px #20240b06;
 }
 
 .ip-card h2 {
-  margin: 0 0 15px;
+  margin: 0 0 11px;
   font-size: 18px;
 }
 
@@ -1608,23 +1799,43 @@ onUnmounted(() => {
 .ip-timeline {
   display: flex;
   gap: 12px;
-  justify-content: space-around;
-  padding: 15px;
-  margin-bottom: 18px;
+  justify-content: space-between;
+  padding: 10px 20px;
+  margin-bottom: 12px;
   background: white;
   border: 1px solid #e2e3dc;
-  border-radius: 10px;
+  border-radius: 9px;
 }
 
 .ip-steps span,
 .ip-timeline span {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
   font-weight: 600;
   color: #a3a8a8;
 }
 
+.ip-steps b,
+.ip-timeline b {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #4e5356;
+  background: #eceeed;
+  border-radius: 50%;
+}
+
 .ip-steps .active,
 .ip-timeline .done {
-  color: #678500;
+  color: #252d17;
+}
+
+.ip-steps .active b,
+.ip-timeline .done b {
+  color: #172000;
+  background: #caff00;
 }
 
 .ip-grid {
@@ -1640,7 +1851,60 @@ onUnmounted(() => {
 .ip-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 24px;
+  gap: 14px 24px;
+}
+
+.ip-outline-link {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: #242a31;
+  text-decoration: none;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+}
+
+.ip-outline-link:hover,
+.ip-text-link:hover {
+  color: #647e00;
+  border-color: #a2c400;
+}
+
+.ip-text-link {
+  font-size: 14px;
+  font-weight: 600;
+  color: #5b7600;
+  text-decoration: none;
+}
+
+.ip-optional-brief :deep(.el-collapse),
+.ip-optional-brief :deep(.el-collapse-item__header),
+.ip-optional-brief :deep(.el-collapse-item__wrap) {
+  border: 0;
+}
+
+.ip-optional-brief :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 48px;
+  line-height: 1.5;
+}
+
+.ip-optional-brief :deep(.el-collapse-item__content) {
+  padding: 18px 0 0;
+}
+
+.ip-optional-brief h2 {
+  margin: 0 0 4px;
+}
+
+.ip-optional-brief p {
+  margin: 0;
+  font-weight: 400;
+  color: #8a9195;
 }
 
 .ip-form-grid label,
@@ -1695,6 +1959,43 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  gap: 10px;
+}
+
+.ip-selected-main {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ip-selected-main img,
+.ip-candidate-identity img,
+.ip-feedback-summary img {
+  flex: none;
+  width: 60px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.ip-selected-main > div {
+  min-width: 0;
+}
+
+.ip-selected-main .el-button {
+  margin-left: auto;
+}
+
+.ip-candidate-identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ip-candidate-identity strong {
+  font-size: 16px;
 }
 
 .ip-external-image {
@@ -1717,6 +2018,11 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 100px 1fr;
   gap: 16px;
+}
+
+.ip-card dl dd {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf0ec;
 }
 
 .ip-card dt {
@@ -1763,6 +2069,16 @@ onUnmounted(() => {
   margin-bottom: 15px;
 }
 
+.ip-assessment-collapse {
+  margin-top: 16px;
+  border-top: 1px solid #e8ebe5;
+}
+
+.ip-assessment-collapse :deep(.el-collapse-item__header) {
+  font-weight: 700;
+  color: #647e00;
+}
+
 .ip-score {
   margin-left: auto;
   font-size: 18px;
@@ -1801,6 +2117,119 @@ onUnmounted(() => {
   width: 330px;
 }
 
+.ip-weight-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid #edf0ec;
+}
+
+.ip-weight-row strong {
+  font-size: 17px;
+}
+
+.ip-marketing-grid {
+  margin-bottom: 22px;
+  border: 1px solid #e7e9e3;
+  border-radius: 8px;
+}
+
+.ip-metric-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 35%) minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #e7e9e3;
+}
+
+.ip-metric-row small {
+  display: block;
+  margin-top: 4px;
+  font-weight: 400;
+  color: #90969b;
+}
+
+.ip-metric-risk {
+  background: #fffaf2;
+}
+
+.ip-channel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid #e7e9e3;
+}
+
+.ip-channel-row:last-child {
+  border-bottom: 0;
+}
+
+.ip-channel-row .el-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ip-channel-row :deep(.el-checkbox) {
+  padding: 7px 10px;
+  margin: 0;
+  border: 1px solid #dfe4d7;
+  border-radius: 6px;
+}
+
+.ip-feedback-summary {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  margin-top: 10px;
+  border: 1px solid #e8e9e3;
+  border-radius: 8px;
+}
+
+.ip-feedback-summary small {
+  display: block;
+  margin: 4px 0;
+  color: #748400;
+}
+
+.ip-feedback-summary p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.ip-record {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+}
+
+.ip-record b {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  color: #1d2b00;
+  background: #d9f56c;
+  border-radius: 50%;
+}
+
+.ip-record span {
+  font-weight: 600;
+}
+
+.ip-record small {
+  display: block;
+  font-weight: 400;
+  color: #90969b;
+}
+
 @media (width <= 1100px) {
   .ip-grid {
     grid-template-columns: 1fr;
@@ -1825,13 +2254,15 @@ onUnmounted(() => {
 
   .ip-form-grid,
   .ip-selected,
-  .ip-score-grid {
+  .ip-score-grid,
+  .ip-metric-row {
     grid-template-columns: 1fr;
   }
 
   .ip-steps,
   .ip-timeline {
     font-size: 12px;
+    flex-wrap: wrap;
   }
 }
 </style>

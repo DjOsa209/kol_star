@@ -208,8 +208,9 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 	}
 	listArgs := append(append([]any{}, args...), filter.PageSize, (filter.Page-1)*filter.PageSize)
 	rows, err := a.queryMaps(r.Context(), `select id, name, ip_type as ipType, rights_owner as rightsOwner,
-		markets, audience, cooperation_status as cooperationStatus, currency,
+		markets, audience, summary, cooperation_status as cooperationStatus, currency,
 		price_min as priceMin, price_max as priceMax,
+		(select f.id from biz_ip_files f where f.ip_id=biz_ip_resources.id and f.file_kind='visual' order by f.id desc limit 1) as visualFileId,
 		(`+ipCompletenessSQL+` * 12.5) as completeness,
 		date_format(updated_at, '%Y-%m-%d %H:%i') as updatedAt
 		from biz_ip_resources`+where+` order by updated_at desc, id desc limit ? offset ?`, listArgs...)
@@ -799,6 +800,7 @@ func (a *app) ipRequestDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	candidates, err := a.queryMaps(r.Context(), `select c.id,c.ip_id as ipId,r.name,r.ip_type as ipType,r.markets,
+		(select f.id from biz_ip_files f where f.ip_id=r.id and f.file_kind='visual' order by f.id desc limit 1) as visualFileId,
 		c.priority_order as priorityOrder,c.feasibility,c.recommendation,c.reason,c.assessment
 		from biz_ip_request_candidates c join biz_ip_resources r on r.id=c.ip_id where c.request_id=? order by c.priority_order,c.id`, id)
 	if err != nil {
