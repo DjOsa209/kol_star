@@ -1,4 +1,5 @@
 import { http } from "@/utils/http";
+import type { AxiosProgressEvent } from "axios";
 
 export interface IPResourceInput {
   id?: number;
@@ -89,13 +90,17 @@ export const uploadIPFile = (
   );
 };
 export const IP_DOCUMENT_TIMEOUT_MS = 180000;
-export const readIPFile = (id: number, timeout?: number) =>
+type IPFileReadOptions = {
+  timeout?: number;
+  onDownloadProgress?: (progress: AxiosProgressEvent) => void;
+};
+export const readIPFile = (id: number, options: IPFileReadOptions = {}) =>
   http.request<Blob>(
     "get",
     "/business/ip/resources/file",
     { params: { id }, responseType: "blob" },
     {
-      ...(timeout ? { timeout } : {}),
+      ...options,
       beforeResponseCallback: response => response.data
     } as any
   );

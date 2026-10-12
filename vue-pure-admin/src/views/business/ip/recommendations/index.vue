@@ -10,6 +10,7 @@ import {
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { formatBytes } from "@pureadmin/utils";
 import VuePdfEmbed from "vue-pdf-embed";
 import {
   deleteRecommendationSubscription,
@@ -56,10 +57,27 @@ const previewFileName = ref("");
 const previewPages = ref(0);
 const previewLoading = ref(false);
 const previewDownloading = ref(false);
+const previewDownloaded = ref(0);
+const previewTotal = ref(0);
 const previewError = ref("");
 const previewFile = ref<any>(null);
 let previewRequestId = 0;
 let disposed = false;
+const previewDownloadPercent = computed(() =>
+  previewTotal.value > 0
+    ? Math.min(
+        99,
+        Math.floor((previewDownloaded.value / previewTotal.value) * 100)
+      )
+    : 0
+);
+const previewDownloadText = computed(() =>
+  previewTotal.value > 0
+    ? `正在下载 PDF · ${formatBytes(previewDownloaded.value)} / ${formatBytes(previewTotal.value)}（${previewDownloadPercent.value}%）`
+    : previewDownloaded.value > 0
+      ? `正在下载 PDF · 已下载 ${formatBytes(previewDownloaded.value)}`
+      : "正在连接并下载 PDF…"
+);
 const markets = [
   "中国",
   "东南亚",
@@ -226,13 +244,24 @@ async function openDocument(file: any) {
   previewUrl.value = "";
   previewLoading.value = false;
   previewDownloading.value = true;
+  previewDownloaded.value = 0;
+  previewTotal.value = 0;
   previewError.value = "";
   previewFile.value = file;
   previewFileName.value = String(file.originalName || "版权资料.pdf");
   previewPages.value = 0;
   previewVisible.value = true;
   try {
-    const blob = await readIPFile(Number(file.id), IP_DOCUMENT_TIMEOUT_MS);
+    const blob = await readIPFile(Number(file.id), {
+      timeout: IP_DOCUMENT_TIMEOUT_MS,
+      onDownloadProgress: progress => {
+        if (requestId !== previewRequestId || !previewVisible.value || disposed)
+          return;
+        previewDownloaded.value = progress.loaded;
+        if (progress.lengthComputable && progress.total > 0)
+          previewTotal.value = progress.total;
+      }
+    });
     if (requestId !== previewRequestId || !previewVisible.value || disposed)
       return;
     previewUrl.value = URL.createObjectURL(
@@ -1042,9 +1071,16 @@ onUnmounted(() => {
           重试
         </el-button>
       </div>
-      <p v-else-if="previewDownloading" class="pdf-loading">
-        正在下载 PDF，请稍候…
-      </p>
+      <div v-else-if="previewDownloading" class="pdf-transfer">
+        <p>{{ previewDownloadText }}</p>
+        <el-progress
+          v-if="previewTotal > 0"
+          :percentage="previewDownloadPercent"
+          :stroke-width="8"
+          :show-text="false"
+          color="#9ac000"
+        />
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -1599,6 +1635,14 @@ onUnmounted(() => {
 .pdf-loading {
   margin: 0 0 12px;
   color: #737373;
+}
+.pdf-transfer {
+  min-height: 100px;
+  padding: 24px 16px;
+}
+.pdf-transfer p {
+  margin: 0 0 14px;
+  color: #535a47;
 }
 .pdf-canvas :deep(.vue-pdf-embed > div + div) {
   margin-top: 12px;
