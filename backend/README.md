@@ -29,6 +29,8 @@ The default address is `:8080`. The frontend development proxy points `/api` to 
 
 For an existing database, apply `migrations/042_ip_operations.sql` and then `migrations/043_ip_assessment_details.sql` before using **IP运营**. They add the IP resource library, request workflow, detailed assessment fields, and the new role menus. IP PDFs and visual assets are stored privately under `uploads/ip-documents/` and served only through authenticated endpoints.
 
+To enable product cooperation discovery and the two recommendation modules on an existing database, apply `migrations/044_product_discovery.sql`, `migrations/045_recommendations.sql`, and `migrations/046_recommendation_menus.sql` in that order, then restart the API. Product names extracted from published internal cooperations remain pending until an operator confirms their brand and product; only confirmed records appear in brand/product search and recommendation evidence. Saved searches produce an immediate result set and are checked each Monday after 09:00 Asia/Shanghai; each saved search creates at most five new in-app notifications per week. Recommendation requests and responses are omitted from system request logs.
+
 You can also load another config file:
 
 ```bash

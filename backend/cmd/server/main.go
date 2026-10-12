@@ -76,6 +76,7 @@ func main() {
 		log.Printf("interrupted %d stale platform sync job(s) from previous service run", interrupted)
 	}
 	go a.runResourceSyncScheduler(context.Background())
+	go a.runAIRecommendationScheduler(context.Background())
 	watchConfig(watcher, func(next Config) {
 		if err := a.reloadConfig(next); err != nil {
 			log.Printf("reload config failed: %v", err)
@@ -238,17 +239,24 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /system-logs-detail", a.requireMenu("/monitor/system-logs", a.systemLogDetail))
 	mux.HandleFunc("POST /monitor/project-import-sync-jobs", a.requireMenu("/monitor/import-sync", a.projectImportSyncJobs))
 	mux.HandleFunc("POST /business/resources", a.requireMenu("/business/resources", a.businessResources))
-	mux.HandleFunc("POST /business/ip/resources/list", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipResourcesList))
+	mux.HandleFunc("POST /business/discovery/search", a.requireMenu("/business/resources", a.productDiscoverySearch))
+	mux.HandleFunc("POST /business/discovery/product/detail", a.requireMenu("/business/resources", a.productDiscoveryProductDetail))
+	mux.HandleFunc("POST /business/discovery/candidates/refresh", a.requireMenu("/business/resources", a.productDiscoveryCandidatesRefresh))
+	mux.HandleFunc("POST /business/discovery/candidates/list", a.requireMenu("/business/resources", a.productDiscoveryCandidatesList))
+	mux.HandleFunc("POST /business/discovery/candidates/decision", a.requireMenu("/business/resources", a.productDiscoveryCandidateDecision))
+	mux.HandleFunc("POST /business/ip/resources/list", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing", "/business/ip/recommendations"}, a.ipResourcesList))
 	mux.HandleFunc("POST /business/ip/resources/save", a.requireMenu("/business/ip/resources", a.ipResourceSave))
-	mux.HandleFunc("GET /business/ip/resources/detail", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipResourceDetail))
+	mux.HandleFunc("GET /business/ip/resources/detail", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing", "/business/ip/recommendations"}, a.ipResourceDetail))
 	mux.HandleFunc("POST /business/ip/resources/case", a.requireMenu("/business/ip/resources", a.ipCaseSave))
 	mux.HandleFunc("POST /business/ip/resources/file", a.requireMenu("/business/ip/resources", a.ipFileUpload))
-	mux.HandleFunc("GET /business/ip/resources/file", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipFileRead))
+	mux.HandleFunc("GET /business/ip/resources/file", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing", "/business/ip/recommendations"}, a.ipFileRead))
+	mux.HandleFunc("POST /business/ip/resources/file/rename", a.requireMenu("/business/ip/resources", a.ipFileRename))
 	mux.HandleFunc("POST /business/ip/resources/file/delete", a.requireMenu("/business/ip/resources", a.ipFileDelete))
 	mux.HandleFunc("POST /business/ip/resources/import/preview", a.requireMenu("/business/ip/resources", a.ipImportPreview))
 	mux.HandleFunc("POST /business/ip/resources/import", a.requireMenu("/business/ip/resources", a.ipImport))
 	mux.HandleFunc("POST /business/ip/requests/list", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipRequestsList))
 	mux.HandleFunc("POST /business/ip/requests/save", a.requireMenu("/business/ip/requests", a.ipRequestSave))
+	mux.HandleFunc("GET /business/ip/colleagues", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipColleagues))
 	mux.HandleFunc("GET /business/ip/requests/detail", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipRequestDetail))
 	mux.HandleFunc("POST /business/ip/requests/feedback", a.requireMenu("/business/ip/feedback", a.ipRequestFeedback))
 	mux.HandleFunc("POST /business/ip/requests/marketing", a.requireMenu("/business/ip/marketing", a.ipRequestMarketing))
@@ -264,6 +272,14 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/resources/translate", a.requireMenu("/business/resources", a.translateBusinessResources))
 	mux.HandleFunc("POST /business/resource-posts", a.requireMenu("/business/resource-posts", a.businessResourcePosts))
 	mux.HandleFunc("POST /business/assistant/recommend", a.requireMenu("/business/assistant", a.businessAssistantRecommend))
+	mux.HandleFunc("POST /business/recommendations/subscriptions/list", a.recommendationSubscriptionsList)
+	mux.HandleFunc("POST /business/recommendations/subscriptions/save", a.recommendationSubscriptionSave)
+	mux.HandleFunc("POST /business/recommendations/subscriptions/delete", a.recommendationSubscriptionDelete)
+	mux.HandleFunc("POST /business/recommendations/run", a.recommendationRun)
+	mux.HandleFunc("POST /business/recommendations/results/list", a.recommendationResultsList)
+	mux.HandleFunc("POST /business/recommendations/results/feedback", a.recommendationResultFeedback)
+	mux.HandleFunc("GET /business/recommendations/notifications", a.recommendationNotifications)
+	mux.HandleFunc("POST /business/recommendations/notifications/read", a.recommendationNotificationsRead)
 	mux.HandleFunc("GET /business/project-resources/options", a.requireMenu("/business/projects", a.businessProjectResourceOptions))
 	mux.HandleFunc("GET /business/project-resources/form-options", a.requireMenu("/business/projects", a.businessProjectResourceFormOptions))
 	mux.HandleFunc("POST /business/project-resources/search-online", a.requireMenu("/business/projects", a.searchOnlineProjectResource))
@@ -1439,13 +1455,21 @@ func (a *app) withRequestLogging(next http.Handler) http.Handler {
 			return
 		}
 		startedAt := time.Now()
-		requestBody := captureRequestBody(r)
+		redactRecommendation := strings.HasPrefix(r.URL.Path, "/business/recommendations/") || r.URL.Path == "/business/assistant/recommend"
+		requestBody := "[recommendation request omitted]"
+		if !redactRecommendation {
+			requestBody = captureRequestBody(r)
+		}
 		recorder := &loggingResponseWriter{ResponseWriter: w}
 		next.ServeHTTP(recorder, r)
 		if recorder.status == 0 {
 			recorder.status = http.StatusOK
 		}
-		a.recordPostRequestLog(r, requestBody, recorder.body.String(), time.Since(startedAt), recorder.status)
+		responseBody := recorder.body.String()
+		if redactRecommendation {
+			responseBody = "[recommendation response omitted]"
+		}
+		a.recordPostRequestLog(r, requestBody, responseBody, time.Since(startedAt), recorder.status)
 	})
 }
 

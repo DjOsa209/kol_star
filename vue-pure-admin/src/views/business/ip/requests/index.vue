@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import * as XLSX from "xlsx";
@@ -9,6 +9,7 @@ import {
   listIPRequests,
   listIPResources,
   readIPFile,
+  searchIPColleagues,
   saveIPRequest,
   submitIPFeedback,
   submitIPMarketing,
@@ -43,6 +44,17 @@ const libraryHref = computed(
           : {}
     }).href
 );
+const recommendationHref = computed(
+  () =>
+    router.resolve({
+      path: "/business/ip/recommendations",
+      query: {
+        selectionKey: librarySelectionKey.value,
+        selected: form.value.candidateIds.join(","),
+        ...(form.value.id ? { requestId: String(form.value.id) } : {})
+      }
+    }).href
+);
 const markets = [
   "中国",
   "东南亚",
@@ -51,32 +63,83 @@ const markets = [
   "非洲",
   "拉美",
   "北美",
+  "南亚",
   "全球"
 ];
 const goals = ["新品发布", "品牌声量", "用户增长", "线下活动", "其他"];
 const channels = ["线下快闪", "短视频共创", "新品联名", "社媒互动", "媒体投放"];
 const briefFields = [
-  { key: "owner", label: "项目负责人", hint: "填写姓名或团队" },
-  { key: "projectPeriod", label: "项目周期", hint: "启动至结案的预计周期" },
-  { key: "linkedProduct", label: "关联产品", hint: "例如 NOTE / GT / HOT" },
+  { key: "owner", label: "项目负责人", hint: "填写姓名或团队", required: true },
+  {
+    key: "projectPeriod",
+    label: "项目周期",
+    hint: "启动至结案的预计周期",
+    required: true
+  },
+  {
+    key: "linkedProduct",
+    label: "关联产品",
+    hint: "例如 NOTE / GT / HOT",
+    required: true
+  },
   {
     key: "targetIPType",
     label: "目标IP类型",
-    hint: "例如体育赛事、游戏或动漫"
+    hint: "例如体育赛事、游戏或动漫",
+    required: true
   },
-  { key: "targetIPCount", label: "目标IP数量", hint: "预计需要评估的IP数量" },
+  {
+    key: "targetIPCount",
+    label: "目标IP数量",
+    hint: "预计需要评估的IP数量",
+    required: true
+  },
   {
     key: "cooperationMode",
     label: "合作模式",
-    hint: "整合联动 / 衍生品授权 / 营销联动"
+    hint: "整合联动 / 衍生品授权 / 营销联动",
+    required: true
   },
   {
-    key: "contacts",
-    label: "各环节对接人",
-    hint: "产品、IP营销、IMC、品牌、用户、媒介、PR"
-  },
-  { key: "projectNotes", label: "项目补充说明", hint: "其他协作约束（选填）" }
+    key: "projectNotes",
+    label: "项目补充说明",
+    hint: "其他协作约束（选填）",
+    required: false
+  }
 ];
+const contactStages = [
+  { key: "product", label: "产品" },
+  { key: "ipMarketing", label: "IP营销" },
+  { key: "imc", label: "IMC" },
+  { key: "brand", label: "品牌运营" },
+  { key: "user", label: "用户运营" },
+  { key: "media", label: "媒介投放" },
+  { key: "pr", label: "PR" }
+];
+type Colleague = { id?: string | number; name: string; department?: string };
+function emptyContactsByStage(): Record<string, Colleague> {
+  return Object.fromEntries(
+    contactStages.map(stage => [stage.key, { name: "" }])
+  );
+}
+function normalizedContactsByStage(value: unknown): Record<string, Colleague> {
+  const saved = objectValue(value);
+  return Object.fromEntries(
+    contactStages.map(stage => {
+      const item = saved[stage.key];
+      return [
+        stage.key,
+        typeof item === "string"
+          ? { name: item }
+          : {
+              name: String(item?.name || ""),
+              ...(item?.id ? { id: item.id } : {}),
+              ...(item?.department ? { department: item.department } : {})
+            }
+      ];
+    })
+  );
+}
 const assessmentFields = [
   {
     key: "priceModel",
@@ -241,9 +304,96 @@ const initialForm = (): IPRequestInput => ({
   externalRecommendation: "",
   candidateIds: [],
   submit: false,
-  brief: { externalIPs: [], candidateEvaluations: {} }
+  brief: {
+    externalIPs: [],
+    candidateEvaluations: {},
+    contactsByStage: emptyContactsByStage()
+  }
 });
 const form = ref<IPRequestInput>(initialForm());
+const briefOpen = ref(["brief"]);
+const invalidField = ref("");
+const brokenExternalImageUrls = ref<Record<number, boolean>>({});
+const colleagueSearchStatus = ref<Record<string, "" | "empty" | "failed">>({});
+const colleagueActiveQuery = ref<Record<string, string>>({});
+type ColleagueSuggestion = Colleague & { value: string };
+async function fetchColleagueSuggestions(
+  stage: string,
+  query: string,
+  callback: (items: ColleagueSuggestion[]) => void
+) {
+  colleagueActiveQuery.value[stage] = query;
+  if (!query.trim()) {
+    colleagueSearchStatus.value[stage] = "";
+    callback([]);
+    return;
+  }
+  try {
+    const response = await searchIPColleagues(query.trim());
+    if (colleagueActiveQuery.value[stage] !== query) {
+      callback([]);
+      return;
+    }
+    const suggestions = (response.data || []).map(person => ({
+      ...person,
+      value: person.name
+    }));
+    colleagueSearchStatus.value[stage] = suggestions.length ? "" : "empty";
+    callback(suggestions);
+  } catch {
+    if (colleagueActiveQuery.value[stage] !== query) {
+      callback([]);
+      return;
+    }
+    colleagueSearchStatus.value[stage] = "failed";
+    callback([]);
+  }
+}
+function selectContact(stage: string, colleague: Record<string, any>) {
+  form.value.brief.contactsByStage[stage] = {
+    id: colleague.id,
+    name: String(colleague.name || colleague.value || ""),
+    department: String(colleague.department || "")
+  };
+  invalidField.value = "";
+}
+function onContactInput(stage: string, value: string | number) {
+  form.value.brief.contactsByStage[stage] = { name: String(value) };
+  colleagueActiveQuery.value[stage] = String(value);
+  colleagueSearchStatus.value[stage] = "";
+  invalidField.value = "";
+}
+function validationClass(key: string) {
+  return invalidField.value === key ? "ip-invalid-field" : "";
+}
+async function showValidation(
+  message: string,
+  key: string,
+  expandBrief = false
+) {
+  invalidField.value = key;
+  if (expandBrief) briefOpen.value = ["brief"];
+  ElMessage.warning(message);
+  await nextTick();
+  const target = document.querySelector<HTMLElement>(
+    `[data-validation-key="${key}"]`
+  );
+  target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  target?.querySelector<HTMLElement>("input, textarea")?.focus();
+}
+function imageURLValid(value: unknown) {
+  try {
+    const url = new URL(String(value || ""));
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      Boolean(url.hostname) &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+}
 const feedback = ref<any[]>([]);
 const marketingCandidates = ref<Record<string, Record<string, string>>>({});
 const addCandidateID = ref<number | null>(null);
@@ -326,11 +476,26 @@ async function loadRows() {
 async function loadResources() {
   const result = await listIPResources({ keyword: "", page: 1, pageSize: 200 });
   resourceOptions.value = result.data.list || [];
+  await loadMissingSelectedResources();
   await loadIPImages(
     resourceOptions.value.filter(item =>
       form.value.candidateIds.includes(Number(item.id))
     ),
     "id"
+  );
+}
+async function loadMissingSelectedResources() {
+  const missing = form.value.candidateIds.filter(id => !selectedIP(id));
+  await Promise.allSettled(
+    missing.map(async id => {
+      const response = (await getIPResource(id)).data;
+      if (!selectedIP(id))
+        resourceOptions.value.push({
+          ...response.resource,
+          visualFileId: response.files.find(file => file.fileKind === "visual")
+            ?.id
+        });
+    })
   );
 }
 async function loadIPImages(items: any[], idKey: string) {
@@ -355,6 +520,46 @@ function goNew() {
 }
 function goDetail(id: number) {
   router.push({ path: route.path, query: { id: String(id) } });
+}
+function storeRecommendationContext() {
+  localStorage.setItem(
+    librarySelectionKey.value,
+    JSON.stringify(form.value.candidateIds)
+  );
+  localStorage.setItem(
+    `${librarySelectionKey.value}-recommendation-criteria`,
+    JSON.stringify({
+      name: form.value.projectName
+        ? `${form.value.projectName} · IP寻找`
+        : "IP寻找",
+      query: form.value.description,
+      markets: form.value.markets,
+      ipTypes: form.value.brief.targetIPType
+        ? [String(form.value.brief.targetIPType)]
+        : [],
+      goal: form.value.goal,
+      budgetCurrency: form.value.budgetCurrency,
+      budgetMin: form.value.budgetMin,
+      budgetMax: form.value.budgetMax
+    })
+  );
+}
+function openRecommendationsFromDetail() {
+  if (!detail.value) return;
+  if (detail.value.request.status === "draft") {
+    editDraft();
+    storeRecommendationContext();
+    window.open(recommendationHref.value, "_blank", "noopener");
+    return;
+  }
+  window.open(
+    router.resolve({
+      path: "/business/ip/recommendations",
+      query: { requestId: String(detail.value.request.id) }
+    }).href,
+    "_blank",
+    "noopener"
+  );
 }
 async function loadDetail(id: number) {
   loading.value = true;
@@ -433,9 +638,14 @@ function editDraft() {
     brief: {
       ...objectValue(item.brief),
       externalIPs: objectValue(item.brief).externalIPs || [],
-      candidateEvaluations: objectValue(item.brief).candidateEvaluations || {}
+      candidateEvaluations: objectValue(item.brief).candidateEvaluations || {},
+      contactsByStage: normalizedContactsByStage(
+        objectValue(item.brief).contactsByStage
+      )
     }
   };
+  briefOpen.value = ["brief"];
+  invalidField.value = "";
   mode.value = "new";
   loadResources();
 }
@@ -450,16 +660,7 @@ async function syncLibrarySelection() {
       .filter((id: number) => id > 0)
       .slice(0, 5);
     await loadResources();
-    for (const id of form.value.candidateIds) {
-      if (!selectedIP(id)) {
-        const result = (await getIPResource(id)).data;
-        resourceOptions.value.push({
-          ...result.resource,
-          visualFileId: result.files.find(file => file.fileKind === "visual")
-            ?.id
-        });
-      }
-    }
+    await loadMissingSelectedResources();
     await loadIPImages(
       resourceOptions.value.filter(item =>
         form.value.candidateIds.includes(Number(item.id))
@@ -504,6 +705,11 @@ function removeCandidate(id: number) {
   form.value.candidateIds = form.value.candidateIds.filter(
     value => value !== id
   );
+}
+function removeExternalIP(index: number) {
+  form.value.brief.externalIPs.splice(index, 1);
+  brokenExternalImageUrls.value = {};
+  invalidField.value = "";
 }
 function ensureCandidateEvaluations() {
   const evaluations = (form.value.brief.candidateEvaluations ||= {});
@@ -643,77 +849,120 @@ async function exportEvaluation(candidate: any) {
 }
 async function save(submit: boolean) {
   const item = form.value;
-  if (
-    submit &&
-    (!item.projectName.trim() ||
-      !item.department.trim() ||
-      !item.markets.length ||
-      !item.goal ||
-      !item.description.trim())
-  ) {
-    ElMessage.warning("请填写项目、部门、目标市场、合作目标和需求说明");
-    return;
-  }
-  if (
-    submit &&
-    (item.budgetMin == null ||
+  if (submit) {
+    const baseRequired = [
+      ["projectName", "项目名称", item.projectName],
+      ["department", "需求发起部门", item.department],
+      ["markets", "目标市场", item.markets.length ? "selected" : ""],
+      ["goal", "合作目标", item.goal],
+      ["description", "项目背景与需求说明", item.description]
+    ];
+    for (const [key, label, value] of baseRequired) {
+      if (!String(value || "").trim()) {
+        await showValidation(`请填写${label}`, String(key));
+        return;
+      }
+    }
+    if (
+      item.budgetMin == null ||
       item.budgetMax == null ||
-      item.budgetMin > item.budgetMax)
-  ) {
-    ElMessage.warning("请填写有效的授权费用预算范围");
-    return;
-  }
-  if (
-    submit &&
-    [
-      "owner",
-      "projectPeriod",
-      "linkedProduct",
-      "cooperationMode",
-      "contacts",
-      "targetIPType",
-      "targetIPCount"
-    ].some(key => !String(item.brief[key] || "").trim())
-  ) {
-    ElMessage.warning(
-      "请补齐负责人、项目周期、关联产品、合作模式、对接人及目标IP信息"
-    );
-    return;
-  }
-  if (
-    submit &&
-    item.candidateIds.some(id =>
-      ["reason", "productEvaluation", "technicalFit"].some(
-        key =>
+      item.budgetMin < 0 ||
+      item.budgetMax < 0 ||
+      item.budgetMin > item.budgetMax
+    ) {
+      await showValidation("请填写有效的授权费用预算范围", "budget");
+      return;
+    }
+    for (const field of briefFields.filter(field => field.required)) {
+      if (!String(item.brief[field.key] || "").trim()) {
+        await showValidation(
+          `请填写补充项目资料中的「${field.label}」`,
+          `brief-${field.key}`,
+          true
+        );
+        return;
+      }
+    }
+    for (const stage of contactStages) {
+      if (!String(item.brief.contactsByStage?.[stage.key]?.name || "").trim()) {
+        await showValidation(
+          `请填写「${stage.label}」环节对接人`,
+          `contact-${stage.key}`,
+          true
+        );
+        return;
+      }
+    }
+    await loadMissingSelectedResources();
+    for (const id of item.candidateIds) {
+      const candidateName = selectedIP(id)?.name;
+      if (!candidateName) {
+        await showValidation(
+          `库内意向IP（ID ${id}）已不可用，请移除后重新选择`,
+          `candidate-${id}`
+        );
+        return;
+      }
+      for (const [key, label] of [
+        ["reason", "选择理由"],
+        ["productEvaluation", "产品维度评估"],
+        ["technicalFit", "技术匹配程度"]
+      ]) {
+        if (
           !String(item.brief.candidateEvaluations?.[id]?.[key] || "").trim()
+        ) {
+          await showValidation(
+            `请补齐库内意向IP「${candidateName}」的${label}`,
+            `candidate-${id}-${key}`
+          );
+          return;
+        }
+      }
+    }
+    if (!item.candidateIds.length && !item.brief.externalIPs.length) {
+      await showValidation(
+        "请至少选择一个库内IP或添加一个库外IP意向",
+        "ip-intentions"
+      );
+      return;
+    }
+    for (const [index, candidate] of item.brief.externalIPs.entries()) {
+      for (const [key, label] of [
+        ["name", "IP名称"],
+        ["rightsOwner", "版权方"],
+        ["imageUrl", "IP形象示意链接"],
+        ["reason", "选择理由"],
+        ["productEvaluation", "产品维度评估"],
+        ["technicalFit", "技术匹配程度"]
+      ]) {
+        if (!String(candidate[key] || "").trim()) {
+          await showValidation(
+            `请补齐库外IP ${index + 1} 的${label}`,
+            `external-${index}-${key}`
+          );
+          return;
+        }
+      }
+      if (!imageURLValid(candidate.imageUrl)) {
+        await showValidation(
+          `库外IP ${index + 1} 的形象示意链接需以 http:// 或 https:// 开头`,
+          `external-${index}-imageUrl`
+        );
+        return;
+      }
+    }
+  }
+  // Keep historical free-text contacts in old drafts until all stages are filled.
+  if (
+    contactStages.every(stage =>
+      String(item.brief.contactsByStage?.[stage.key]?.name || "").trim()
+    )
+  ) {
+    item.brief.contacts = contactStages
+      .map(
+        stage => `${stage.label}：${item.brief.contactsByStage[stage.key].name}`
       )
-    )
-  ) {
-    ElMessage.warning("请补齐每个库内意向IP的选择理由、产品评估和技术匹配");
-    return;
-  }
-  if (
-    submit &&
-    !item.candidateIds.length &&
-    !item.externalRecommendation.trim() &&
-    !item.brief.externalIPs.length
-  ) {
-    ElMessage.warning("请选择意向IP或填写库外IP推荐");
-    return;
-  }
-  if (
-    submit &&
-    item.brief.externalIPs.some(
-      (candidate: any) =>
-        !candidate.name?.trim() ||
-        !candidate.rightsOwner?.trim() ||
-        !candidate.reason?.trim() ||
-        !candidate.productEvaluation?.trim() ||
-        !candidate.technicalFit?.trim()
-    )
-  ) {
-    ElMessage.warning("库外IP请补齐名称、版权方、选择理由、产品评估和技术匹配");
-    return;
+      .join("；");
   }
   saving.value = true;
   try {
@@ -840,7 +1089,7 @@ async function sendMarketing(saveDraft = false) {
     saving.value = false;
   }
 }
-function syncRoute() {
+async function syncRoute() {
   const id = Number(route.query.id);
   if (id > 0) {
     mode.value = "detail";
@@ -848,7 +1097,30 @@ function syncRoute() {
   } else if (route.query.mode === "new" && menuKind.value === "requests") {
     mode.value = "new";
     form.value = initialForm();
-    loadResources();
+    const recommendedId = Number(route.query.recommendedIp);
+    if (recommendedId > 0) form.value.candidateIds = [recommendedId];
+    await loadResources();
+    if (recommendedId > 0) {
+      if (!selectedIP(recommendedId)) {
+        try {
+          const response = (await getIPResource(recommendedId)).data;
+          resourceOptions.value.push({
+            ...response.resource,
+            visualFileId: response.files.find(
+              file => file.fileKind === "visual"
+            )?.id
+          });
+        } catch {
+          form.value.candidateIds = [];
+          ElMessage.warning("推荐的 IP 已不可用，请重新选择");
+        }
+      }
+      ensureCandidateEvaluations();
+      if (form.value.candidateIds.includes(recommendedId))
+        form.value.brief.candidateEvaluations[recommendedId].reason = String(
+          route.query.recommendationReason || ""
+        );
+    }
   } else {
     mode.value = "list";
     loadRows();
@@ -1003,14 +1275,20 @@ onUnmounted(() => {
             <h2>项目基本信息</h2>
             <div class="ip-form-grid">
               <label
+                data-validation-key="projectName"
+                :class="validationClass('projectName')"
                 >项目名称 *<el-input
                   v-model="form.projectName"
                   placeholder="请输入项目名称" /></label
               ><label
+                data-validation-key="department"
+                :class="validationClass('department')"
                 >需求发起部门 *<el-input
                   v-model="form.department"
                   placeholder="例如：产品组" /></label
               ><label
+                data-validation-key="markets"
+                :class="validationClass('markets')"
                 >目标市场 *<el-select
                   v-model="form.markets"
                   multiple
@@ -1030,6 +1308,8 @@ onUnmounted(() => {
                   value-format="YYYY-MM-DD"
                   placeholder="请选择日期" /></label
               ><label
+                data-validation-key="budget"
+                :class="validationClass('budget')"
                 >授权费用预算 *
                 <div class="ip-budget">
                   <el-select v-model="form.budgetCurrency"
@@ -1053,13 +1333,18 @@ onUnmounted(() => {
                 </div>
                 <small>预计授权费用，不含执行费用</small></label
               ><label
+                data-validation-key="goal"
+                :class="validationClass('goal')"
                 >合作目标 *<el-select v-model="form.goal" placeholder="请选择"
                   ><el-option
                     v-for="goal in goals"
                     :key="goal"
                     :label="goal"
                     :value="goal" /></el-select></label
-              ><label class="ip-span"
+              ><label
+                class="ip-span"
+                data-validation-key="description"
+                :class="validationClass('description')"
                 >项目背景与需求说明 *<el-input
                   v-model="form.description"
                   type="textarea"
@@ -1070,7 +1355,11 @@ onUnmounted(() => {
               /></label>
             </div>
           </div>
-          <div class="ip-card">
+          <div
+            class="ip-card"
+            data-validation-key="ip-intentions"
+            :class="validationClass('ip-intentions')"
+          >
             <div class="ip-card-head">
               <div>
                 <h2>初步意向IP</h2>
@@ -1084,6 +1373,14 @@ onUnmounted(() => {
                 target="_blank"
                 rel="noopener"
                 >前往IP资源库 ↗</a
+              >
+              <a
+                class="ip-outline-link"
+                :href="recommendationHref"
+                target="_blank"
+                rel="noopener"
+                @click="storeRecommendationContext"
+                >AI寻找匹配IP ↗</a
               >
             </div>
             <el-select
@@ -1104,6 +1401,8 @@ onUnmounted(() => {
                 v-for="id in form.candidateIds"
                 :key="id"
                 class="ip-selected-item"
+                :data-validation-key="`candidate-${id}`"
+                :class="validationClass(`candidate-${id}`)"
               >
                 <div class="ip-selected-main">
                   <img
@@ -1131,35 +1430,34 @@ onUnmounted(() => {
                 >
                 <div class="ip-form-grid ip-span">
                   <label
-                    >选择理由<el-input
+                    :data-validation-key="`candidate-${id}-reason`"
+                    :class="validationClass(`candidate-${id}-reason`)"
+                    >选择理由 *<el-input
                       v-model="form.brief.candidateEvaluations[id].reason"
                       placeholder="商业潜力、品牌调性或话题契合"
                   /></label>
                   <label
-                    >产品维度评估<el-input
+                    :data-validation-key="`candidate-${id}-productEvaluation`"
+                    :class="
+                      validationClass(`candidate-${id}-productEvaluation`)
+                    "
+                    >产品维度评估 *<el-input
                       v-model="
                         form.brief.candidateEvaluations[id].productEvaluation
                       "
                       placeholder="认知度、用户重叠率、机型适配"
                   /></label>
-                  <label class="ip-span"
-                    >技术匹配程度<el-input
+                  <label
+                    class="ip-span"
+                    :data-validation-key="`candidate-${id}-technicalFit`"
+                    :class="validationClass(`candidate-${id}-technicalFit`)"
+                    >技术匹配程度 *<el-input
                       v-model="form.brief.candidateEvaluations[id].technicalFit"
                       placeholder="视觉惊喜度、开发及本地化难度"
                   /></label>
                 </div>
               </div>
             </div>
-            <label class="ip-other"
-              >其他IP推荐（选填）<el-input
-                v-model="form.externalRecommendation"
-                type="textarea"
-                :rows="2"
-                placeholder="资源库外的IP名称、链接或推荐理由"
-              /><small
-                >库外推荐会随需求提交，由IP组评估后再决定是否入库。</small
-              ></label
-            >
             <div class="ip-other">
               <div class="ip-card-head">
                 <strong>库外IP意向（最多3个，选填）</strong>
@@ -1188,34 +1486,76 @@ onUnmounted(() => {
                   ><el-button
                     link
                     type="danger"
-                    @click="form.brief.externalIPs.splice(index, 1)"
+                    @click="removeExternalIP(Number(index))"
                     >移除</el-button
                   >
                 </div>
                 <div class="ip-form-grid">
-                  <label>IP名称<el-input v-model="item.name" /></label>
-                  <label>版权方<el-input v-model="item.rightsOwner" /></label>
-                  <label class="ip-span"
-                    >IP形象示意链接<el-input
+                  <label
+                    :data-validation-key="`external-${index}-name`"
+                    :class="validationClass(`external-${index}-name`)"
+                    >IP名称 *<el-input v-model="item.name"
+                  /></label>
+                  <label
+                    :data-validation-key="`external-${index}-rightsOwner`"
+                    :class="validationClass(`external-${index}-rightsOwner`)"
+                    >版权方 *<el-input v-model="item.rightsOwner"
+                  /></label>
+                  <label
+                    class="ip-span"
+                    :data-validation-key="`external-${index}-imageUrl`"
+                    :class="validationClass(`external-${index}-imageUrl`)"
+                    >IP形象示意链接 *<el-input
                       v-model="item.imageUrl"
                       placeholder="https://..."
-                  /></label>
+                      @input="brokenExternalImageUrls[index] = false"
+                    /><small
+                      >可填图片直链或介绍页面链接；页面链接无法在此预览。</small
+                    ></label
+                  >
                   <img
-                    v-if="item.imageUrl"
+                    v-if="
+                      imageURLValid(item.imageUrl) &&
+                      !brokenExternalImageUrls[index]
+                    "
                     :src="item.imageUrl"
                     alt="库外IP形象示意"
                     class="ip-external-image"
+                    @error="brokenExternalImageUrls[index] = true"
                   />
-                  <label class="ip-span"
-                    >选择理由<el-input v-model="item.reason"
+                  <div
+                    v-if="
+                      imageURLValid(item.imageUrl) &&
+                      brokenExternalImageUrls[index]
+                    "
+                    class="ip-external-link-state ip-span"
+                  >
+                    链接已填写，当前无法直接预览图片。
+                    <a :href="item.imageUrl" target="_blank" rel="noopener"
+                      >打开链接 ↗</a
+                    >
+                  </div>
+                  <label
+                    class="ip-span"
+                    :data-validation-key="`external-${index}-reason`"
+                    :class="validationClass(`external-${index}-reason`)"
+                    >选择理由 *<el-input v-model="item.reason"
                   /></label>
-                  <label class="ip-span"
-                    >产品维度评估<el-input
+                  <label
+                    class="ip-span"
+                    :data-validation-key="`external-${index}-productEvaluation`"
+                    :class="
+                      validationClass(`external-${index}-productEvaluation`)
+                    "
+                    >产品维度评估 *<el-input
                       v-model="item.productEvaluation"
                       placeholder="市场认知、用户重叠、机型适配"
                   /></label>
-                  <label class="ip-span"
-                    >技术匹配程度<el-input
+                  <label
+                    class="ip-span"
+                    :data-validation-key="`external-${index}-technicalFit`"
+                    :class="validationClass(`external-${index}-technicalFit`)"
+                    >技术匹配程度 *<el-input
                       v-model="item.technicalFit"
                       placeholder="视觉、开发和本地化难度"
                   /></label>
@@ -1224,12 +1564,12 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="ip-card ip-optional-brief">
-            <el-collapse>
+            <el-collapse v-model="briefOpen">
               <el-collapse-item name="brief">
                 <template #title>
                   <div>
-                    <h2>补充项目资料（选填）</h2>
-                    <p>填写项目周期、负责人和合作模式等信息，便于后续协同。</p>
+                    <h2>补充项目资料</h2>
+                    <p>带 * 的项目资料与各环节对接人提交时必填。</p>
                   </div>
                 </template>
                 <div class="ip-form-grid">
@@ -1237,12 +1577,71 @@ onUnmounted(() => {
                     v-for="field in briefFields"
                     :key="field.key"
                     class="ip-span"
+                    :data-validation-key="`brief-${field.key}`"
+                    :class="validationClass(`brief-${field.key}`)"
                   >
-                    {{ field.label
+                    {{ field.label }}{{ field.required ? " *" : ""
                     }}<el-input
                       v-model="form.brief[field.key]"
                       :placeholder="field.hint"
                     />
+                  </label>
+                </div>
+                <div class="ip-stage-head">
+                  <h3>各环节对接人</h3>
+                  <p>输入姓名可搜索同事；未找到时也可直接填写姓名。</p>
+                  <p
+                    v-if="
+                      form.brief.contacts &&
+                      !contactStages.some(
+                        stage => form.brief.contactsByStage?.[stage.key]?.name
+                      )
+                    "
+                    class="ip-legacy-contacts"
+                  >
+                    历史草稿对接人：{{
+                      form.brief.contacts
+                    }}。请按环节补全后提交。
+                  </p>
+                </div>
+                <div class="ip-contact-grid">
+                  <label
+                    v-for="stage in contactStages"
+                    :key="stage.key"
+                    :data-validation-key="`contact-${stage.key}`"
+                    :class="validationClass(`contact-${stage.key}`)"
+                  >
+                    {{ stage.label }} *
+                    <el-autocomplete
+                      v-model="form.brief.contactsByStage[stage.key].name"
+                      :fetch-suggestions="
+                        (query, callback) =>
+                          fetchColleagueSuggestions(stage.key, query, callback)
+                      "
+                      :debounce="300"
+                      :trigger-on-focus="false"
+                      clearable
+                      placeholder="搜索或输入同事姓名"
+                      @input="value => onContactInput(stage.key, value)"
+                      @select="person => selectContact(stage.key, person)"
+                    >
+                      <template #default="{ item }">
+                        <span>{{ item.name }}</span>
+                        <small v-if="item.department">{{
+                          item.department
+                        }}</small>
+                      </template>
+                    </el-autocomplete>
+                    <small
+                      v-if="colleagueSearchStatus[stage.key] === 'empty'"
+                      class="ip-colleague-hint"
+                      >未找到同事，可直接保留输入的姓名。</small
+                    >
+                    <small
+                      v-if="colleagueSearchStatus[stage.key] === 'failed'"
+                      class="ip-colleague-hint"
+                      >搜索暂不可用，可直接填写姓名。</small
+                    >
                   </label>
                 </div>
               </el-collapse-item>
@@ -1335,6 +1734,25 @@ onUnmounted(() => {
             <strong>{{ field.label }}：</strong
             >{{ objectValue(detail.request.brief)[field.key] || "待补充" }}
           </div>
+          <div v-for="stage in contactStages" :key="stage.key">
+            <strong>{{ stage.label }}对接人：</strong>
+            {{
+              objectValue(objectValue(detail.request.brief).contactsByStage)[
+                stage.key
+              ]?.name || "待补充"
+            }}
+          </div>
+          <div
+            v-if="
+              !Object.keys(
+                objectValue(objectValue(detail.request.brief).contactsByStage)
+              ).length && objectValue(detail.request.brief).contacts
+            "
+            class="ip-span"
+          >
+            <strong>原对接人：</strong
+            >{{ objectValue(detail.request.brief).contacts }}
+          </div>
           <div
             v-for="(item, index) in objectValue(detail.request.brief)
               .externalIPs || []"
@@ -1350,6 +1768,9 @@ onUnmounted(() => {
         </div>
         <el-button v-if="detail.request.status === 'draft'" @click="editDraft"
           >继续编辑草稿</el-button
+        >
+        <el-button @click="openRecommendationsFromDetail"
+          >根据此需求寻找匹配IP ↗</el-button
         >
       </div>
       <div class="ip-grid">
@@ -1908,11 +2329,55 @@ onUnmounted(() => {
 }
 
 .ip-form-grid label,
-.ip-other {
+.ip-other,
+.ip-contact-grid label {
   display: flex;
   flex-direction: column;
   gap: 8px;
   font-weight: 600;
+}
+
+.ip-invalid-field {
+  background: #fff9f1;
+  border-radius: 6px;
+  outline: 2px solid #f3a24c;
+}
+
+.ip-stage-head {
+  margin-top: 22px;
+  margin-bottom: 14px;
+}
+
+.ip-stage-head h3 {
+  margin: 0 0 5px;
+  font-size: 16px;
+}
+
+.ip-contact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px;
+}
+
+.ip-contact-grid .el-autocomplete {
+  width: 100%;
+}
+
+.ip-legacy-contacts,
+.ip-colleague-hint {
+  display: block;
+  color: #8b6300 !important;
+}
+
+.ip-external-link-state {
+  font-size: 13px;
+  font-weight: 400;
+  color: #777e86;
+}
+
+.ip-external-link-state a {
+  margin-left: 8px;
+  color: #5b7600;
 }
 
 .ip-form-grid small,
@@ -2253,6 +2718,7 @@ onUnmounted(() => {
   }
 
   .ip-form-grid,
+  .ip-contact-grid,
   .ip-selected,
   .ip-score-grid,
   .ip-metric-row {

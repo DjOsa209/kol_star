@@ -37,19 +37,20 @@ export const localesConfigs = {
 // Dynamic routes are returned by the backend with their source-language title.
 // Keep these labels here so menus and browser titles also follow the language switch.
 const dynamicRouteLabels: Record<string, string> = {
-  "资源运营": "Resource Operations",
-  "智能资源助手": "Resource Intelligence Assistant",
-  "全球资源库": "Global Resource Library",
-  "标签体系": "Tag Taxonomy",
-  "项目合作": "Project Collaboration",
-  "Brief模板库": "Brief Template Library",
-  "数据看板": "Dashboard",
-  "治理规则": "Governance Rules",
-  "导入同步监控": "Import Sync Monitor",
-  "抓取控制": "Collection Controls",
-  "标准字段配置": "Standard Field Configuration",
-  "项目执行页": "Project Execution",
-  "企业身份认证": "Enterprise Authentication"
+  资源运营: "Resource Operations",
+  智能资源助手: "Resource Intelligence Assistant",
+  全球资源库: "Global Resource Library",
+  "IP AI推荐": "IP AI Recommendations",
+  标签体系: "Tag Taxonomy",
+  项目合作: "Project Collaboration",
+  Brief模板库: "Brief Template Library",
+  数据看板: "Dashboard",
+  治理规则: "Governance Rules",
+  导入同步监控: "Import Sync Monitor",
+  抓取控制: "Collection Controls",
+  标准字段配置: "Standard Field Configuration",
+  项目执行页: "Project Execution",
+  企业身份认证: "Enterprise Authentication"
 };
 
 /** 获取对象中所有嵌套对象的key键，并将它们用点号分割组成字符串 */

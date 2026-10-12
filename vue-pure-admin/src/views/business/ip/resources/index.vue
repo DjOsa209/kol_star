@@ -12,6 +12,7 @@ import {
   listIPResources,
   previewIPImport,
   readIPFile,
+  renameIPFile,
   saveIPCase,
   saveIPResource,
   uploadIPFile,
@@ -44,18 +45,25 @@ const filter = reactive({
 });
 const updatedRange = ref<string[]>([]);
 const types = [
-  "体育IP",
-  "动画/影视",
-  "音乐/活动",
-  "电竞",
   "游戏",
+  "动画",
+  "影视",
+  "综艺",
+  "体育",
+  "潮牌",
+  "潮玩",
+  "品牌",
   "文化艺术",
+  "线下活动",
   "其他"
 ];
+const legacyTypes = ["体育IP", "动画/影视", "音乐/活动", "电竞"];
+const filterTypes = [...types, ...legacyTypes];
 const statuses = ["可合作", "洽谈中", "待评估", "暂不可合作"];
 const markets = [
   "中国",
   "东南亚",
+  "南亚",
   "欧洲",
   "中东",
   "非洲",
@@ -126,6 +134,11 @@ const emptyForm = (): IPResourceInput => ({
   profile: {}
 });
 const form = ref<IPResourceInput>(emptyForm());
+const formTypes = computed(() =>
+  form.value.ipType && !types.includes(form.value.ipType)
+    ? [...types, form.value.ipType]
+    : types
+);
 function manualDraftKey() {
   return `ip-resource-draft:${useUserStoreHook().username || "current"}`;
 }
@@ -183,6 +196,7 @@ const importRows = ref<IPResourceInput[]>([]);
 const importPreview = ref<any[]>([]);
 const importLoading = ref(false);
 const importKeys = ref<string[]>([]);
+const importExcelRows = ref<number[]>([]);
 const importCaseTitles = ref<string[]>([]);
 const importCaseSummaries = ref<string[]>([]);
 const batchFiles = ref<File[]>([]);
@@ -375,22 +389,38 @@ function editDetail() {
   activeTab.value = "single";
 }
 function pdfChanged(event: Event, kind: "copyright" | "case") {
-  const files = Array.from((event.target as HTMLInputElement).files || []);
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  input.value = "";
   const invalid = files.some(
-    file => file.type !== "application/pdf" || file.size > 20 * 1024 * 1024
+    file =>
+      !file.name.toLowerCase().endsWith(".pdf") || file.size > 20 * 1024 * 1024
   );
   if (invalid) {
     ElMessage.error("仅支持20MB以内的PDF文件");
     return;
   }
-  if (kind === "copyright") copyrightFiles.value.push(...files);
-  else caseFile.value = files[0] || null;
-  (event.target as HTMLInputElement).value = "";
+  if (kind === "copyright") {
+    const selectedNames = new Set(
+      copyrightFiles.value.map(file => file.name.toLocaleLowerCase())
+    );
+    const additions = files.filter(file => {
+      const key = file.name.toLocaleLowerCase();
+      if (selectedNames.has(key)) return false;
+      selectedNames.add(key);
+      return true;
+    });
+    copyrightFiles.value.push(...additions);
+    if (additions.length !== files.length)
+      ElMessage.warning("同名版权文件已跳过；如需添加，请先重命名已选文件");
+  } else if (files[0]) {
+    caseFile.value = files[0];
+  }
 }
 function visualChanged(event: Event) {
-  visualFile.value = null;
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
   if (!file) return;
   if (
     !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
@@ -400,6 +430,93 @@ function visualChanged(event: Event) {
     return;
   }
   visualFile.value = file;
+}
+function selectedFileExtension(file: File) {
+  return file.name.match(/\.[^.]+$/)?.[0] || "";
+}
+async function askFileName(currentName: string, extension: string) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      "请输入新的文件名",
+      "重命名文件",
+      {
+        inputValue: currentName,
+        confirmButtonText: "保存",
+        cancelButtonText: "取消",
+        inputValidator: value => {
+          const name = String(value || "").trim();
+          const finalName = name.toLowerCase().endsWith(extension.toLowerCase())
+            ? name
+            : `${name}${extension}`;
+          if (
+            !name ||
+            !finalName.slice(0, -extension.length).trim() ||
+            new TextEncoder().encode(finalName).length > 255 ||
+            /[\\/\x00-\x1f\x7f]/.test(name)
+          )
+            return "文件名需为1至255字节，且不能包含斜杠或控制字符";
+          if (
+            /\.[^./\\]+$/.test(name) &&
+            !name.toLowerCase().endsWith(extension.toLowerCase())
+          )
+            return `请保留 ${extension} 文件格式`;
+          return true;
+        }
+      }
+    );
+    const name = String(value).trim();
+    return name.toLowerCase().endsWith(extension.toLowerCase())
+      ? name
+      : `${name}${extension}`;
+  } catch {
+    return "";
+  }
+}
+async function renameSelectedFile(
+  kind: "copyright" | "visual" | "case",
+  index = 0
+) {
+  const file =
+    kind === "copyright"
+      ? copyrightFiles.value[index]
+      : kind === "visual"
+        ? visualFile.value
+        : caseFile.value;
+  if (!file) return;
+  const name = await askFileName(file.name, selectedFileExtension(file));
+  if (!name || name === file.name) return;
+  if (
+    kind === "copyright" &&
+    copyrightFiles.value.some(
+      (item, itemIndex) =>
+        itemIndex !== index &&
+        item.name.toLocaleLowerCase() === name.toLocaleLowerCase()
+    )
+  ) {
+    ElMessage.warning("已选择同名版权文件，请使用不同文件名");
+    return;
+  }
+  const renamed = new File([file], name, {
+    type: file.type,
+    lastModified: file.lastModified
+  });
+  if (kind === "copyright") copyrightFiles.value[index] = renamed;
+  else if (kind === "visual") visualFile.value = renamed;
+  else caseFile.value = renamed;
+}
+async function renameStoredFile(file: any) {
+  const originalName = String(file.originalName || "");
+  const extension = originalName.match(/\.[^.]+$/)?.[0] || "";
+  const name = await askFileName(originalName, extension);
+  if (!name || name === originalName) return;
+  await renameIPFile(Number(file.id), name);
+  if (detail.value) await loadDetail(Number(detail.value.resource.id));
+  ElMessage.success("文件名已更新");
+}
+function removeSelectedFile(kind: "copyright" | "visual" | "case", index = 0) {
+  if (kind === "copyright") copyrightFiles.value.splice(index, 1);
+  else if (kind === "visual") visualFile.value = null;
+  else caseFile.value = null;
 }
 async function addVisual(event: Event) {
   visualChanged(event);
@@ -550,29 +667,33 @@ async function removeFile(file: any) {
   ElMessage.success("文件已删除");
 }
 function downloadTemplate() {
-  const headers = [
-    "导入编号",
-    "IP名称*",
-    "IP类型*",
-    "覆盖市场*",
-    "版权方",
-    "联系人",
-    "目标受众",
-    "IP简介",
-    "合作状态",
-    "币种",
-    "基础权益价格下限",
-    "基础权益价格上限",
-    "授权范围与限制",
-    ...profileFields.map(field => field.label),
-    "历史合作名称",
-    "历史合作概述"
+  const anchor = document.createElement("a");
+  anchor.href = `${import.meta.env.BASE_URL}IP导入模板.xlsx`;
+  anchor.download = "IP导入模板.xlsx";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+function marketValuesFromImport(row: Record<string, any>) {
+  const choices = Array.from(
+    { length: markets.length },
+    (_, index) => row[`覆盖市场${index + 1}${index === 0 ? "*" : ""}`]
+  );
+  const legacy = row["覆盖市场*"] || row["覆盖市场"];
+  return [
+    ...new Set(
+      [...choices, legacy]
+        .flatMap(value => String(value || "").split(/[,，、;/]+/))
+        .map(value => value.trim())
+        .filter(Boolean)
+    )
   ];
-  const sheet = XLSX.utils.aoa_to_sheet([headers]);
-  sheet["!cols"] = headers.map(() => ({ wch: 24 }));
-  const book = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(book, sheet, "IP导入模板");
-  XLSX.writeFile(book, "IP导入模板.xlsx");
+}
+function excelRow(backendRow: number) {
+  return importExcelRows.value[Number(backendRow) - 2] || backendRow;
+}
+function importKeyForRow(backendRow: number) {
+  return importKeys.value[Number(backendRow) - 2] || "—";
 }
 function parseMoney(value: unknown): number | null {
   if (value == null || String(value).trim() === "") return null;
@@ -583,6 +704,11 @@ async function readImport(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   (event.target as HTMLInputElement).value = "";
   if (!file) return;
+  importRows.value = [];
+  importPreview.value = [];
+  importExcelRows.value = [];
+  importKeys.value = [];
+  importFileName.value = "";
   try {
     const book = XLSX.read(await file.arrayBuffer());
     const sheet = book.Sheets[book.SheetNames[0]];
@@ -593,7 +719,10 @@ async function readImport(event: Event) {
       ElMessage.warning("每次请选择1至500条IP");
       return;
     }
-    importKeys.value = records.map(row => String(row["导入编号"] || "").trim());
+    importExcelRows.value = records.map((row, index) =>
+      typeof row.__rowNum__ === "number" ? row.__rowNum__ + 1 : index + 2
+    );
+    importKeys.value = records.map(row => String(row["导入编号"] ?? "").trim());
     importCaseTitles.value = records.map(row =>
       String(row["历史合作名称"] || "").trim()
     );
@@ -603,10 +732,7 @@ async function readImport(event: Event) {
     importRows.value = records.map(row => ({
       name: String(row["IP名称*"] || row["IP名称"] || "").trim(),
       ipType: String(row["IP类型*"] || row["IP类型"] || "").trim(),
-      markets: String(row["覆盖市场*"] || row["覆盖市场"] || "")
-        .split(/[,，、;/]+/)
-        .map(s => s.trim())
-        .filter(Boolean),
+      markets: marketValuesFromImport(row),
       rightsOwner: String(row["版权方"] || "").trim(),
       contact: String(row["联系人"] || "").trim(),
       audience: String(row["目标受众"] || "").trim(),
@@ -863,7 +989,7 @@ onUnmounted(() => {
           />
           <el-select v-model="filter.ipType" placeholder="全部类型" clearable
             ><el-option
-              v-for="type in types"
+              v-for="type in filterTypes"
               :key="type"
               :label="type"
               :value="type"
@@ -1153,6 +1279,8 @@ onUnmounted(() => {
               <div>
                 <el-button link @click="openFile(file)">预览</el-button
                 ><el-button link @click="openFile(file, true)">下载</el-button
+                ><el-button link @click="renameStoredFile(file)"
+                  >重命名</el-button
                 ><el-button link type="danger" @click="removeFile(file)"
                   >删除</el-button
                 >
@@ -1182,6 +1310,8 @@ onUnmounted(() => {
                 <div>
                   <el-button link @click="openFile(file)">预览</el-button
                   ><el-button link @click="openFile(file, true)">下载</el-button
+                  ><el-button link @click="renameStoredFile(file)"
+                    >重命名</el-button
                   ><el-button link type="danger" @click="removeFile(file)"
                     >删除</el-button
                   >
@@ -1196,14 +1326,29 @@ onUnmounted(() => {
               /><el-input
                 v-model="caseSummary"
                 placeholder="案例概述（选填）"
-              /><label class="ip-upload-inline"
-                >{{ caseFile ? caseFile.name : "＋ 添加结案PDF"
-                }}<input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  hidden
-                  @change="pdfChanged($event, 'case')" /></label
-              ><el-button :loading="saving" @click="addCase"
+              />
+              <div class="ip-detail-case-file">
+                <label class="ip-upload-inline"
+                  >＋ 添加结案PDF<input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    hidden
+                    @change="pdfChanged($event, 'case')"
+                /></label>
+                <span v-if="caseFile" class="ip-selected-file">
+                  <span class="ip-selected-file-name">{{ caseFile.name }}</span>
+                  <el-button link @click="renameSelectedFile('case')"
+                    >重命名</el-button
+                  >
+                  <el-button
+                    link
+                    type="danger"
+                    @click="removeSelectedFile('case')"
+                    >删除</el-button
+                  >
+                </span>
+              </div>
+              <el-button :loading="saving" @click="addCase"
                 >添加历史合作</el-button
               >
             </div>
@@ -1283,7 +1428,7 @@ onUnmounted(() => {
                 <label
                   >IP类型 *<el-select v-model="form.ipType" placeholder="请选择"
                     ><el-option
-                      v-for="type in types"
+                      v-for="type in formTypes"
                       :key="type"
                       :label="type"
                       :value="type" /></el-select
@@ -1372,28 +1517,60 @@ onUnmounted(() => {
             <div class="ip-card">
               <h2>资料附件</h2>
               <div class="ip-form-grid">
-                <label
-                  >IP形象（PNG / JPG / WebP）<span class="ip-upload"
+                <div class="ip-attachment-field">
+                  <strong>IP形象（PNG / JPG / WebP）</strong
+                  ><span class="ip-upload"
                     ><input
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
                       @change="visualChanged"
-                    />{{ visualFile?.name || "选择图片" }}</span
-                  ></label
-                >
-                <label
-                  >版权介绍文件（PDF）<span class="ip-upload"
+                    />选择图片</span
+                  ><span v-if="visualFile" class="ip-selected-file">
+                    <span class="ip-selected-file-name">{{
+                      visualFile.name
+                    }}</span>
+                    <el-button link @click="renameSelectedFile('visual')"
+                      >重命名</el-button
+                    >
+                    <el-button
+                      link
+                      type="danger"
+                      @click="removeSelectedFile('visual')"
+                      >删除</el-button
+                    >
+                  </span>
+                </div>
+                <div class="ip-attachment-field">
+                  <strong>版权介绍文件（PDF）</strong
+                  ><span class="ip-upload"
                     ><input
                       type="file"
                       accept="application/pdf,.pdf"
                       multiple
                       @change="pdfChanged($event, 'copyright')"
                     />选择PDF文件</span
-                  ><small v-for="file in copyrightFiles" :key="file.name">{{
-                    file.name
-                  }}</small></label
-                ><label
-                  >历史合作结案文件（选填）<el-input
+                  ><span
+                    v-for="(file, index) in copyrightFiles"
+                    :key="`${index}:${file.name}`"
+                    class="ip-selected-file"
+                  >
+                    <span class="ip-selected-file-name">{{ file.name }}</span>
+                    <el-button
+                      link
+                      @click="renameSelectedFile('copyright', index)"
+                      >重命名</el-button
+                    >
+                    <el-button
+                      link
+                      type="danger"
+                      @click="removeSelectedFile('copyright', index)"
+                      >删除</el-button
+                    >
+                  </span>
+                </div>
+                <div class="ip-attachment-field">
+                  <strong>历史合作结案文件（选填）</strong
+                  ><el-input
                     v-model="caseTitle"
                     placeholder="历史合作名称"
                   /><el-input
@@ -1404,9 +1581,22 @@ onUnmounted(() => {
                       type="file"
                       accept="application/pdf,.pdf"
                       @change="pdfChanged($event, 'case')"
-                    />{{ caseFile?.name || "选择结案PDF" }}</span
-                  ></label
-                >
+                    />选择结案PDF</span
+                  ><span v-if="caseFile" class="ip-selected-file">
+                    <span class="ip-selected-file-name">{{
+                      caseFile.name
+                    }}</span>
+                    <el-button link @click="renameSelectedFile('case')"
+                      >重命名</el-button
+                    >
+                    <el-button
+                      link
+                      type="danger"
+                      @click="removeSelectedFile('case')"
+                      >删除</el-button
+                    >
+                  </span>
+                </div>
               </div>
             </div>
             <div class="ip-card ip-optional-profile">
@@ -1486,7 +1676,9 @@ onUnmounted(() => {
                   <span>合作状态</span><span>参考价格范围</span>
                   <span>目标受众</span><span>联系人</span>
                 </div>
-                <small>一行一个IP，价格填写参考范围。</small>
+                <small
+                  >一行一个IP；多个覆盖市场分别在“覆盖市场1”至“覆盖市场9”列选择。</small
+                >
               </div>
             </div>
           </div>
@@ -1537,7 +1729,9 @@ onUnmounted(() => {
             <div class="ip-card-head">
               <div>
                 <h2>校验预览</h2>
-                <p>导入前检查必填项、价格范围和重复IP。</p>
+                <p>
+                  “Excel行号”是文件中的实际行数；“导入编号”来自模板，用于匹配PDF附件。
+                </p>
               </div>
               <strong v-if="importPreview.length"
                 >共{{ importPreview.length }}条 · 可导入{{ readyCount }}条 ·
@@ -1548,10 +1742,15 @@ onUnmounted(() => {
               :data="importPreview"
               max-height="340"
               empty-text="上传模板后显示校验结果"
+              ><el-table-column label="Excel行号" width="110"
+                ><template #default="scope">{{
+                  excelRow(scope.row.row)
+                }}</template> </el-table-column
+              ><el-table-column label="导入编号" width="120"
+                ><template #default="scope">{{
+                  importKeyForRow(scope.row.row)
+                }}</template> </el-table-column
               ><el-table-column
-                prop="row"
-                label="行号"
-                width="80" /><el-table-column
                 prop="name"
                 label="IP名称"
                 min-width="180" /><el-table-column label="校验结果" width="120"
@@ -2046,6 +2245,14 @@ onUnmounted(() => {
   width: max-content;
 }
 
+.ip-detail-case-file {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .ip-upload-inline {
   font-weight: 600;
   color: #668000;
@@ -2126,6 +2333,32 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   font-weight: 600;
+}
+
+.ip-attachment-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ip-selected-file {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  background: #f8faf2;
+  border: 1px solid #e6edda;
+  border-radius: 6px;
+}
+
+.ip-selected-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .ip-basic-grid label {

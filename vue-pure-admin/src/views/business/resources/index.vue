@@ -8,6 +8,7 @@ import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import { fieldLabel } from "@/utils/fieldI18n";
 import { buildRecentCooperationWorks } from "./recentWorks";
+import ProductDiscovery from "./ProductDiscovery.vue";
 import {
   getResourceList,
   createResource,
@@ -33,6 +34,17 @@ defineOptions({ name: "BusinessResources" });
 
 const router = useRouter();
 const route = useRoute();
+const discoveryMode = ref<"resource" | "brand" | "product">("resource");
+const discoveryKeyword = ref("");
+const discoveryTabs = [
+  { key: "resource", label: "达人/媒体" },
+  { key: "brand", label: "品牌" },
+  { key: "product", label: "产品" }
+] as const;
+function showBrandProducts(name: string) {
+  discoveryKeyword.value = name;
+  discoveryMode.value = "product";
+}
 const { locale } = useI18n();
 const loading = ref(false);
 const syncingAll = ref(false);
@@ -1839,686 +1851,271 @@ onUnmounted(() => {
 
 <template>
   <div class="business-page">
-    <section class="resource-toolbar">
-      <div class="resource-toolbar__title">
-        <h1>{{ fieldLabel("全球资源库") }}</h1>
-        <p>
-          {{ fieldLabel("汇聚全球优质创作者与媒体资源，助力品牌高效出海") }}
-        </p>
-      </div>
-      <div class="resource-toolbar__filters">
-        <el-input
-          v-model="search.name"
-          clearable
-          :placeholder="fieldLabel('搜索名称、账号或关键词')"
-          class="resource-search"
-          @keyup.enter="searchData"
-        >
-          <template #prefix>
-            <IconifyIconOnline icon="ri:search-line" />
-          </template>
-        </el-input>
-        <el-select
-          v-model="search.resourceType"
-          clearable
-          :placeholder="fieldLabel('全部类型')"
-          class="toolbar-select"
-          @change="searchData"
-        >
-          <el-option
-            v-for="item in ['达人', '媒体']"
-            :key="item"
-            :label="fieldLabel(item)"
-            :value="item"
-          />
-        </el-select>
-        <el-select
-          v-model="search.country"
-          clearable
-          filterable
-          allow-create
-          :placeholder="fieldLabel('全部国家/地区')"
-          class="toolbar-select toolbar-country"
-          @change="searchData"
-        >
-          <el-option
-            v-for="country in countryOptions"
-            :key="country"
-            :label="fieldLabel(country)"
-            :value="country"
-          />
-        </el-select>
-        <el-select
-          v-model="search.tier"
-          clearable
-          :placeholder="fieldLabel('全部粉丝量')"
-          class="toolbar-select"
-          @change="searchData"
-        >
-          <el-option
-            v-for="item in ['头部', '腰部', '尾部']"
-            :key="item"
-            :label="fieldLabel(item)"
-            :value="item"
-          />
-        </el-select>
-        <el-popover placement="bottom-end" :width="360" trigger="click">
-          <template #reference>
-            <el-button class="filter-trigger">
-              <IconifyIconOnline icon="ri:filter-3-line" />
-              {{ fieldLabel("筛选") }}
-            </el-button>
-          </template>
-          <div class="advanced-filter-panel">
-            <el-select
-              v-model="search.platform"
-              clearable
-              filterable
-              :placeholder="fieldLabel('全部平台')"
-            >
-              <el-option
-                v-for="platform in platformOptions"
-                :key="platform"
-                :label="platform"
-                :value="platform"
-              />
-            </el-select>
-            <el-select
-              v-model="search.industry"
-              clearable
-              filterable
-              :placeholder="fieldLabel('全部领域')"
-            >
-              <el-option
-                v-for="item in [
-                  '科技',
-                  '生活方式',
-                  '商业',
-                  '综合新闻',
-                  '游戏',
-                  '校园',
-                  '设计'
-                ]"
-                :key="item"
-                :label="fieldLabel(item)"
-                :value="item"
-              />
-            </el-select>
-            <el-select
-              v-model="selectedProject"
-              clearable
-              filterable
-              :placeholder="fieldLabel('全部历史合作')"
-            >
-              <el-option
-                v-for="project in projectOptions"
-                :key="project"
-                :label="project"
-                :value="project"
-              />
-            </el-select>
-            <div class="advanced-filter-actions">
-              <el-button @click="resetSearch">{{
-                fieldLabel("重置")
-              }}</el-button>
-              <el-button type="primary" @click="searchData">{{
-                fieldLabel("应用筛选")
-              }}</el-button>
-            </div>
-            <div class="resource-management-actions">
-              <el-button text @click="syncAll">{{
-                fieldLabel("同步数据")
-              }}</el-button>
-              <el-button text @click="openImportDialog">{{
-                fieldLabel("上传主名单")
-              }}</el-button>
-              <el-button text @click="openCreate">{{
-                fieldLabel("新增资源")
-              }}</el-button>
-              <el-button
-                text
-                type="danger"
-                :disabled="selectedResourceIds.length === 0"
-                @click="removeResources(selectedResourceIds)"
-                >{{ fieldLabel("删除所选") }}</el-button
-              >
-            </div>
-          </div>
-        </el-popover>
-      </div>
-    </section>
-
-    <el-card
-      v-if="showSyncCard && latestSyncJob"
-      shadow="never"
-      class="sync-card"
-    >
-      <div class="sync-card-main">
-        <div>
-          <strong>{{ fieldLabel("平台数据同步") }}</strong>
-          <span>
-            {{ fieldLabel("上次同步") }}：{{
-              formatDateTime(syncStatus.lastResourceSyncAt)
-            }}
-          </span>
+    <nav class="discovery-mode-tabs" aria-label="全球资源库搜索类型">
+      <button
+        v-for="tab in discoveryTabs"
+        :key="tab.key"
+        type="button"
+        :class="{ active: discoveryMode === tab.key }"
+        @click="
+          discoveryKeyword = '';
+          discoveryMode = tab.key;
+        "
+      >
+        {{ tab.label }}
+      </button>
+      <span>合作发现仅统计已确认且已发布的内部合作</span>
+    </nav>
+    <ProductDiscovery
+      v-if="discoveryMode !== 'resource'"
+      :mode="discoveryMode"
+      :initial-keyword="discoveryKeyword"
+      @select-brand="showBrandProducts"
+    />
+    <template v-else>
+      <section class="resource-toolbar">
+        <div class="resource-toolbar__title">
+          <h1>{{ fieldLabel("全球资源库") }}</h1>
+          <p>
+            {{ fieldLabel("汇聚全球优质创作者与媒体资源，助力品牌高效出海") }}
+          </p>
         </div>
-        <el-tag :type="syncJobTagType" effect="plain">
-          {{ latestSyncJob.status }}
-        </el-tag>
-      </div>
-      <el-progress
-        :percentage="syncProgress"
-        :status="latestSyncJob.status === '失败' ? 'exception' : undefined"
-      />
-      <div class="sync-meta">
-        <span
-          >{{ fieldLabel("成功") }} {{ latestSyncJob.successCount || 0 }}</span
-        >
-        <span
-          >{{ fieldLabel("失败") }} {{ latestSyncJob.failedCount || 0 }}</span
-        >
-        <span
-          >{{ fieldLabel("跳过") }} {{ latestSyncJob.skippedCount || 0 }}</span
-        >
-        <span v-if="latestSyncJob.currentResourceName">
-          当前：{{ latestSyncJob.currentResourceName }}
-        </span>
-        <span v-if="latestSyncJob.message">{{ latestSyncJob.message }}</span>
-      </div>
-    </el-card>
-
-    <section class="resource-table-shell">
-      <section v-loading="loading" class="compact-resource-list">
-        <div class="compact-list-head">
-          <span class="compact-index-head">
-            <el-checkbox
-              :model-value="allVisibleResourcesSelected"
-              :indeterminate="resourceSelectionIndeterminate"
-              aria-label="全选当前页资源"
-              @click.stop
-              @change="checked => toggleAllVisibleResources(Boolean(checked))"
+        <div class="resource-toolbar__filters">
+          <el-input
+            v-model="search.name"
+            clearable
+            :placeholder="fieldLabel('搜索名称、账号或关键词')"
+            class="resource-search"
+            @keyup.enter="searchData"
+          >
+            <template #prefix>
+              <IconifyIconOnline icon="ri:search-line" />
+            </template>
+          </el-input>
+          <el-select
+            v-model="search.resourceType"
+            clearable
+            :placeholder="fieldLabel('全部类型')"
+            class="toolbar-select"
+            @change="searchData"
+          >
+            <el-option
+              v-for="item in ['达人', '媒体']"
+              :key="item"
+              :label="fieldLabel(item)"
+              :value="item"
             />
-            <button
-              type="button"
-              class="sequence-sort-button"
-              :aria-label="`序号${sequenceSortOrder === 'asc' ? '正序' : '倒序'}，点击切换排序`"
-              @click="toggleSequenceSort"
-            >
-              <IconifyIconOnline
-                :icon="
-                  sequenceSortOrder === 'asc'
-                    ? 'ri:arrow-up-s-line'
-                    : 'ri:arrow-down-s-line'
+          </el-select>
+          <el-select
+            v-model="search.country"
+            clearable
+            filterable
+            allow-create
+            :placeholder="fieldLabel('全部国家/地区')"
+            class="toolbar-select toolbar-country"
+            @change="searchData"
+          >
+            <el-option
+              v-for="country in countryOptions"
+              :key="country"
+              :label="fieldLabel(country)"
+              :value="country"
+            />
+          </el-select>
+          <el-select
+            v-model="search.tier"
+            clearable
+            :placeholder="fieldLabel('全部粉丝量')"
+            class="toolbar-select"
+            @change="searchData"
+          >
+            <el-option
+              v-for="item in ['头部', '腰部', '尾部']"
+              :key="item"
+              :label="fieldLabel(item)"
+              :value="item"
+            />
+          </el-select>
+          <el-popover placement="bottom-end" :width="360" trigger="click">
+            <template #reference>
+              <el-button class="filter-trigger">
+                <IconifyIconOnline icon="ri:filter-3-line" />
+                {{ fieldLabel("筛选") }}
+              </el-button>
+            </template>
+            <div class="advanced-filter-panel">
+              <el-select
+                v-model="search.platform"
+                clearable
+                filterable
+                :placeholder="fieldLabel('全部平台')"
+              >
+                <el-option
+                  v-for="platform in platformOptions"
+                  :key="platform"
+                  :label="platform"
+                  :value="platform"
+                />
+              </el-select>
+              <el-select
+                v-model="search.industry"
+                clearable
+                filterable
+                :placeholder="fieldLabel('全部领域')"
+              >
+                <el-option
+                  v-for="item in [
+                    '科技',
+                    '生活方式',
+                    '商业',
+                    '综合新闻',
+                    '游戏',
+                    '校园',
+                    '设计'
+                  ]"
+                  :key="item"
+                  :label="fieldLabel(item)"
+                  :value="item"
+                />
+              </el-select>
+              <el-select
+                v-model="selectedProject"
+                clearable
+                filterable
+                :placeholder="fieldLabel('全部历史合作')"
+              >
+                <el-option
+                  v-for="project in projectOptions"
+                  :key="project"
+                  :label="project"
+                  :value="project"
+                />
+              </el-select>
+              <div class="advanced-filter-actions">
+                <el-button @click="resetSearch">{{
+                  fieldLabel("重置")
+                }}</el-button>
+                <el-button type="primary" @click="searchData">{{
+                  fieldLabel("应用筛选")
+                }}</el-button>
+              </div>
+              <div class="resource-management-actions">
+                <el-button text @click="syncAll">{{
+                  fieldLabel("同步数据")
+                }}</el-button>
+                <el-button text @click="openImportDialog">{{
+                  fieldLabel("上传主名单")
+                }}</el-button>
+                <el-button text @click="openCreate">{{
+                  fieldLabel("新增资源")
+                }}</el-button>
+                <el-button
+                  text
+                  type="danger"
+                  :disabled="selectedResourceIds.length === 0"
+                  @click="removeResources(selectedResourceIds)"
+                  >{{ fieldLabel("删除所选") }}</el-button
+                >
+              </div>
+            </div>
+          </el-popover>
+        </div>
+      </section>
+
+      <el-card
+        v-if="showSyncCard && latestSyncJob"
+        shadow="never"
+        class="sync-card"
+      >
+        <div class="sync-card-main">
+          <div>
+            <strong>{{ fieldLabel("平台数据同步") }}</strong>
+            <span>
+              {{ fieldLabel("上次同步") }}：{{
+                formatDateTime(syncStatus.lastResourceSyncAt)
+              }}
+            </span>
+          </div>
+          <el-tag :type="syncJobTagType" effect="plain">
+            {{ latestSyncJob.status }}
+          </el-tag>
+        </div>
+        <el-progress
+          :percentage="syncProgress"
+          :status="latestSyncJob.status === '失败' ? 'exception' : undefined"
+        />
+        <div class="sync-meta">
+          <span
+            >{{ fieldLabel("成功") }}
+            {{ latestSyncJob.successCount || 0 }}</span
+          >
+          <span
+            >{{ fieldLabel("失败") }} {{ latestSyncJob.failedCount || 0 }}</span
+          >
+          <span
+            >{{ fieldLabel("跳过") }}
+            {{ latestSyncJob.skippedCount || 0 }}</span
+          >
+          <span v-if="latestSyncJob.currentResourceName">
+            当前：{{ latestSyncJob.currentResourceName }}
+          </span>
+          <span v-if="latestSyncJob.message">{{ latestSyncJob.message }}</span>
+        </div>
+      </el-card>
+
+      <section class="resource-table-shell">
+        <section v-loading="loading" class="compact-resource-list">
+          <div class="compact-list-head">
+            <span class="compact-index-head">
+              <el-checkbox
+                :model-value="allVisibleResourcesSelected"
+                :indeterminate="resourceSelectionIndeterminate"
+                aria-label="全选当前页资源"
+                @click.stop
+                @change="checked => toggleAllVisibleResources(Boolean(checked))"
+              />
+              <button
+                type="button"
+                class="sequence-sort-button"
+                :aria-label="`序号${sequenceSortOrder === 'asc' ? '正序' : '倒序'}，点击切换排序`"
+                @click="toggleSequenceSort"
+              >
+                <IconifyIconOnline
+                  :icon="
+                    sequenceSortOrder === 'asc'
+                      ? 'ri:arrow-up-s-line'
+                      : 'ri:arrow-down-s-line'
+                  "
+                />
+              </button>
+            </span>
+            <span>{{ fieldLabel("资源身份") }}</span>
+            <span>
+              {{ fieldLabel("基础表现") }}<sup class="weekly-mark">*</sup>
+            </span>
+            <span>{{ fieldLabel("合作数据") }}</span>
+            <span>{{ fieldLabel("最近合作作品") }}</span>
+            <span>{{ fieldLabel("操作") }}</span>
+          </div>
+          <article
+            v-for="(row, index) in list"
+            :key="row.id"
+            class="compact-resource-row"
+          >
+            <span class="compact-index">
+              <el-checkbox
+                :model-value="selectedResourceIds.includes(Number(row.id))"
+                :aria-label="`选择资源 ${row.name}`"
+                @click.stop
+                @change="
+                  checked =>
+                    toggleResourceSelection(Number(row.id), Boolean(checked))
                 "
               />
-            </button>
-          </span>
-          <span>{{ fieldLabel("资源身份") }}</span>
-          <span>
-            {{ fieldLabel("基础表现") }}<sup class="weekly-mark">*</sup>
-          </span>
-          <span>{{ fieldLabel("合作数据") }}</span>
-          <span>{{ fieldLabel("最近合作作品") }}</span>
-          <span>{{ fieldLabel("操作") }}</span>
-        </div>
-        <article
-          v-for="(row, index) in list"
-          :key="row.id"
-          class="compact-resource-row"
-        >
-          <span class="compact-index">
-            <el-checkbox
-              :model-value="selectedResourceIds.includes(Number(row.id))"
-              :aria-label="`选择资源 ${row.name}`"
-              @click.stop
-              @change="
-                checked =>
-                  toggleResourceSelection(Number(row.id), Boolean(checked))
-              "
-            />
-            {{ sequenceNumber(index) }}
-          </span>
-          <div class="compact-identity">
-            <span class="avatar-box compact-avatar">
-              <span class="avatar-letter">{{ avatarText(row) }}</span>
-              <img
-                v-if="row.avatarUrl && !avatarLoadFailed[avatarKey(row)]"
-                v-show="avatarLoaded[avatarKey(row)]"
-                :src="row.avatarUrl"
-                :alt="row.name"
-                @load="markAvatarLoaded(row)"
-                @error="markAvatarFailed(row)"
-              />
+              {{ sequenceNumber(index) }}
             </span>
-            <div>
-              <button type="button" @click="openProfile(row)">
-                {{ displayText(row.name) }}
-              </button>
-              <span>{{ mediaAccountTitle(row) }}</span>
-              <p class="compact-identity-tags">
-                <el-tag size="small" effect="plain">{{
-                  resourceTypeText(row.resourceType)
-                }}</el-tag>
-                <el-tag size="small" type="warning" effect="plain">{{
-                  domainText(row)
-                }}</el-tag>
-                <el-tag size="small" type="info" effect="plain">{{
-                  tierText(row)
-                }}</el-tag>
-              </p>
-              <p class="compact-identity-meta">
-                <IconifyIconOnline icon="ri:map-pin-2-fill" />
-                <span>{{ marketText(row) }}</span>
-              </p>
-              <span class="compact-platforms">
-                <PlatformIconBadge
-                  v-for="account in platformAccounts(row)"
-                  :key="account.platform"
-                  :platform="account.platform"
-                />
-              </span>
-            </div>
-          </div>
-
-          <dl class="compact-base-metrics">
-            <div class="metric-row">
-              <div>
-                <dt>
-                  {{
-                    fieldLabel(
-                      isMediaResource(row) ? "月独立访客(UMV)" : "全网粉丝量"
-                    )
-                  }}
-                </dt>
-                <dd>{{ compactCount(resourceAudience(row)) }}</dd>
-              </div>
-              <span :class="['metric-delta', deltaClass(row, 'audience')]">
-                <IconifyIconOnline
-                  v-if="metricDelta(row, 'audience') !== null"
-                  :icon="deltaIcon(row, 'audience')"
-                />
-                {{ deltaText(metricDelta(row, "audience")) }}
-              </span>
-            </div>
-            <div v-if="!isMediaResource(row)" class="metric-row">
-              <div>
-                <dt>{{ fieldLabel("近30天平均播放量") }}</dt>
-                <dd>{{ compactCount(row.avgViews) }}</dd>
-              </div>
-              <span :class="['metric-delta', deltaClass(row, 'views')]">
-                <IconifyIconOnline
-                  v-if="metricDelta(row, 'views') !== null"
-                  :icon="deltaIcon(row, 'views')"
-                />
-                {{ deltaText(metricDelta(row, "views")) }}
-              </span>
-            </div>
-            <div v-if="!isMediaResource(row)" class="metric-row">
-              <div>
-                <dt>{{ fieldLabel("近30天平均互动量") }}</dt>
-                <dd>{{ compactCount(avgInteractions(row)) }}</dd>
-              </div>
-              <span :class="['metric-delta', deltaClass(row, 'interactions')]">
-                <IconifyIconOnline
-                  v-if="metricDelta(row, 'interactions') !== null"
-                  :icon="deltaIcon(row, 'interactions')"
-                />
-                {{ deltaText(metricDelta(row, "interactions")) }}
-              </span>
-            </div>
-            <p class="weekly-note">
-              * {{ fieldLabel("数据按配置周期刷新，百分比为周环比") }}
-            </p>
-          </dl>
-
-          <div class="compact-cooperation">
-            <dl>
-              <div>
-                <dt>{{ fieldLabel("合作费用区间(USD)") }}</dt>
-                <dd>{{ cooperationCostRange(row) }}</dd>
-              </div>
-              <div>
-                <dt>{{ fieldLabel("合作平均曝光量") }}</dt>
-                <dd>{{ compactCount(averageCooperationReach(row)) }}</dd>
-              </div>
-              <div>
-                <dt>{{ fieldLabel("合作平均互动率") }}</dt>
-                <dd>{{ cooperationEngagementText(row) }}</dd>
-              </div>
-              <div>
-                <dt>{{ fieldLabel("合作平均CPM") }}</dt>
-                <dd>{{ averageCooperationCpm(row) }}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <div class="compact-content">
-            <button
-              v-for="post in recentCooperationPosts(row)"
-              :key="post.id"
-              type="button"
-              class="cooperation-work-card"
-              @click="openUrl(post.postUrl)"
-            >
-              <span class="work-cover">
-                <img
-                  v-if="post.coverUrl"
-                  :src="post.coverUrl"
-                  :alt="post.title"
-                />
-                <IconifyIconOnline v-else icon="ri:play-circle-line" />
-                <small v-if="numberValue(post.durationSeconds) > 0">{{
-                  durationText(post.durationSeconds)
-                }}</small>
-              </span>
-              <span class="work-meta">
-                <time>{{ postDate(post) }}</time>
-                <span
-                  >{{ fieldLabel("曝光") }}
-                  {{ compactCount(post.viewCount) }}</span
-                >
-                <span
-                  >{{ fieldLabel("互动") }}
-                  {{ compactCount(postInteractions(post)) }}</span
-                >
-              </span>
-            </button>
-            <button
-              v-if="!recentCooperationPosts(row).length"
-              type="button"
-              class="compact-content-empty"
-              @click="openPosts(row)"
-            >
-              <IconifyIconOnline icon="ri:play-list-2-line" />
-              <span>{{ fieldLabel("查看作品数据") }}</span>
-            </button>
-          </div>
-
-          <div class="compact-actions">
-            <el-button link type="primary" @click="openProfile(row)">{{
-              fieldLabel("档案")
-            }}</el-button>
-            <el-button link type="primary" @click="openEdit(row)">{{
-              fieldLabel("编辑")
-            }}</el-button>
-            <el-dropdown trigger="click" placement="bottom-end">
-              <el-button link>
-                <IconifyIconOnline icon="ri:more-2-fill" />
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item @click="openPosts(row)">{{
-                    fieldLabel("查看作品")
-                  }}</el-dropdown-item>
-                  <el-dropdown-item
-                    :disabled="syncRunning || !isSyncablePlatform(row.platform)"
-                    @click="syncOne(row)"
-                    >{{ fieldLabel("同步平台数据") }}</el-dropdown-item
-                  >
-                  <el-dropdown-item
-                    v-if="isWebsitePlatform(row.platform)"
-                    @click="openTrafficCVImport(row)"
-                    >{{ fieldLabel("导入 Traffic.cv HTML") }}</el-dropdown-item
-                  >
-                  <el-dropdown-item divided @click="remove(row)">{{
-                    fieldLabel("删除资源")
-                  }}</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-        </article>
-        <el-empty
-          v-if="!loading && list.length === 0"
-          :description="fieldLabel('暂无匹配资源')"
-        />
-      </section>
-      <el-table
-        v-if="false"
-        v-loading="loading"
-        :data="list"
-        stripe
-        class="business-table"
-      >
-        <el-table-column type="expand" width="52">
-          <template #default="{ row }">
-            <div class="resource-expand">
-              <section class="detail-group">
-                <div class="detail-group__heading">
-                  <i><IconifyIconOnline icon="ri:user-star-line" /></i>
-                  <div>
-                    <strong>{{ fieldLabel("资源画像") }}</strong>
-                    <span>{{ fieldLabel("身份、领域、市场与平台信息") }}</span>
-                  </div>
-                </div>
-                <dl class="detail-grid">
-                  <div>
-                    <dt>{{ fieldLabel("资源类型") }}</dt>
-                    <dd>{{ resourceTypeText(row.resourceType) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("资源领域") }}</dt>
-                    <dd>{{ domainText(row) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("所属市场") }}</dt>
-                    <dd>{{ marketText(row) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("分级") }}</dt>
-                    <dd>{{ tierText(row) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("平台") }}</dt>
-                    <dd>{{ displayText(row.platform) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("语言") }}</dt>
-                    <dd>{{ displayText(row.language) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("媒体 / 账号") }}</dt>
-                    <dd>{{ mediaAccountTitle(row) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("状态") }}</dt>
-                    <dd>{{ enumText(row.status) }}</dd>
-                  </div>
-                </dl>
-              </section>
-
-              <section class="detail-group">
-                <div class="detail-group__heading">
-                  <i><IconifyIconOnline icon="ri:line-chart-line" /></i>
-                  <div>
-                    <strong>{{ fieldLabel("规模与内容表现") }}</strong>
-                    <span>{{ fieldLabel("平台规模及日常内容表现") }}</span>
-                  </div>
-                </div>
-                <dl class="detail-grid detail-grid--metrics">
-                  <div>
-                    <dt>{{ fieldLabel("多平台粉丝 / 访问量") }}</dt>
-                    <dd>
-                      {{ formatCount(resourceAudience(row)) }}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("月均播放量") }}</dt>
-                    <dd>{{ formatCount(row.avgViews) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("平均互动率") }}</dt>
-                    <dd>{{ percentText(row.engagementRate) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("累计平台播放") }}</dt>
-                    <dd>{{ formatCount(row.totalViews) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("已同步内容数") }}</dt>
-                    <dd>{{ formatCount(row.videoCount) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("合作效果分数") }}</dt>
-                    <dd>TBC</dd>
-                  </div>
-                </dl>
-              </section>
-
-              <section class="detail-group">
-                <div class="detail-group__heading">
-                  <i><IconifyIconOnline icon="ri:briefcase-4-line" /></i>
-                  <div>
-                    <strong>{{ fieldLabel("合作与效果") }}</strong>
-                    <span>{{
-                      fieldLabel(
-                        "默认汇总全部历史合作，可从项目名称识别单独项目"
-                      )
-                    }}</span>
-                  </div>
-                </div>
-                <dl class="detail-grid detail-grid--metrics">
-                  <div>
-                    <dt>{{ fieldLabel("合作类型") }}</dt>
-                    <dd>
-                      <CooperationTypeTags
-                        :value="cooperationTypeValues(row)"
-                        empty-text="-"
-                      />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("合作项目") }}</dt>
-                    <dd>{{ cooperationProjects(row) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("合作费用") }}</dt>
-                    <dd>{{ currencyText(cooperationStats(row).totalCost) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("合作曝光量") }}</dt>
-                    <dd>{{ formatCount(cooperationStats(row).totalReach) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("合作互动量") }}</dt>
-                    <dd>
-                      {{ formatCount(cooperationStats(row).totalEngagements) }}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>CPM</dt>
-                    <dd>{{ cooperationCpmText(row) }}</dd>
-                  </div>
-                </dl>
-                <el-table
-                  :data="cooperationsFor(row)"
-                  :empty-text="fieldLabel('暂无历史合作内容')"
-                  class="cooperation-table"
-                >
-                  <el-table-column
-                    prop="projectName"
-                    :label="fieldLabel('合作项目')"
-                    min-width="150"
-                  />
-                  <el-table-column :label="fieldLabel('合作类型')" width="120">
-                    <template #default="{ row: cooperation }">
-                      <CooperationTypeTags
-                        :value="cooperation.cooperationType"
-                        empty-text="-"
-                      />
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="fieldLabel('合作费用')" width="130">
-                    <template #default="{ row: cooperation }">
-                      {{
-                        currencyText(
-                          cooperation.quoteAmount,
-                          cooperation.currency
-                        )
-                      }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="fieldLabel('曝光量')" width="120">
-                    <template #default="{ row: cooperation }">
-                      {{ formatCount(primaryReach(cooperation)) }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="fieldLabel('互动量')" width="120">
-                    <template #default="{ row: cooperation }">
-                      {{
-                        formatCount(
-                          numberValue(cooperation.engagementCount) +
-                            numberValue(cooperation.commentsCount)
-                        )
-                      }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column
-                    :label="fieldLabel('合作内容')"
-                    min-width="220"
-                  >
-                    <template #default="{ row: cooperation }">
-                      <el-link
-                        v-if="cooperation.deliverableLinks"
-                        type="primary"
-                        :href="cooperation.deliverableLinks"
-                        target="_blank"
-                      >
-                        {{ fieldLabel("查看内容链接") }}
-                      </el-link>
-                      <span v-else>-</span>
-                    </template>
-                  </el-table-column>
-                </el-table>
-              </section>
-
-              <section class="detail-group">
-                <div class="detail-group__heading">
-                  <i><IconifyIconOnline icon="ri:contacts-line" /></i>
-                  <div>
-                    <strong>{{ fieldLabel("联系与管理") }}</strong>
-                    <span>{{ fieldLabel("对接、来源与内部备注") }}</span>
-                  </div>
-                </div>
-                <dl class="detail-grid">
-                  <div>
-                    <dt>{{ fieldLabel("联系方式") }}</dt>
-                    <dd>{{ displayText(row.contact) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("对接人 / 供应商") }}</dt>
-                    <dd>{{ displayText(row.owner) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("平台链接") }}</dt>
-                    <dd>{{ displayText(row.platformUrl) }}</dd>
-                  </div>
-                  <div>
-                    <dt>Website</dt>
-                    <dd>{{ displayText(row.website) }}</dd>
-                  </div>
-                  <div>
-                    <dt>{{ fieldLabel("数据来源") }}</dt>
-                    <dd>{{ displayText(row.referenceSource) }}</dd>
-                  </div>
-                  <div class="detail-grid__wide">
-                    <dt>{{ fieldLabel("备注") }}</dt>
-                    <dd>{{ displayText(row.notes) }}</dd>
-                  </div>
-                </dl>
-              </section>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('序号')" width="72" fixed>
-          <template #default="{ $index }">
-            {{ (currentPage - 1) * pageSize + $index + 1 }}
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('名称')" min-width="220" fixed>
-          <template #default="{ row }">
-            <div class="resource-name-cell">
-              <span class="avatar-box">
+            <div class="compact-identity">
+              <span class="avatar-box compact-avatar">
                 <span class="avatar-letter">{{ avatarText(row) }}</span>
                 <img
                   v-if="row.avatarUrl && !avatarLoadFailed[avatarKey(row)]"
@@ -2529,115 +2126,585 @@ onUnmounted(() => {
                   @error="markAvatarFailed(row)"
                 />
               </span>
-              <div class="primary-cell">
-                <el-button link type="primary" @click="openProfile(row)">
+              <div>
+                <button type="button" @click="openProfile(row)">
                   {{ displayText(row.name) }}
-                </el-button>
+                </button>
                 <span>{{ mediaAccountTitle(row) }}</span>
+                <p class="compact-identity-tags">
+                  <el-tag size="small" effect="plain">{{
+                    resourceTypeText(row.resourceType)
+                  }}</el-tag>
+                  <el-tag size="small" type="warning" effect="plain">{{
+                    domainText(row)
+                  }}</el-tag>
+                  <el-tag size="small" type="info" effect="plain">{{
+                    tierText(row)
+                  }}</el-tag>
+                </p>
+                <p class="compact-identity-meta">
+                  <IconifyIconOnline icon="ri:map-pin-2-fill" />
+                  <span>{{ marketText(row) }}</span>
+                </p>
+                <span class="compact-platforms">
+                  <PlatformIconBadge
+                    v-for="account in platformAccounts(row)"
+                    :key="account.platform"
+                    :platform="account.platform"
+                  />
+                </span>
               </div>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('资源类型 / 领域')" min-width="180">
-          <template #default="{ row }">
-            <div class="stack-cell">
-              <strong>{{ resourceTypeText(row.resourceType) }}</strong>
-              <span>{{ domainText(row) }}</span>
+
+            <dl class="compact-base-metrics">
+              <div class="metric-row">
+                <div>
+                  <dt>
+                    {{
+                      fieldLabel(
+                        isMediaResource(row) ? "月独立访客(UMV)" : "全网粉丝量"
+                      )
+                    }}
+                  </dt>
+                  <dd>{{ compactCount(resourceAudience(row)) }}</dd>
+                </div>
+                <span :class="['metric-delta', deltaClass(row, 'audience')]">
+                  <IconifyIconOnline
+                    v-if="metricDelta(row, 'audience') !== null"
+                    :icon="deltaIcon(row, 'audience')"
+                  />
+                  {{ deltaText(metricDelta(row, "audience")) }}
+                </span>
+              </div>
+              <div v-if="!isMediaResource(row)" class="metric-row">
+                <div>
+                  <dt>{{ fieldLabel("近30天平均播放量") }}</dt>
+                  <dd>{{ compactCount(row.avgViews) }}</dd>
+                </div>
+                <span :class="['metric-delta', deltaClass(row, 'views')]">
+                  <IconifyIconOnline
+                    v-if="metricDelta(row, 'views') !== null"
+                    :icon="deltaIcon(row, 'views')"
+                  />
+                  {{ deltaText(metricDelta(row, "views")) }}
+                </span>
+              </div>
+              <div v-if="!isMediaResource(row)" class="metric-row">
+                <div>
+                  <dt>{{ fieldLabel("近30天平均互动量") }}</dt>
+                  <dd>{{ compactCount(avgInteractions(row)) }}</dd>
+                </div>
+                <span
+                  :class="['metric-delta', deltaClass(row, 'interactions')]"
+                >
+                  <IconifyIconOnline
+                    v-if="metricDelta(row, 'interactions') !== null"
+                    :icon="deltaIcon(row, 'interactions')"
+                  />
+                  {{ deltaText(metricDelta(row, "interactions")) }}
+                </span>
+              </div>
+              <p class="weekly-note">
+                * {{ fieldLabel("数据按配置周期刷新，百分比为周环比") }}
+              </p>
+            </dl>
+
+            <div class="compact-cooperation">
+              <dl>
+                <div>
+                  <dt>{{ fieldLabel("合作费用区间(USD)") }}</dt>
+                  <dd>{{ cooperationCostRange(row) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ fieldLabel("合作平均曝光量") }}</dt>
+                  <dd>{{ compactCount(averageCooperationReach(row)) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ fieldLabel("合作平均互动率") }}</dt>
+                  <dd>{{ cooperationEngagementText(row) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ fieldLabel("合作平均CPM") }}</dt>
+                  <dd>{{ averageCooperationCpm(row) }}</dd>
+                </div>
+              </dl>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('所属市场')" min-width="160">
-          <template #default="{ row }">
-            <div class="stack-cell">
-              <strong>{{ marketText(row) }}</strong>
-              <span>{{ displayText(row.language) }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('分级 / 平台')" width="150">
-          <template #default="{ row }">
-            <div class="stack-cell">
-              <strong>{{ tierText(row) }}</strong>
-              <span>{{ displayText(row.platform) }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('多平台粉丝 / 访问量')" width="170">
-          <template #default="{ row }">
-            <div class="metric-cell">
-              <strong>{{ formatCount(resourceAudience(row)) }}</strong>
-              <span
-                >{{ fieldLabel("本平台") }}
-                {{ formatCount(row.followers) }}</span
+
+            <div class="compact-content">
+              <button
+                v-for="post in recentCooperationPosts(row)"
+                :key="post.id"
+                type="button"
+                class="cooperation-work-card"
+                @click="openUrl(post.postUrl)"
               >
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('月均播放 / 互动')" width="160">
-          <template #default="{ row }">
-            <div class="metric-cell">
-              <strong>{{ formatCount(row.avgViews) }}</strong>
-              <span
-                >{{ fieldLabel("互动率") }}
-                {{ percentText(row.engagementRate) }}</span
+                <span class="work-cover">
+                  <img
+                    v-if="post.coverUrl"
+                    :src="post.coverUrl"
+                    :alt="post.title"
+                  />
+                  <IconifyIconOnline v-else icon="ri:play-circle-line" />
+                  <small v-if="numberValue(post.durationSeconds) > 0">{{
+                    durationText(post.durationSeconds)
+                  }}</small>
+                </span>
+                <span class="work-meta">
+                  <time>{{ postDate(post) }}</time>
+                  <span
+                    >{{ fieldLabel("曝光") }}
+                    {{ compactCount(post.viewCount) }}</span
+                  >
+                  <span
+                    >{{ fieldLabel("互动") }}
+                    {{ compactCount(postInteractions(post)) }}</span
+                  >
+                </span>
+              </button>
+              <button
+                v-if="!recentCooperationPosts(row).length"
+                type="button"
+                class="compact-content-empty"
+                @click="openPosts(row)"
               >
+                <IconifyIconOnline icon="ri:play-list-2-line" />
+                <span>{{ fieldLabel("查看作品数据") }}</span>
+              </button>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('合作表现')" width="170">
-          <template #default="{ row }">
-            <div class="metric-cell">
-              <strong>{{
-                formatCount(cooperationStats(row).totalReach)
-              }}</strong>
-              <span
-                >{{ cooperationStats(row).count }} 次合作 · CPM
-                {{ cooperationCpmText(row) }}</span
-              >
+
+            <div class="compact-actions">
+              <el-button link type="primary" @click="openProfile(row)">{{
+                fieldLabel("档案")
+              }}</el-button>
+              <el-button link type="primary" @click="openEdit(row)">{{
+                fieldLabel("编辑")
+              }}</el-button>
+              <el-dropdown trigger="click" placement="bottom-end">
+                <el-button link>
+                  <IconifyIconOnline icon="ri:more-2-fill" />
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item @click="openPosts(row)">{{
+                      fieldLabel("查看作品")
+                    }}</el-dropdown-item>
+                    <el-dropdown-item
+                      :disabled="
+                        syncRunning || !isSyncablePlatform(row.platform)
+                      "
+                      @click="syncOne(row)"
+                      >{{ fieldLabel("同步平台数据") }}</el-dropdown-item
+                    >
+                    <el-dropdown-item
+                      v-if="isWebsitePlatform(row.platform)"
+                      @click="openTrafficCVImport(row)"
+                      >{{
+                        fieldLabel("导入 Traffic.cv HTML")
+                      }}</el-dropdown-item
+                    >
+                    <el-dropdown-item divided @click="remove(row)">{{
+                      fieldLabel("删除资源")
+                    }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column :label="fieldLabel('操作')" width="230" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openProfile(row)">{{
-              fieldLabel("档案")
-            }}</el-button>
-            <el-button link type="primary" @click="openPosts(row)">{{
-              fieldLabel("作品")
-            }}</el-button>
-            <el-button
-              link
-              type="primary"
-              :loading="!!syncingResourceIds[Number(row.id || 0)]"
-              :disabled="syncRunning || !isSyncablePlatform(row.platform)"
-              @click="syncOne(row)"
-              >{{ fieldLabel("同步") }}</el-button
-            >
-            <el-button link type="primary" @click="openEdit(row)">{{
-              fieldLabel("编辑")
-            }}</el-button>
-            <el-button link type="danger" @click="remove(row)">{{
-              fieldLabel("删除")
-            }}</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="table-footer">
-        <span
-          >{{ fieldLabel("共") }} {{ total }} {{ fieldLabel("条资源") }}</span
+          </article>
+          <el-empty
+            v-if="!loading && list.length === 0"
+            :description="fieldLabel('暂无匹配资源')"
+          />
+        </section>
+        <el-table
+          v-if="false"
+          v-loading="loading"
+          :data="list"
+          stripe
+          class="business-table"
         >
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[10, 20, 50, 100]"
-          :total="total"
-          layout="prev, pager, next, sizes"
-          background
-          @size-change="handleSizeChange"
-          @current-change="handleCurrentChange"
-        />
-      </div>
-    </section>
+          <el-table-column type="expand" width="52">
+            <template #default="{ row }">
+              <div class="resource-expand">
+                <section class="detail-group">
+                  <div class="detail-group__heading">
+                    <i><IconifyIconOnline icon="ri:user-star-line" /></i>
+                    <div>
+                      <strong>{{ fieldLabel("资源画像") }}</strong>
+                      <span>{{
+                        fieldLabel("身份、领域、市场与平台信息")
+                      }}</span>
+                    </div>
+                  </div>
+                  <dl class="detail-grid">
+                    <div>
+                      <dt>{{ fieldLabel("资源类型") }}</dt>
+                      <dd>{{ resourceTypeText(row.resourceType) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("资源领域") }}</dt>
+                      <dd>{{ domainText(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("所属市场") }}</dt>
+                      <dd>{{ marketText(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("分级") }}</dt>
+                      <dd>{{ tierText(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("平台") }}</dt>
+                      <dd>{{ displayText(row.platform) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("语言") }}</dt>
+                      <dd>{{ displayText(row.language) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("媒体 / 账号") }}</dt>
+                      <dd>{{ mediaAccountTitle(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("状态") }}</dt>
+                      <dd>{{ enumText(row.status) }}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="detail-group">
+                  <div class="detail-group__heading">
+                    <i><IconifyIconOnline icon="ri:line-chart-line" /></i>
+                    <div>
+                      <strong>{{ fieldLabel("规模与内容表现") }}</strong>
+                      <span>{{ fieldLabel("平台规模及日常内容表现") }}</span>
+                    </div>
+                  </div>
+                  <dl class="detail-grid detail-grid--metrics">
+                    <div>
+                      <dt>{{ fieldLabel("多平台粉丝 / 访问量") }}</dt>
+                      <dd>
+                        {{ formatCount(resourceAudience(row)) }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("月均播放量") }}</dt>
+                      <dd>{{ formatCount(row.avgViews) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("平均互动率") }}</dt>
+                      <dd>{{ percentText(row.engagementRate) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("累计平台播放") }}</dt>
+                      <dd>{{ formatCount(row.totalViews) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("已同步内容数") }}</dt>
+                      <dd>{{ formatCount(row.videoCount) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("合作效果分数") }}</dt>
+                      <dd>TBC</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="detail-group">
+                  <div class="detail-group__heading">
+                    <i><IconifyIconOnline icon="ri:briefcase-4-line" /></i>
+                    <div>
+                      <strong>{{ fieldLabel("合作与效果") }}</strong>
+                      <span>{{
+                        fieldLabel(
+                          "默认汇总全部历史合作，可从项目名称识别单独项目"
+                        )
+                      }}</span>
+                    </div>
+                  </div>
+                  <dl class="detail-grid detail-grid--metrics">
+                    <div>
+                      <dt>{{ fieldLabel("合作类型") }}</dt>
+                      <dd>
+                        <CooperationTypeTags
+                          :value="cooperationTypeValues(row)"
+                          empty-text="-"
+                        />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("合作项目") }}</dt>
+                      <dd>{{ cooperationProjects(row) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("合作费用") }}</dt>
+                      <dd>
+                        {{ currencyText(cooperationStats(row).totalCost) }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("合作曝光量") }}</dt>
+                      <dd>
+                        {{ formatCount(cooperationStats(row).totalReach) }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("合作互动量") }}</dt>
+                      <dd>
+                        {{
+                          formatCount(cooperationStats(row).totalEngagements)
+                        }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>CPM</dt>
+                      <dd>{{ cooperationCpmText(row) }}</dd>
+                    </div>
+                  </dl>
+                  <el-table
+                    :data="cooperationsFor(row)"
+                    :empty-text="fieldLabel('暂无历史合作内容')"
+                    class="cooperation-table"
+                  >
+                    <el-table-column
+                      prop="projectName"
+                      :label="fieldLabel('合作项目')"
+                      min-width="150"
+                    />
+                    <el-table-column
+                      :label="fieldLabel('合作类型')"
+                      width="120"
+                    >
+                      <template #default="{ row: cooperation }">
+                        <CooperationTypeTags
+                          :value="cooperation.cooperationType"
+                          empty-text="-"
+                        />
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="fieldLabel('合作费用')"
+                      width="130"
+                    >
+                      <template #default="{ row: cooperation }">
+                        {{
+                          currencyText(
+                            cooperation.quoteAmount,
+                            cooperation.currency
+                          )
+                        }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column :label="fieldLabel('曝光量')" width="120">
+                      <template #default="{ row: cooperation }">
+                        {{ formatCount(primaryReach(cooperation)) }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column :label="fieldLabel('互动量')" width="120">
+                      <template #default="{ row: cooperation }">
+                        {{
+                          formatCount(
+                            numberValue(cooperation.engagementCount) +
+                              numberValue(cooperation.commentsCount)
+                          )
+                        }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column
+                      :label="fieldLabel('合作内容')"
+                      min-width="220"
+                    >
+                      <template #default="{ row: cooperation }">
+                        <el-link
+                          v-if="cooperation.deliverableLinks"
+                          type="primary"
+                          :href="cooperation.deliverableLinks"
+                          target="_blank"
+                        >
+                          {{ fieldLabel("查看内容链接") }}
+                        </el-link>
+                        <span v-else>-</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </section>
+
+                <section class="detail-group">
+                  <div class="detail-group__heading">
+                    <i><IconifyIconOnline icon="ri:contacts-line" /></i>
+                    <div>
+                      <strong>{{ fieldLabel("联系与管理") }}</strong>
+                      <span>{{ fieldLabel("对接、来源与内部备注") }}</span>
+                    </div>
+                  </div>
+                  <dl class="detail-grid">
+                    <div>
+                      <dt>{{ fieldLabel("联系方式") }}</dt>
+                      <dd>{{ displayText(row.contact) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("对接人 / 供应商") }}</dt>
+                      <dd>{{ displayText(row.owner) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("平台链接") }}</dt>
+                      <dd>{{ displayText(row.platformUrl) }}</dd>
+                    </div>
+                    <div>
+                      <dt>Website</dt>
+                      <dd>{{ displayText(row.website) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("数据来源") }}</dt>
+                      <dd>{{ displayText(row.referenceSource) }}</dd>
+                    </div>
+                    <div class="detail-grid__wide">
+                      <dt>{{ fieldLabel("备注") }}</dt>
+                      <dd>{{ displayText(row.notes) }}</dd>
+                    </div>
+                  </dl>
+                </section>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="fieldLabel('序号')" width="72" fixed>
+            <template #default="{ $index }">
+              {{ (currentPage - 1) * pageSize + $index + 1 }}
+            </template>
+          </el-table-column>
+          <el-table-column :label="fieldLabel('名称')" min-width="220" fixed>
+            <template #default="{ row }">
+              <div class="resource-name-cell">
+                <span class="avatar-box">
+                  <span class="avatar-letter">{{ avatarText(row) }}</span>
+                  <img
+                    v-if="row.avatarUrl && !avatarLoadFailed[avatarKey(row)]"
+                    v-show="avatarLoaded[avatarKey(row)]"
+                    :src="row.avatarUrl"
+                    :alt="row.name"
+                    @load="markAvatarLoaded(row)"
+                    @error="markAvatarFailed(row)"
+                  />
+                </span>
+                <div class="primary-cell">
+                  <el-button link type="primary" @click="openProfile(row)">
+                    {{ displayText(row.name) }}
+                  </el-button>
+                  <span>{{ mediaAccountTitle(row) }}</span>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('资源类型 / 领域')"
+            min-width="180"
+          >
+            <template #default="{ row }">
+              <div class="stack-cell">
+                <strong>{{ resourceTypeText(row.resourceType) }}</strong>
+                <span>{{ domainText(row) }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="fieldLabel('所属市场')" min-width="160">
+            <template #default="{ row }">
+              <div class="stack-cell">
+                <strong>{{ marketText(row) }}</strong>
+                <span>{{ displayText(row.language) }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="fieldLabel('分级 / 平台')" width="150">
+            <template #default="{ row }">
+              <div class="stack-cell">
+                <strong>{{ tierText(row) }}</strong>
+                <span>{{ displayText(row.platform) }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('多平台粉丝 / 访问量')"
+            width="170"
+          >
+            <template #default="{ row }">
+              <div class="metric-cell">
+                <strong>{{ formatCount(resourceAudience(row)) }}</strong>
+                <span
+                  >{{ fieldLabel("本平台") }}
+                  {{ formatCount(row.followers) }}</span
+                >
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="fieldLabel('月均播放 / 互动')" width="160">
+            <template #default="{ row }">
+              <div class="metric-cell">
+                <strong>{{ formatCount(row.avgViews) }}</strong>
+                <span
+                  >{{ fieldLabel("互动率") }}
+                  {{ percentText(row.engagementRate) }}</span
+                >
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column :label="fieldLabel('合作表现')" width="170">
+            <template #default="{ row }">
+              <div class="metric-cell">
+                <strong>{{
+                  formatCount(cooperationStats(row).totalReach)
+                }}</strong>
+                <span
+                  >{{ cooperationStats(row).count }} 次合作 · CPM
+                  {{ cooperationCpmText(row) }}</span
+                >
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="fieldLabel('操作')"
+            width="230"
+            fixed="right"
+          >
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openProfile(row)">{{
+                fieldLabel("档案")
+              }}</el-button>
+              <el-button link type="primary" @click="openPosts(row)">{{
+                fieldLabel("作品")
+              }}</el-button>
+              <el-button
+                link
+                type="primary"
+                :loading="!!syncingResourceIds[Number(row.id || 0)]"
+                :disabled="syncRunning || !isSyncablePlatform(row.platform)"
+                @click="syncOne(row)"
+                >{{ fieldLabel("同步") }}</el-button
+              >
+              <el-button link type="primary" @click="openEdit(row)">{{
+                fieldLabel("编辑")
+              }}</el-button>
+              <el-button link type="danger" @click="remove(row)">{{
+                fieldLabel("删除")
+              }}</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="table-footer">
+          <span
+            >{{ fieldLabel("共") }} {{ total }} {{ fieldLabel("条资源") }}</span
+          >
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="total"
+            layout="prev, pager, next, sizes"
+            background
+            @size-change="handleSizeChange"
+            @current-change="handleCurrentChange"
+          />
+        </div>
+      </section>
+    </template>
 
     <el-dialog
       v-model="syncDialogVisible"
@@ -4043,6 +4110,49 @@ onUnmounted(() => {
   min-height: 100%;
   padding: 18px 14px 14px;
   background: #fff;
+}
+
+.discovery-mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 8px;
+  border: 1px solid #e8e5dc;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.discovery-mode-tabs button {
+  min-height: 38px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #555852;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.discovery-mode-tabs button.active {
+  background: #d4fb00;
+  color: #17181b;
+}
+
+.discovery-mode-tabs span {
+  margin-left: auto;
+  color: #878982;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .discovery-mode-tabs {
+    flex-wrap: wrap;
+  }
+  .discovery-mode-tabs span {
+    width: 100%;
+    margin-left: 8px;
+  }
 }
 
 .resource-toolbar {

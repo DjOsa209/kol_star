@@ -11,6 +11,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -85,11 +86,16 @@ func ipExternalValid(brief map[string]any) bool {
 	}
 	for _, item := range items {
 		candidate, ok := item.(map[string]any)
-		if !ok || ipMapText(candidate, "name") == "" || ipMapText(candidate, "rightsOwner") == "" || ipMapText(candidate, "reason") == "" || ipMapText(candidate, "productEvaluation") == "" || ipMapText(candidate, "technicalFit") == "" {
+		if !ok || ipMapText(candidate, "name") == "" || ipMapText(candidate, "rightsOwner") == "" || !ipHTTPURL(ipMapText(candidate, "imageUrl")) || ipMapText(candidate, "reason") == "" || ipMapText(candidate, "productEvaluation") == "" || ipMapText(candidate, "technicalFit") == "" {
 			return false
 		}
 	}
 	return true
+}
+
+func ipHTTPURL(raw string) bool {
+	parsed, err := url.ParseRequestURI(raw)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Hostname() != "" && parsed.User == nil
 }
 
 func ipMapText(values map[string]any, key string) string {
@@ -98,10 +104,25 @@ func ipMapText(values map[string]any, key string) string {
 }
 
 func ipBriefValid(brief map[string]any, candidateIDs []int64) bool {
-	for _, key := range []string{"owner", "projectPeriod", "linkedProduct", "cooperationMode", "contacts", "targetIPType", "targetIPCount"} {
+	for _, key := range []string{"owner", "projectPeriod", "linkedProduct", "cooperationMode", "targetIPType", "targetIPCount"} {
 		if ipMapText(brief, key) == "" {
 			return false
 		}
+	}
+	if stages, present := brief["contactsByStage"]; present {
+		contacts, ok := stages.(map[string]any)
+		if !ok {
+			return false
+		}
+		for _, stage := range []string{"product", "ipMarketing", "imc", "brand", "user", "media", "pr"} {
+			contact, ok := contacts[stage].(map[string]any)
+			if !ok || ipMapText(contact, "name") == "" {
+				return false
+			}
+		}
+	} else if ipMapText(brief, "contacts") == "" {
+		// Historical drafts used one free-text contacts field.
+		return false
 	}
 	evaluations, _ := brief["candidateEvaluations"].(map[string]any)
 	for _, id := range candidateIDs {
@@ -369,6 +390,15 @@ func (a *app) ipCaseSave(w http.ResponseWriter, r *http.Request) {
 
 var ipFileRoot = filepath.Join("uploads", "ip-documents")
 
+func validIPDisplayFilename(name, currentExtension string) bool {
+	if name == "" || name != strings.TrimSpace(name) || len(name) > 255 || name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) || strings.IndexFunc(name, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext != "" && ext == strings.ToLower(currentExtension) && strings.TrimSpace(strings.TrimSuffix(name, filepath.Ext(name))) != ""
+}
+
 func (a *app) ipFileUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 22<<20)
 	if err := r.ParseMultipartForm(22 << 20); err != nil {
@@ -408,7 +438,7 @@ func (a *app) ipFileUpload(w http.ResponseWriter, r *http.Request) {
 	if kind == "visual" {
 		maxSize = 5 << 20
 	}
-	if header.Size <= 0 || header.Size > maxSize || (kind == "visual" && ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp") || (kind != "visual" && ext != ".pdf") {
+	if header.Size <= 0 || header.Size > maxSize || !validIPDisplayFilename(header.Filename, ext) || (kind == "visual" && ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp") || (kind != "visual" && ext != ".pdf") {
 		writeError(w, http.StatusBadRequest, 400, "文件类型或大小不符合要求")
 		return
 	}
@@ -451,6 +481,69 @@ func (a *app) ipFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := result.LastInsertId()
 	writeOK(w, map[string]any{"id": id})
+}
+
+func (a *app) ipFileRename(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ID           int64  `json:"id"`
+		OriginalName string `json:"originalName"`
+	}
+	if !readIPJSON(w, r, &input) {
+		return
+	}
+	if input.ID <= 0 {
+		writeError(w, http.StatusBadRequest, 400, "缺少文件编号")
+		return
+	}
+	var oldName string
+	err := a.DB().QueryRowContext(r.Context(), "select original_name from biz_ip_files where id=?", input.ID).Scan(&oldName)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, 404, "文件不存在")
+		return
+	}
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if !validIPDisplayFilename(input.OriginalName, filepath.Ext(oldName)) {
+		writeError(w, http.StatusBadRequest, 400, "文件名无效或文件类型不可更改")
+		return
+	}
+	if _, err := a.DB().ExecContext(r.Context(), "update biz_ip_files set original_name=? where id=?", input.OriginalName, input.ID); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"id": input.ID, "originalName": input.OriginalName})
+}
+
+func (a *app) ipColleagues(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) > 80 {
+		writeError(w, http.StatusBadRequest, 400, "搜索词过长")
+		return
+	}
+	where := " where u.status=1"
+	args := []any{}
+	if query != "" {
+		query = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(query)
+		where += " and (u.nickname like ? escape '!' or u.username like ? escape '!' or u.employee_no like ? escape '!' or u.department_name like ? escape '!')"
+		for i := 0; i < 4; i++ {
+			args = append(args, "%"+query+"%")
+		}
+	}
+	rows, err := a.queryMaps(r.Context(), `select u.id,
+		coalesce(nullif(u.nickname,''),u.username) as name,
+		coalesce(nullif(u.department_name,''),nullif(d.name,''),'') as department
+		from sys_users u left join sys_departments d on d.id=u.dept_id`+where+
+		` order by coalesce(nullif(u.nickname,''),u.username),u.id limit 20`, args...)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if rows == nil {
+		rows = []map[string]any{}
+	}
+	writeOK(w, rows)
 }
 
 func (a *app) ipFileRead(w http.ResponseWriter, r *http.Request) {
@@ -525,6 +618,33 @@ type ipImportResult struct {
 	Message string `json:"message"`
 }
 
+func ipImportOptionIssue(row ipResourceInput) string {
+	validType := map[string]bool{
+		"游戏": true, "动画": true, "影视": true, "综艺": true, "体育": true,
+		"潮牌": true, "潮玩": true, "品牌": true, "文化艺术": true, "线下活动": true, "其他": true,
+		// Existing spreadsheets and saved IPs can retain their former categories.
+		"体育IP": true, "动画/影视": true, "音乐/活动": true, "电竞": true,
+	}
+	if !validType[strings.TrimSpace(row.IPType)] {
+		return "IP类型不在可选范围内"
+	}
+	for _, market := range row.Markets {
+		// The single-IP form allows custom markets. The template's dropdowns are
+		// suggestions, so pasted country names and other nonempty markets remain valid.
+		if strings.TrimSpace(market) == "" {
+			return "覆盖市场不能留空"
+		}
+		if strings.IndexFunc(market, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
+			return "覆盖市场包含无效字符"
+		}
+	}
+	status := strings.TrimSpace(row.CooperationStatus)
+	if status != "" && status != "可合作" && status != "洽谈中" && status != "待评估" && status != "暂不可合作" {
+		return "合作状态不在可选范围内"
+	}
+	return ""
+}
+
 func (a *app) validateIPImport(r *http.Request, rows []ipResourceInput) ([]ipImportResult, error) {
 	results := make([]ipImportResult, 0, len(rows))
 	seen := map[string]bool{}
@@ -534,6 +654,8 @@ func (a *app) validateIPImport(r *http.Request, rows []ipResourceInput) ([]ipImp
 		switch {
 		case result.Name == "" || strings.TrimSpace(row.IPType) == "" || len(row.Markets) == 0:
 			result.Status, result.Message = "error", "缺少IP名称、类型或覆盖市场"
+		case ipImportOptionIssue(row) != "":
+			result.Status, result.Message = "error", ipImportOptionIssue(row)
 		case !ipValidRange(row.PriceMin, row.PriceMax):
 			result.Status, result.Message = "error", "价格范围无效"
 		case seen[key]:
@@ -598,6 +720,9 @@ func (a *app) ipImport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		row := input.Rows[index]
+		for i := range row.Markets {
+			row.Markets[i] = strings.TrimSpace(row.Markets[i])
+		}
 		if row.Currency == "" {
 			row.Currency = "CNY"
 		}
@@ -701,8 +826,8 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, 400, "请补齐项目与各意向IP的评估信息")
 		return
 	}
-	if item.Submit && len(item.CandidateIDs) == 0 && strings.TrimSpace(item.ExternalRecommendation) == "" && ipExternalCount(item.Brief) == 0 {
-		writeError(w, http.StatusBadRequest, 400, "请选择意向IP或填写库外IP推荐")
+	if item.Submit && len(item.CandidateIDs) == 0 && ipExternalCount(item.Brief) == 0 {
+		writeError(w, http.StatusBadRequest, 400, "请选择库内意向IP或添加库外IP意向")
 		return
 	}
 	if item.BudgetCurrency == "" {

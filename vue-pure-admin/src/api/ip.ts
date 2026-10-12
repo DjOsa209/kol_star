@@ -99,6 +99,10 @@ export const deleteIPFile = (id: number) =>
   http.request<Result<null>>("post", "/business/ip/resources/file/delete", {
     data: { id }
   });
+export const renameIPFile = (id: number, originalName: string) =>
+  http.request<Result<null>>("post", "/business/ip/resources/file/rename", {
+    data: { id, originalName }
+  });
 export const previewIPImport = (rows: IPResourceInput[]) =>
   http.request<Result<any[]>>("post", "/business/ip/resources/import/preview", {
     data: { rows }
@@ -136,3 +140,10 @@ export const submitIPMarketing = (data: object) =>
   http.request<Result<null>>("post", "/business/ip/requests/marketing", {
     data
   });
+
+export const searchIPColleagues = (q: string) =>
+  http.request<Result<Array<{ id: string; name: string; department: string }>>>(
+    "get",
+    "/business/ip/colleagues",
+    { params: { q } }
+  );

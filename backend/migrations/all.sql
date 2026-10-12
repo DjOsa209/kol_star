@@ -2035,3 +2035,147 @@ where r.code in ('admin', 'operation') and r.status = 1;
 alter table biz_ip_resources add column profile json null;
 alter table biz_ip_requests add column brief json null, add column marketing_profile json null;
 alter table biz_ip_request_candidates add column assessment json null;
+
+
+-- BEGIN 044_product_discovery.sql
+use kol_admin;
+
+-- Products are curated only after a cooperation-specific suggestion is reviewed.
+-- A creator account is always identified by resource_id, never by display name.
+create table if not exists biz_discovery_brands (
+  id bigint primary key auto_increment,
+  name varchar(128) not null,
+  name_key varchar(128) not null,
+  created_at datetime not null default current_timestamp,
+  updated_at datetime not null default current_timestamp on update current_timestamp,
+  unique key uk_biz_discovery_brand_name (name_key)
+);
+
+create table if not exists biz_discovery_products (
+  id bigint primary key auto_increment,
+  brand_id bigint not null,
+  name varchar(128) not null,
+  name_key varchar(128) not null,
+  created_at datetime not null default current_timestamp,
+  updated_at datetime not null default current_timestamp on update current_timestamp,
+  unique key uk_biz_discovery_product_brand_name (brand_id, name_key),
+  index idx_biz_discovery_product_brand (brand_id)
+);
+
+create table if not exists biz_cooperation_products (
+  id bigint primary key auto_increment,
+  cooperation_id bigint not null,
+  product_id bigint null,
+  candidate_name varchar(128) not null,
+  candidate_key varchar(128) not null,
+  source_kind varchar(32) not null default 'internal_sync',
+  source_field varchar(32) not null,
+  source_text varchar(512) not null default '',
+  evidence_url varchar(1024) not null default '',
+  status varchar(16) not null default 'pending',
+  confirmed_by bigint null,
+  confirmed_at datetime null,
+  created_at datetime not null default current_timestamp,
+  updated_at datetime not null default current_timestamp on update current_timestamp,
+  unique key uk_biz_cooperation_product_candidate (cooperation_id, candidate_key),
+  unique key uk_biz_cooperation_product_confirmed (cooperation_id, product_id),
+  index idx_biz_cooperation_product_confirmed (status, product_id, cooperation_id),
+  index idx_biz_cooperation_product_review (status, created_at)
+);
+-- END 044_product_discovery.sql
+
+
+-- BEGIN 045_recommendations.sql
+use kol_admin;
+
+create table if not exists biz_recommendation_subscriptions (
+  id bigint primary key auto_increment,
+  user_id bigint not null,
+  domain varchar(16) not null,
+  name varchar(128) not null default '',
+  query_text text not null,
+  filters json not null,
+  active tinyint not null default 1,
+  request_id bigint null,
+  last_run_at datetime null,
+  created_at datetime not null default current_timestamp,
+  updated_at datetime not null default current_timestamp on update current_timestamp,
+  index idx_rec_subscription_user (user_id, domain, active),
+  index idx_rec_subscription_active (active, id)
+);
+
+create table if not exists biz_recommendation_runs (
+  id bigint primary key auto_increment,
+  subscription_id bigint not null,
+  run_key varchar(80) not null,
+  source varchar(16) not null default 'rule',
+  created_at datetime not null default current_timestamp,
+  unique key uk_rec_run (subscription_id, run_key),
+  index idx_rec_run_created (created_at)
+);
+
+create table if not exists biz_recommendation_results (
+  id bigint primary key auto_increment,
+  subscription_id bigint not null,
+  run_id bigint not null,
+  resource_id bigint not null,
+  resource_name varchar(255) not null,
+  score int not null default 0,
+  reason varchar(500) not null default '',
+  risks varchar(500) not null default '',
+  source varchar(16) not null default 'rule',
+  feedback varchar(24) not null default '',
+  is_new tinyint not null default 1,
+  created_at datetime not null default current_timestamp,
+  updated_at datetime not null default current_timestamp on update current_timestamp,
+  unique key uk_rec_result (subscription_id, resource_id),
+  index idx_rec_result_subscription (subscription_id, created_at),
+  index idx_rec_result_run (run_id)
+);
+
+create table if not exists biz_recommendation_notifications (
+  id bigint primary key auto_increment,
+  user_id bigint not null,
+  domain varchar(16) not null,
+  result_id bigint not null,
+  title varchar(128) not null,
+  description varchar(500) not null,
+  target_path varchar(512) not null,
+  read_at datetime null,
+  created_at datetime not null default current_timestamp,
+  unique key uk_rec_notice_result (result_id),
+  index idx_rec_notice_user (user_id, read_at, created_at)
+);
+-- END 045_recommendations.sql
+
+
+-- BEGIN 046_recommendation_menus.sql
+use kol_admin;
+
+update sys_menus
+set title = 'menus.creatorRecommendations'
+where id = 906 and path = '/business/assistant';
+
+update sys_menus set `rank` = 3 where id = 922 and parent_id = 920;
+update sys_menus set `rank` = 4 where id = 923 and parent_id = 920;
+update sys_menus set `rank` = 5 where id = 924 and parent_id = 920;
+
+insert into sys_menus
+  (id, parent_id, menu_type, title, path, name, component, `rank`, icon, auths, show_link)
+values
+  (925, 920, 0, 'menus.ipRecommendations', '/business/ip/recommendations', 'IPRecommendations', 'business/ip/recommendations/index', 2, 'ri:sparkling-2-line', '', 1)
+on duplicate key update
+  parent_id = values(parent_id),
+  title = values(title),
+  path = values(path),
+  name = values(name),
+  component = values(component),
+  `rank` = values(`rank`),
+  icon = values(icon),
+  show_link = values(show_link);
+
+insert ignore into sys_role_menus (role_id, menu_id)
+select r.id, 925
+from sys_roles r
+where r.code in ('admin', 'operation') and r.status = 1;
+-- END 046_recommendation_menus.sql

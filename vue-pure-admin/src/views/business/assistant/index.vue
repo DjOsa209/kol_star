@@ -5,6 +5,16 @@ import { useI18n } from "vue-i18n";
 import * as XLSX from "xlsx";
 import { fieldLabel } from "@/utils/fieldI18n";
 import {
+  deleteRecommendationSubscription,
+  listRecommendationResults,
+  listRecommendationSubscriptions,
+  runRecommendationSubscription,
+  saveRecommendationSubscription,
+  sendRecommendationFeedback,
+  type RecommendationResult,
+  type RecommendationSubscription
+} from "@/api/recommendations";
+import {
   addProjectResource,
   createMarketOption,
   deleteMarketOption,
@@ -38,6 +48,13 @@ const cooperations = ref<any[]>([]);
 const matchedResourceIds = reactive<Record<number, boolean>>({});
 const selectedProjectId = ref<number | null>(null);
 const addingToCampaign = ref(false);
+const savedSubscriptions = ref<RecommendationSubscription[]>([]);
+const selectedSubscriptionId = ref<number | null>(null);
+const savedResults = ref<RecommendationResult[]>([]);
+const savedView = ref<"new" | "all">("all");
+const savedLoading = ref(false);
+const subscriptionSaving = ref(false);
+const subscriptionName = ref("");
 const profileDrawerVisible = ref(false);
 const profileLoading = ref(false);
 const profileTab = ref("overview");
@@ -50,9 +67,8 @@ const recommendationStorageKey = "business-assistant-last-recommendation";
 const recommendationStorageVersion = 2;
 
 const form = reactive({
-  demandText:
-    "我们要在美国推广一款 AI 录音笔，预算 35000 美元，想找英语科技媒体和 YouTube 评测创作者，目标是新品曝光和点击转化。",
-  targetMarket: "美国",
+  demandText: "",
+  targetMarket: "",
   resourceType: "",
   platform: "",
   budget: 0
@@ -128,6 +144,11 @@ const panelTitle = computed(() => {
 const topRecommendations = computed(() => recommendations.value.slice(0, 6));
 const matchedRecommendations = computed(() =>
   topRecommendations.value.filter(item => matchedResourceIds[Number(item.id)])
+);
+const selectedSavedSubscription = computed(() =>
+  savedSubscriptions.value.find(
+    item => item.id === selectedSubscriptionId.value
+  )
 );
 const selectedResourceCooperations = computed(() => {
   const resourceId = Number(selectedResource.value?.id || 0);
@@ -255,6 +276,179 @@ async function generate() {
       loading.value = false;
       stopTimer();
     }
+  }
+}
+
+async function loadSavedSubscriptions(preferredId?: number) {
+  try {
+    const response = await listRecommendationSubscriptions("creator");
+    if (response.code !== 0) throw new Error(response.message);
+    savedSubscriptions.value = response.data?.list || [];
+    const nextId = preferredId || selectedSubscriptionId.value;
+    selectedSubscriptionId.value = savedSubscriptions.value.some(
+      item => item.id === nextId
+    )
+      ? nextId
+      : savedSubscriptions.value[0]?.id || null;
+    await loadSavedResults();
+  } catch (error) {
+    ElMessage.warning(
+      error instanceof Error ? error.message : "寻找条件加载失败"
+    );
+  }
+}
+
+async function loadSavedResults() {
+  if (!selectedSubscriptionId.value) {
+    savedResults.value = [];
+    return;
+  }
+  savedLoading.value = true;
+  try {
+    const response = await listRecommendationResults(
+      "creator",
+      selectedSubscriptionId.value,
+      savedView.value
+    );
+    if (response.code !== 0) throw new Error(response.message);
+    savedResults.value = response.data?.list || [];
+  } catch (error) {
+    savedResults.value = [];
+    ElMessage.warning(
+      error instanceof Error ? error.message : "推荐结果加载失败"
+    );
+  } finally {
+    savedLoading.value = false;
+  }
+}
+
+async function saveCurrentSearch() {
+  if (!form.demandText.trim()) {
+    ElMessage.warning("请先描述寻找需求");
+    return;
+  }
+  subscriptionSaving.value = true;
+  try {
+    const response = await saveRecommendationSubscription({
+      domain: "creator",
+      name:
+        subscriptionName.value.trim() || form.demandText.trim().slice(0, 30),
+      query: form.demandText.trim(),
+      markets: form.targetMarket ? [form.targetMarket] : [],
+      platforms: form.platform ? [form.platform] : [],
+      resourceTypes: form.resourceType ? [form.resourceType] : [],
+      budgetCurrency: "USD",
+      budgetMin: null,
+      budgetMax: Number(form.budget) > 0 ? Number(form.budget) : null,
+      active: true
+    });
+    if (response.code !== 0) throw new Error(response.message);
+    selectedSubscriptionId.value = Number(response.data?.id || 0) || null;
+    savedView.value = "all";
+    await loadSavedSubscriptions(selectedSubscriptionId.value || undefined);
+    subscriptionName.value = "";
+    if (response.data?.warning) {
+      ElMessage.warning(response.data.warning);
+    } else {
+      ElMessage.success(
+        "已保存寻找条件，并生成首批推荐；每周一有新匹配时将提醒你"
+      );
+    }
+  } catch (error) {
+    ElMessage.error(
+      error instanceof Error ? error.message : "保存寻找条件失败"
+    );
+  } finally {
+    subscriptionSaving.value = false;
+  }
+}
+
+async function refreshSavedSearch() {
+  if (!selectedSubscriptionId.value) return;
+  savedLoading.value = true;
+  try {
+    const response = await runRecommendationSubscription(
+      "creator",
+      selectedSubscriptionId.value
+    );
+    if (response.code !== 0) throw new Error(response.message);
+    savedView.value = "all";
+    await loadSavedResults();
+    ElMessage.success("推荐已更新");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "更新推荐失败");
+  } finally {
+    savedLoading.value = false;
+  }
+}
+
+async function toggleSavedSearch(item: RecommendationSubscription) {
+  try {
+    const response = await saveRecommendationSubscription({
+      ...item,
+      domain: "creator",
+      active: !item.active
+    });
+    if (response.code !== 0) throw new Error(response.message);
+    await loadSavedSubscriptions(item.id);
+    ElMessage.success(item.active ? "已暂停每周推荐" : "已恢复每周推荐");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "更新失败");
+  }
+}
+
+async function removeSavedSearch(item: RecommendationSubscription) {
+  try {
+    await ElMessageBox.confirm(
+      `删除「${item.name}」及其推荐记录？`,
+      "删除寻找条件",
+      {
+        type: "warning"
+      }
+    );
+    const response = await deleteRecommendationSubscription("creator", item.id);
+    if (response.code !== 0) throw new Error(response.message);
+    await loadSavedSubscriptions();
+    ElMessage.success("已删除寻找条件");
+  } catch (error) {
+    if (error !== "cancel") ElMessage.warning("删除未完成");
+  }
+}
+
+function savedResource(item: RecommendationResult) {
+  return {
+    ...item.resource,
+    id: item.resourceId,
+    name: item.resourceName,
+    reason: item.reason,
+    riskTip: Array.isArray(item.risks) ? item.risks.join("；") : item.risks,
+    priority: Number(item.score) >= 80 ? "高" : "中"
+  };
+}
+
+function confirmedProductNames(item: RecommendationResult) {
+  const values = item.resource?.confirmedProducts;
+  if (!Array.isArray(values)) return [];
+  return values
+    .map(value =>
+      typeof value === "string" ? value : String(value?.name || "")
+    )
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+async function feedbackSavedResult(item: RecommendationResult) {
+  try {
+    const response = await sendRecommendationFeedback(
+      "creator",
+      item.id,
+      "not_interested"
+    );
+    if (response.code !== 0) throw new Error(response.message);
+    await loadSavedResults();
+    ElMessage.success("已减少类似推荐");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "反馈失败");
   }
 }
 
@@ -603,20 +797,26 @@ async function addResourceToCampaign(item: any) {
     return;
   }
   addingToCampaign.value = true;
-  const res = await addProjectResource({
-    projectId: selectedProjectId.value,
-    resourceId: item.id,
-    status: "候选",
-    source: "AI 推荐",
-    reason: item.reason,
-    priority: item.priority,
-    estimatedCost: item.estimatedCost,
-    riskTip: item.riskTip
-  });
-  addingToCampaign.value = false;
-  if (res.code === 0) {
+  try {
+    const res = await addProjectResource({
+      projectId: selectedProjectId.value,
+      resourceId: item.id,
+      status: "候选",
+      source: "AI 推荐",
+      reason: item.reason,
+      priority: item.priority,
+      estimatedCost: item.estimatedCost,
+      riskTip: item.riskTip
+    });
+    if (res.code !== 0) throw new Error(res.message || "加入 Campaign 失败");
     matchedResourceIds[Number(item.id)] = true;
     ElMessage.success(`${item.name} 已加入 Campaign 候选池`);
+  } catch (error) {
+    ElMessage.error(
+      error instanceof Error ? error.message : "加入 Campaign 失败"
+    );
+  } finally {
+    addingToCampaign.value = false;
   }
 }
 
@@ -715,6 +915,7 @@ onMounted(() => {
   loadLastRecommendation();
   loadMarkets();
   loadBusinessContext();
+  loadSavedSubscriptions();
 });
 onBeforeUnmount(stopTimer);
 </script>
@@ -727,8 +928,8 @@ onBeforeUnmount(stopTimer);
           <IconifyIconOnline icon="ri:sparkling-2-line" />
         </div>
         <div>
-          <h1>{{ fieldLabel("资源智能助手") }}</h1>
-          <p>{{ fieldLabel("单次任务执行 · 全球媒体 / KOL 资源智能体") }}</p>
+          <h1>达人/媒体 AI 推荐</h1>
+          <p>从全球资源库寻找候选，保存条件后每周推送新匹配</p>
         </div>
       </div>
       <div class="status-pill" :class="{ 'is-loading': loading }">
@@ -737,16 +938,8 @@ onBeforeUnmount(stopTimer);
     </header>
 
     <section class="intro-panel">
-      {{
-        fieldLabel(
-          "嗨，我是你的资源智能助手。把项目需求、产品信息或策略方案给我--"
-        )
-      }}<strong>{{
-        fieldLabel("目标市场、预算、想要的资源类型和投放目标")
-      }}</strong
-      >。{{ fieldLabel("我会从资源库里挑出最匹配的资源，并给你")
-      }}<strong>{{ fieldLabel("推荐排序、匹配理由和过滤逻辑") }}</strong
-      >。
+      描述你的项目和寻找目标，填写<strong>市场、平台、资源类型与预算</strong>。
+      推荐仅来自现有达人/媒体资源库，可查看匹配依据并加入 Campaign。
     </section>
 
     <section class="composer-card">
@@ -765,7 +958,7 @@ onBeforeUnmount(stopTimer);
           <strong>{{ fieldLabel("产品信息 / 策略方案") }}</strong>
           <span>{{
             fieldLabel(
-              "支持 TXT、Markdown、CSV、Excel；PDF/Docx 会先作为文件上下文进入推荐。"
+              "支持 TXT、Markdown、CSV、Excel；PDF/Docx 暂只读取文件名，不解析正文。"
             )
           }}</span>
         </div>
@@ -856,6 +1049,15 @@ onBeforeUnmount(stopTimer);
         </div>
 
         <div class="action-group">
+          <el-input
+            v-model="subscriptionName"
+            class="subscription-name-input"
+            placeholder="寻找条件名称（选填）"
+            maxlength="60"
+          />
+          <el-button :loading="subscriptionSaving" @click="saveCurrentSearch">
+            保存寻找条件
+          </el-button>
           <el-button
             class="stop-button"
             :disabled="!loading"
@@ -867,6 +1069,168 @@ onBeforeUnmount(stopTimer);
             {{ fieldLabel(loading ? "生成中..." : "生成推荐") }}
           </el-button>
         </div>
+      </div>
+    </section>
+
+    <section class="saved-recommendation-section">
+      <div class="saved-section-heading">
+        <div>
+          <span class="section-kicker">WEEKLY DISCOVERY</span>
+          <h2>我的达人/媒体推荐</h2>
+          <p>每周一 09:00 更新；有新匹配时会出现在顶部通知中。</p>
+        </div>
+        <div class="saved-actions">
+          <el-select
+            v-model="selectedProjectId"
+            placeholder="选择 Campaign"
+            class="saved-campaign-select"
+          >
+            <el-option
+              v-for="project in projects"
+              :key="project.id"
+              :label="project.name"
+              :value="project.id"
+            />
+          </el-select>
+          <el-select
+            v-model="selectedSubscriptionId"
+            placeholder="选择寻找条件"
+            class="saved-subscription-select"
+            @change="loadSavedResults"
+          >
+            <el-option
+              v-for="item in savedSubscriptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+          <el-button
+            :disabled="!selectedSubscriptionId"
+            :loading="savedLoading"
+            @click="refreshSavedSearch"
+            >立即更新</el-button
+          >
+        </div>
+      </div>
+      <div v-if="selectedSavedSubscription" class="saved-subscription-summary">
+        <span>{{ selectedSavedSubscription.name }}</span>
+        <el-tag
+          :type="selectedSavedSubscription.active ? 'success' : 'info'"
+          size="small"
+        >
+          {{ selectedSavedSubscription.active ? "每周推荐中" : "已暂停" }}
+        </el-tag>
+        <el-button link @click="toggleSavedSearch(selectedSavedSubscription)">{{
+          selectedSavedSubscription.active ? "暂停" : "恢复"
+        }}</el-button>
+        <el-button
+          link
+          type="danger"
+          @click="removeSavedSearch(selectedSavedSubscription)"
+          >删除</el-button
+        >
+      </div>
+      <div class="saved-view-tabs">
+        <button
+          type="button"
+          :class="{ active: savedView === 'new' }"
+          @click="
+            savedView = 'new';
+            loadSavedResults();
+          "
+        >
+          本周新推荐
+        </button>
+        <button
+          type="button"
+          :class="{ active: savedView === 'all' }"
+          @click="
+            savedView = 'all';
+            loadSavedResults();
+          "
+        >
+          全部结果
+        </button>
+      </div>
+      <div v-loading="savedLoading" class="saved-result-list">
+        <el-empty
+          v-if="savedResults.length === 0"
+          :description="
+            selectedSubscriptionId
+              ? '暂无匹配结果，试试调整寻找条件'
+              : '保存寻找条件后，推荐结果会显示在这里'
+          "
+          :image-size="72"
+        />
+        <article
+          v-for="item in savedResults"
+          :key="item.id"
+          class="saved-result-card"
+        >
+          <div class="saved-resource-head">
+            <div class="saved-resource-identity">
+              <img
+                v-if="item.resource?.avatarUrl"
+                :src="item.resource.avatarUrl"
+                :alt="item.resourceName"
+              />
+              <span v-else class="saved-avatar-fallback">{{
+                initials(item.resourceName)
+              }}</span>
+              <div>
+                <strong>{{ item.resourceName }}</strong>
+                <span
+                  >{{ item.resource?.platform || "平台待补充" }} ·
+                  {{ item.resource?.country || "地区待补充" }}</span
+                >
+              </div>
+            </div>
+            <div class="saved-match-score">
+              <strong>{{ item.score }}</strong
+              ><span>/100 匹配</span>
+            </div>
+          </div>
+          <div class="saved-result-details">
+            <p>
+              <strong>推荐依据</strong>
+              {{ item.reason || "综合匹配当前寻找条件" }}
+            </p>
+            <p v-if="confirmedProductNames(item).length">
+              <strong>已确认合作产品</strong>
+              {{ confirmedProductNames(item).join("、") }}
+            </p>
+            <p v-if="item.resource?.publishedCooperations">
+              <strong>已发布合作</strong>
+              {{ item.resource.publishedCooperations }} 次 · 历史曝光
+              {{ compactNumber(item.resource?.historicalImpressions) }}
+            </p>
+            <p v-if="item.risks">
+              <strong>注意</strong>
+              {{
+                Array.isArray(item.risks) ? item.risks.join("；") : item.risks
+              }}
+            </p>
+            <small
+              >{{ item.source === "ai" ? "AI 排序 · 实时依据" : "规则匹配" }} ·
+              合作产品依据来自已确认记录；预估费用需最终报价确认</small
+            >
+          </div>
+          <div class="saved-result-actions">
+            <el-button @click="openResourceProfile(savedResource(item))"
+              >查看档案</el-button
+            >
+            <el-button
+              type="primary"
+              :loading="addingToCampaign"
+              @click="addResourceToCampaign(savedResource(item))"
+              >加入 Campaign</el-button
+            >
+            <el-button link @click="feedbackSavedResult(item)"
+              >不感兴趣</el-button
+            >
+          </div>
+        </article>
       </div>
     </section>
 
@@ -1490,11 +1854,191 @@ onBeforeUnmount(stopTimer);
 .composer-card,
 .analysis-panel,
 .recommend-section,
-.logic-section {
+.logic-section,
+.saved-recommendation-section {
   background: #fff;
   border: 1px solid #e2e2e2;
   border-radius: 8px;
   box-shadow: 0 8px 22px rgb(15 23 42 / 4%);
+}
+
+.subscription-name-input {
+  width: 184px;
+}
+.saved-recommendation-section {
+  padding: 20px;
+  margin: 14px 0;
+}
+.saved-section-heading,
+.saved-actions,
+.saved-subscription-summary,
+.saved-resource-head,
+.saved-resource-identity,
+.saved-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.saved-section-heading,
+.saved-resource-head {
+  justify-content: space-between;
+}
+.saved-section-heading {
+  align-items: flex-start;
+}
+.saved-section-heading h2 {
+  margin: 3px 0 5px;
+  font-size: 20px;
+}
+.saved-section-heading p {
+  margin: 0;
+  color: #81847e;
+  font-size: 13px;
+}
+.section-kicker {
+  color: #718600;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+.saved-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.saved-subscription-select,
+.saved-campaign-select {
+  width: 190px;
+}
+.saved-subscription-summary {
+  flex-wrap: wrap;
+  margin-top: 15px;
+  padding: 10px 13px;
+  border-radius: 8px;
+  background: #f8f9f0;
+  font-size: 13px;
+}
+.saved-subscription-summary > span:first-child {
+  font-weight: 700;
+}
+.saved-view-tabs {
+  display: flex;
+  gap: 22px;
+  margin: 20px 0 14px;
+  border-bottom: 1px solid #e8e9e2;
+}
+.saved-view-tabs button {
+  padding: 0 2px 11px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: #777;
+  font-weight: 700;
+  cursor: pointer;
+}
+.saved-view-tabs button.active {
+  border-bottom-color: #c8ec00;
+  color: #16181a;
+}
+.saved-result-list {
+  display: grid;
+  gap: 12px;
+  min-height: 90px;
+}
+.saved-result-card {
+  display: grid;
+  grid-template-columns: minmax(175px, 1fr) minmax(250px, 2fr) auto;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid #e9e9e3;
+  border-radius: 9px;
+}
+.saved-resource-head {
+  align-items: flex-start;
+  gap: 10px;
+}
+.saved-resource-identity img,
+.saved-avatar-fallback {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.saved-avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: #edf4bc;
+  font-weight: 700;
+}
+.saved-resource-identity strong,
+.saved-resource-identity span {
+  display: block;
+}
+.saved-resource-identity strong {
+  margin-bottom: 5px;
+  font-size: 15px;
+}
+.saved-resource-identity span {
+  color: #777;
+  font-size: 12px;
+}
+.saved-match-score {
+  white-space: nowrap;
+  color: #648000;
+}
+.saved-match-score strong {
+  font-size: 24px;
+}
+.saved-match-score span {
+  margin-left: 2px;
+  font-size: 11px;
+}
+.saved-result-details p {
+  margin: 0 0 5px;
+  color: #555;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.saved-result-details p strong {
+  margin-right: 7px;
+  color: #17181b;
+}
+.saved-result-details small {
+  color: #999;
+}
+.saved-result-actions {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  min-width: 120px;
+}
+.saved-result-actions :deep(.el-button) {
+  margin: 0;
+}
+.saved-result-actions :deep(.el-button--primary) {
+  background: #d4fb00;
+  border-color: #d4fb00;
+  color: #17181b;
+  font-weight: 700;
+}
+@media (max-width: 1180px) {
+  .saved-result-card {
+    grid-template-columns: 1fr;
+  }
+  .saved-result-actions {
+    flex-direction: row;
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 760px) {
+  .saved-section-heading {
+    flex-direction: column;
+  }
+  .saved-actions,
+  .saved-campaign-select,
+  .saved-subscription-select,
+  .subscription-name-input {
+    width: 100%;
+  }
 }
 
 .intro-panel {

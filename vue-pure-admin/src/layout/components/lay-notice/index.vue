@@ -1,98 +1,178 @@
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { ref, computed } from "vue";
-import { noticesData } from "./data";
-import NoticeList from "./components/NoticeList.vue";
-
+import {
+  listRecommendationNotifications,
+  markRecommendationNotificationsRead,
+  type RecommendationDomain,
+  type RecommendationNotification
+} from "@/api/recommendations";
 import BellIcon from "~icons/lucide/bell";
-import ArrowRightIcon from "~icons/ri/arrow-right-s-line";
 
+const router = useRouter();
 const { t } = useI18n();
 const dropdownRef = ref();
-const notices = ref(noticesData);
-const activeKey = ref(noticesData[0]?.key);
+const activeDomain = ref<RecommendationDomain>("creator");
+const notices = ref<RecommendationNotification[]>([]);
+const unread = ref(0);
+const loading = ref(false);
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
-const getLabel = computed(
-  () => item =>
-    t(item.name) + (item.list.length > 0 ? `(${item.list.length})` : "")
+const visibleNotices = computed(() =>
+  notices.value.filter(item => item.domain === activeDomain.value)
+);
+const unreadInActiveDomain = computed(() =>
+  visibleNotices.value.filter(item => !item.readAt)
+);
+const creatorCount = computed(
+  () =>
+    notices.value.filter(item => item.domain === "creator" && !item.readAt)
+      .length
+);
+const ipCount = computed(
+  () =>
+    notices.value.filter(item => item.domain === "ip" && !item.readAt).length
 );
 
-const currentNoticeHasData = computed(() => {
-  const currentNotice = notices.value.find(
-    item => item.key === activeKey.value
-  );
-  return currentNotice && currentNotice.list.length > 0;
-});
-
-const hasAnyNoticeData = computed(() => {
-  return notices.value.some(
-    item => Array.isArray(item.list) && item.list.length > 0
-  );
-});
-
-const onWatchMore = () => {
-  dropdownRef.value.handleClose();
-};
-
-const onMarkAsRead = () => {
-  const currentNotice = notices.value.find(
-    item => item.key === activeKey.value
-  );
-  if (currentNotice) {
-    currentNotice.list = [];
+async function refresh(silent = false) {
+  if (loading.value) return;
+  loading.value = true;
+  try {
+    const response = await listRecommendationNotifications();
+    notices.value = response.data.list || [];
+    unread.value = Number(response.data.unread) || 0;
+  } catch {
+    if (!silent) notices.value = [];
+  } finally {
+    loading.value = false;
   }
-};
+}
+
+async function markRead(ids: number[]) {
+  if (!ids.length) return;
+  await markRecommendationNotificationsRead(ids);
+  const idSet = new Set(ids);
+  const newlyRead = notices.value.filter(
+    item => idSet.has(item.id) && !item.readAt
+  ).length;
+  const time = new Date().toISOString();
+  notices.value.forEach(item => {
+    if (idSet.has(item.id)) item.readAt = time;
+  });
+  unread.value = Math.max(0, unread.value - newlyRead);
+}
+
+async function openNotice(item: RecommendationNotification) {
+  try {
+    if (!item.readAt) await markRead([item.id]);
+  } finally {
+    dropdownRef.value?.handleClose();
+    const fallback =
+      item.domain === "ip"
+        ? "/business/ip/recommendations"
+        : "/business/assistant";
+    const validTarget =
+      item.domain === "ip"
+        ? item.targetPath?.startsWith("/business/ip/recommendations")
+        : item.targetPath?.startsWith("/business/assistant");
+    router.push(validTarget ? item.targetPath : fallback);
+  }
+}
+
+async function markDomainRead() {
+  try {
+    await markRead(unreadInActiveDomain.value.map(item => item.id));
+  } catch {
+    // Keep the unread marker when the server rejects the update.
+  }
+}
+
+function onVisibleChange(visible: boolean) {
+  if (visible) refresh(true);
+}
+
+function formatTime(value: string) {
+  return String(value || "")
+    .replace("T", " ")
+    .slice(0, 16);
+}
+
+function openDomain() {
+  dropdownRef.value?.handleClose();
+  router.push(
+    activeDomain.value === "ip"
+      ? "/business/ip/recommendations"
+      : "/business/assistant"
+  );
+}
+
+onMounted(() => {
+  refresh(true);
+  refreshTimer = setInterval(() => refresh(true), 60000);
+});
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer);
+});
 </script>
 
 <template>
-  <el-dropdown ref="dropdownRef" trigger="click" placement="bottom-end">
-    <span
-      :class="['dropdown-badge', 'navbar-bg-hover', 'select-none', 'mr-1.75']"
-    >
-      <el-badge is-dot :hidden="!hasAnyNoticeData">
-        <span class="header-notice-icon">
-          <IconifyIconOffline :icon="BellIcon" />
-        </span>
+  <el-dropdown
+    ref="dropdownRef"
+    trigger="click"
+    placement="bottom-end"
+    @visible-change="onVisibleChange"
+  >
+    <span class="dropdown-badge navbar-bg-hover select-none mr-1.75">
+      <el-badge :value="unread" :max="99" :hidden="unread === 0">
+        <span class="header-notice-icon"
+          ><IconifyIconOffline :icon="BellIcon"
+        /></span>
       </el-badge>
     </span>
     <template #dropdown>
-      <el-dropdown-menu>
-        <el-tabs
-          v-model="activeKey"
-          :stretch="true"
-          class="dropdown-tabs"
-          :style="{ width: notices.length === 0 ? '200px' : '330px' }"
-        >
+      <el-dropdown-menu class="recommendation-notice-menu">
+        <div class="notice-head">
+          <strong>推荐提醒</strong><small>每周更新</small>
+        </div>
+        <el-tabs v-model="activeDomain" stretch class="notice-tabs">
+          <el-tab-pane
+            name="creator"
+            :label="`${t('menus.creatorRecommendations')} ${creatorCount || ''}`"
+          />
+          <el-tab-pane
+            name="ip"
+            :label="`${t('menus.ipRecommendations')} ${ipCount || ''}`"
+          />
+        </el-tabs>
+        <el-scrollbar max-height="350px" class="notice-scroll">
           <el-empty
-            v-if="notices.length === 0"
-            :description="t('status.pureNoMessage')"
+            v-if="!visibleNotices.length"
+            description="暂无新推荐提醒"
             :image-size="60"
           />
-          <span v-else>
-            <template v-for="item in notices" :key="item.key">
-              <el-tab-pane :label="getLabel(item)" :name="`${item.key}`">
-                <el-scrollbar max-height="345px">
-                  <div class="noticeList-container">
-                    <NoticeList :list="item.list" :emptyText="item.emptyText" />
-                  </div>
-                </el-scrollbar>
-              </el-tab-pane>
-            </template>
-          </span>
-        </el-tabs>
-        <div
-          v-if="currentNoticeHasData"
-          class="border-t border-t-(--el-border-color-light) text-sm"
-        >
-          <div class="flex-bc m-1">
-            <el-button type="primary" size="small" text @click="onWatchMore">
-              {{ t("buttons.pureWatchMore") }}
-              <IconifyIconOffline :icon="ArrowRightIcon" />
-            </el-button>
-            <el-button type="primary" size="small" text @click="onMarkAsRead">
-              {{ t("buttons.pureMarkAsRead") }}
-            </el-button>
-          </div>
+          <button
+            v-for="item in visibleNotices"
+            :key="item.id"
+            class="notice-item"
+            :class="{ unread: !item.readAt }"
+            type="button"
+            @click.stop="openNotice(item)"
+          >
+            <span class="notice-title"
+              ><i v-if="!item.readAt" />{{ item.title }}</span
+            >
+            <span class="notice-description">{{ item.description }}</span>
+            <time>{{ formatTime(item.createdAt) }}</time>
+          </button>
+        </el-scrollbar>
+        <div class="notice-foot">
+          <el-button size="small" text @click.stop="markDomainRead">{{
+            t("buttons.pureMarkAsRead")
+          }}</el-button>
+          <el-button size="small" text @click.stop="openDomain"
+            >查看推荐 →</el-button
+          >
         </div>
       </el-dropdown-menu>
     </template>
@@ -100,34 +180,27 @@ const onMarkAsRead = () => {
 </template>
 
 <style lang="scss" scoped>
-/* ”铃铛“摇晃衰减动画 */
 @keyframes pure-bell-ring {
   0%,
   100% {
     transform-origin: top;
   }
-
   15% {
     transform: rotateZ(10deg);
   }
-
   30% {
     transform: rotateZ(-10deg);
   }
-
   45% {
     transform: rotateZ(5deg);
   }
-
   60% {
     transform: rotateZ(-5deg);
   }
-
   75% {
     transform: rotateZ(2deg);
   }
 }
-
 .dropdown-badge {
   display: flex;
   align-items: center;
@@ -135,33 +208,89 @@ const onMarkAsRead = () => {
   width: 40px;
   height: 48px;
   cursor: pointer;
-
-  .header-notice-icon {
-    font-size: 16px;
-  }
-
-  &:hover {
-    .header-notice-icon svg {
-      animation: pure-bell-ring 1s both;
-    }
-  }
 }
-
-.dropdown-tabs {
-  .noticeList-container {
-    padding: 15px 24px 0;
-  }
-
-  :deep(.el-tabs__header) {
-    margin: 0;
-  }
-
-  :deep(.el-tabs__nav-wrap)::after {
-    height: 1px;
-  }
-
-  :deep(.el-tabs__nav-wrap) {
-    padding: 0 36px;
-  }
+.header-notice-icon {
+  font-size: 16px;
+}
+.dropdown-badge:hover .header-notice-icon :deep(svg) {
+  animation: pure-bell-ring 1s both;
+}
+.recommendation-notice-menu {
+  width: 360px;
+  padding: 0;
+}
+.notice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 17px 3px;
+}
+.notice-head strong {
+  font-size: 14px;
+}
+.notice-head small {
+  color: #92999a;
+}
+.notice-tabs {
+  padding: 0 12px;
+}
+.notice-tabs :deep(.el-tabs__header) {
+  margin: 0;
+}
+.notice-scroll {
+  padding: 4px 12px;
+}
+.notice-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 11px 10px;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #ebede7;
+}
+.notice-item:hover {
+  background: #f7f9ed;
+}
+.notice-item.unread {
+  background: #faffeb;
+}
+.notice-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #161a1d;
+}
+.notice-title i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: #a5d900;
+  border-radius: 50%;
+}
+.notice-description {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #747d7f;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.notice-item time {
+  font-size: 11px;
+  color: #9ca4a5;
+}
+.notice-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  border-top: 1px solid #e8eae3;
 }
 </style>

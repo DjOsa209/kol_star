@@ -70,11 +70,13 @@ panel:
 menus:
   ipOperations: IP运营
   ipLibrary: IP资源库
+  ipRecommendations: IP AI推荐
   ipRequests: IP需求管理
   ipFeedback: 初步意向IP反馈
   ipMarketing: 营销意见补充
   businessOperations: 资源运营
   businessAssistant: 智能资源助手
+  creatorRecommendations: 达人/媒体AI推荐
   businessResources: 全球资源库
   businessTags: 标签体系
   businessProjects: 项目合作
