@@ -22,7 +22,12 @@ import {
   type RecommendationSubscription,
   type RecommendationSubscriptionInput
 } from "@/api/recommendations";
-import { getIPRequest, getIPResource, readIPFile } from "@/api/ip";
+import {
+  IP_DOCUMENT_TIMEOUT_MS,
+  getIPRequest,
+  getIPResource,
+  readIPFile
+} from "@/api/ip";
 
 defineOptions({ name: "IPRecommendations" });
 
@@ -50,7 +55,10 @@ const previewUrl = ref("");
 const previewFileName = ref("");
 const previewPages = ref(0);
 const previewLoading = ref(false);
+const previewDownloading = ref(false);
 const previewError = ref("");
+const previewFile = ref<any>(null);
+let previewRequestId = 0;
 let disposed = false;
 const markets = [
   "中国",
@@ -213,24 +221,36 @@ async function openResourceDrawer(id: number) {
 }
 
 async function openDocument(file: any) {
-  previewLoading.value = true;
+  const requestId = ++previewRequestId;
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
+  previewUrl.value = "";
+  previewLoading.value = false;
+  previewDownloading.value = true;
   previewError.value = "";
+  previewFile.value = file;
   previewFileName.value = String(file.originalName || "版权资料.pdf");
   previewPages.value = 0;
+  previewVisible.value = true;
   try {
-    const blob = await readIPFile(Number(file.id));
-    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
+    const blob = await readIPFile(Number(file.id), IP_DOCUMENT_TIMEOUT_MS);
+    if (requestId !== previewRequestId || !previewVisible.value || disposed)
+      return;
     previewUrl.value = URL.createObjectURL(
       new Blob([blob], { type: "application/pdf" })
     );
-    previewVisible.value = true;
+    previewDownloading.value = false;
+    previewLoading.value = true;
   } catch {
-    previewLoading.value = false;
-    ElMessage.error("资料读取失败，请稍后重试");
+    if (requestId === previewRequestId && previewVisible.value) {
+      previewDownloading.value = false;
+      previewError.value = "资料下载失败，请检查网络后重试";
+    }
   }
 }
 
 function closePreview() {
+  ++previewRequestId;
+  previewDownloading.value = false;
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
   previewUrl.value = "";
 }
@@ -992,7 +1012,7 @@ onUnmounted(() => {
       :title="previewFileName"
       width="80%"
       top="5vh"
-      @closed="closePreview"
+      @close="closePreview"
     >
       <div v-if="previewUrl" class="pdf-preview">
         <div class="pdf-toolbar">
@@ -1016,6 +1036,15 @@ onUnmounted(() => {
           />
         </div>
       </div>
+      <div v-else-if="previewError" class="pdf-error">
+        <p>{{ previewError }}</p>
+        <el-button v-if="previewFile" @click="openDocument(previewFile)">
+          重试
+        </el-button>
+      </div>
+      <p v-else-if="previewDownloading" class="pdf-loading">
+        正在下载 PDF，请稍候…
+      </p>
     </el-dialog>
   </div>
 </template>

@@ -88,12 +88,16 @@ export const uploadIPFile = (
     { timeout: 60000, headers: { "Content-Type": false } }
   );
 };
-export const readIPFile = (id: number) =>
+export const IP_DOCUMENT_TIMEOUT_MS = 180000;
+export const readIPFile = (id: number, timeout?: number) =>
   http.request<Blob>(
     "get",
     "/business/ip/resources/file",
     { params: { id }, responseType: "blob" },
-    { beforeResponseCallback: response => response.data } as any
+    {
+      ...(timeout ? { timeout } : {}),
+      beforeResponseCallback: response => response.data
+    } as any
   );
 export const deleteIPFile = (id: number) =>
   http.request<Result<null>>("post", "/business/ip/resources/file/delete", {

@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import * as XLSX from "xlsx";
 import VuePdfEmbed from "vue-pdf-embed";
 import {
+  IP_DOCUMENT_TIMEOUT_MS,
   deleteIPFile,
   getIPResource,
   importIPResources,
@@ -190,7 +191,10 @@ const previewURL = ref("");
 const previewFileName = ref("");
 const previewPageCount = ref(0);
 const previewLoading = ref(false);
+const previewDownloading = ref(false);
 const previewError = ref("");
+const previewFile = ref<any>(null);
+let previewRequestId = 0;
 const importFileName = ref("");
 const importRows = ref<IPResourceInput[]>([]);
 const importPreview = ref<any[]>([]);
@@ -629,26 +633,45 @@ async function addCopyright(event: Event) {
   }
 }
 async function openFile(file: any, download = false) {
-  const blob = await readIPFile(Number(file.id));
-  const url = URL.createObjectURL(
-    new Blob([blob], { type: "application/pdf" })
-  );
-  if (download) {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = file.originalName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-  } else {
+  const requestId = download ? 0 : ++previewRequestId;
+  if (!download) {
     if (previewURL.value) URL.revokeObjectURL(previewURL.value);
-    previewURL.value = url;
+    previewURL.value = "";
+    previewFile.value = file;
     previewFileName.value = String(file.originalName || "IP资料.pdf");
     previewPageCount.value = 0;
-    previewLoading.value = true;
+    previewLoading.value = false;
+    previewDownloading.value = true;
     previewError.value = "";
     previewVisible.value = true;
+  }
+  try {
+    const blob = await readIPFile(Number(file.id), IP_DOCUMENT_TIMEOUT_MS);
+    if (!download && (requestId !== previewRequestId || !previewVisible.value))
+      return;
+    const url = URL.createObjectURL(
+      new Blob([blob], { type: "application/pdf" })
+    );
+    if (download) {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.originalName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } else {
+      previewURL.value = url;
+      previewDownloading.value = false;
+      previewLoading.value = true;
+    }
+  } catch {
+    if (download) {
+      ElMessage.error("文件下载失败，请稍后重试");
+    } else if (requestId === previewRequestId && previewVisible.value) {
+      previewDownloading.value = false;
+      previewError.value = "文件下载失败，请检查网络后重试";
+    }
   }
 }
 function pdfLoaded(doc: { numPages: number }) {
@@ -884,13 +907,18 @@ function syncRoute() {
 }
 watch(() => route.fullPath, syncRoute);
 watch(previewVisible, open => {
-  if (!open && previewURL.value) {
-    URL.revokeObjectURL(previewURL.value);
-    previewURL.value = "";
+  if (!open) {
+    ++previewRequestId;
+    previewDownloading.value = false;
+    if (previewURL.value) {
+      URL.revokeObjectURL(previewURL.value);
+      previewURL.value = "";
+    }
   }
 });
 onMounted(syncRoute);
 onUnmounted(() => {
+  ++previewRequestId;
   if (previewURL.value) URL.revokeObjectURL(previewURL.value);
   if (visualURL.value) URL.revokeObjectURL(visualURL.value);
   if (drawerVisualURL.value) URL.revokeObjectURL(drawerVisualURL.value);
@@ -1810,6 +1838,15 @@ onUnmounted(() => {
             @rendering-failed="pdfFailed"
           />
         </div>
+      </div>
+      <div v-else-if="previewError" class="ip-pdf-error">
+        <p>{{ previewError }}</p>
+        <el-button v-if="previewFile" @click="openFile(previewFile)"
+          >重试</el-button
+        >
+      </div>
+      <div v-else-if="previewDownloading" class="ip-pdf-error">
+        正在下载 PDF，请稍候…
       </div>
     </el-dialog>
   </div>
