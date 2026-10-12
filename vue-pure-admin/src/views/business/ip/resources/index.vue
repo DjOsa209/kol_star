@@ -187,7 +187,7 @@ const caseTitle = ref("");
 const caseSummary = ref("");
 const previewVisible = ref(false);
 const previewURL = ref("");
-const previewPage = ref(1);
+const previewFileName = ref("");
 const previewPageCount = ref(0);
 const previewLoading = ref(false);
 const previewError = ref("");
@@ -644,7 +644,7 @@ async function openFile(file: any, download = false) {
   } else {
     if (previewURL.value) URL.revokeObjectURL(previewURL.value);
     previewURL.value = url;
-    previewPage.value = 1;
+    previewFileName.value = String(file.originalName || "IP资料.pdf");
     previewPageCount.value = 0;
     previewLoading.value = true;
     previewError.value = "";
@@ -1790,23 +1790,20 @@ onUnmounted(() => {
     </template>
     <el-dialog v-model="previewVisible" title="PDF预览" width="80%" top="5vh">
       <div v-if="previewURL" class="ip-pdf-preview">
-        <div v-if="previewPageCount > 1" class="ip-pdf-toolbar">
-          <el-button :disabled="previewPage <= 1" @click="previewPage--"
-            >上一页</el-button
-          >
-          <span>{{ previewPage }} / {{ previewPageCount }}</span>
-          <el-button
-            :disabled="previewPage >= previewPageCount"
-            @click="previewPage++"
-            >下一页</el-button
-          >
+        <div class="ip-pdf-toolbar">
+          <span>{{
+            previewPageCount
+              ? `共 ${previewPageCount} 页 · 向下滚动查看`
+              : "正在读取 PDF…"
+          }}</span>
+          <a :href="previewURL" :download="previewFileName">下载 PDF</a>
         </div>
         <div v-if="previewError" class="ip-pdf-error">{{ previewError }}</div>
-        <div v-else v-loading="previewLoading" class="ip-pdf">
+        <div v-else class="ip-pdf">
+          <p v-if="previewLoading" class="ip-pdf-loading">正在渲染 PDF…</p>
           <vue-pdf-embed
             :key="previewURL"
             :source="previewURL"
-            :page="previewPage"
             @loaded="pdfLoaded"
             @rendered="previewLoading = false"
             @loading-failed="pdfFailed"
@@ -2504,14 +2501,36 @@ onUnmounted(() => {
   width: 100%;
   min-height: 55vh;
   max-height: 70vh;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  background: #f3f4f0;
 }
 .ip-pdf-toolbar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 16px;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
+}
+.ip-pdf-toolbar a {
+  font-size: 13px;
+  font-weight: 700;
+  color: #567811;
+}
+.ip-pdf-loading {
+  margin: 0 0 12px;
+  color: #737373;
+}
+.ip-pdf :deep(.vue-pdf-embed > div + div) {
+  margin-top: 12px;
+}
+.ip-pdf :deep(canvas) {
+  display: block;
+  max-width: 100%;
+  height: auto !important;
+  margin: 0 auto;
 }
 .ip-pdf-error {
   padding: 48px 16px;

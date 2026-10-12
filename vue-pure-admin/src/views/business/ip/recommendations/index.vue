@@ -48,7 +48,6 @@ const drawerVisualUrl = ref("");
 const previewVisible = ref(false);
 const previewUrl = ref("");
 const previewFileName = ref("");
-const previewPage = ref(1);
 const previewPages = ref(0);
 const previewLoading = ref(false);
 const previewError = ref("");
@@ -217,7 +216,6 @@ async function openDocument(file: any) {
   previewLoading.value = true;
   previewError.value = "";
   previewFileName.value = String(file.originalName || "版权资料.pdf");
-  previewPage.value = 1;
   previewPages.value = 0;
   try {
     const blob = await readIPFile(Number(file.id));
@@ -998,24 +996,19 @@ onUnmounted(() => {
     >
       <div v-if="previewUrl" class="pdf-preview">
         <div class="pdf-toolbar">
-          <div v-if="previewPages > 1">
-            <el-button :disabled="previewPage <= 1" @click="previewPage--"
-              >上一页</el-button
-            ><span>{{ previewPage }} / {{ previewPages }}</span
-            ><el-button
-              :disabled="previewPage >= previewPages"
-              @click="previewPage++"
-              >下一页</el-button
-            >
-          </div>
+          <span>{{
+            previewPages
+              ? `共 ${previewPages} 页 · 向下滚动查看`
+              : "正在读取 PDF…"
+          }}</span>
           <a :href="previewUrl" :download="previewFileName">下载 PDF</a>
         </div>
         <p v-if="previewError" class="pdf-error">{{ previewError }}</p>
-        <div v-else v-loading="previewLoading" class="pdf-canvas">
+        <div v-else class="pdf-canvas">
+          <p v-if="previewLoading" class="pdf-loading">正在渲染 PDF…</p>
           <vue-pdf-embed
             :key="previewUrl"
             :source="previewUrl"
-            :page="previewPage"
             @loaded="doc => (previewPages = doc.numPages)"
             @rendered="previewLoading = false"
             @loading-failed="pdfFailed"
@@ -1560,11 +1553,6 @@ onUnmounted(() => {
   justify-content: space-between;
   margin-bottom: 14px;
 }
-.pdf-toolbar > div {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 .pdf-toolbar a {
   font-size: 13px;
   font-weight: 700;
@@ -1573,14 +1561,24 @@ onUnmounted(() => {
 .pdf-canvas {
   min-height: 240px;
   max-height: 72vh;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
   background: #f3f4f0;
+}
+.pdf-loading {
+  margin: 0 0 12px;
+  color: #737373;
+}
+.pdf-canvas :deep(.vue-pdf-embed > div + div) {
+  margin-top: 12px;
 }
 .pdf-canvas :deep(canvas) {
   display: block;
   max-width: 100%;
   height: auto !important;
-  margin: 0 auto 10px;
+  margin: 0 auto;
 }
 .pdf-error {
   color: #c3483f;
