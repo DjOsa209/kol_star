@@ -192,6 +192,7 @@ func (a *app) routes(mux *http.ServeMux) {
 		resourceImages.ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("POST /login", a.login)
+	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("POST /refresh-token", a.refreshToken)
 	mux.HandleFunc("GET /auth/config", a.authConfig)
 	mux.HandleFunc("GET /auth/sso/login", a.ssoLogin)
@@ -233,6 +234,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /role-menu", a.requireMenu("/system/role/index", a.roleMenu))
 	mux.HandleFunc("POST /role-menu-ids", a.requirePerm("system:role:menu", a.roleMenuIDs))
 	mux.HandleFunc("POST /online-logs", a.requireMenu("/monitor/online-user", a.onlineLogs))
+	mux.HandleFunc("POST /online-logs/offline", a.requirePerm("monitor:online:offline", a.forceSessionOffline))
 	mux.HandleFunc("POST /login-logs", a.requireMenu("/monitor/login-logs", a.loginLogs))
 	mux.HandleFunc("POST /operation-logs", a.requireMenu("/monitor/operation-logs", a.operationLogs))
 	mux.HandleFunc("POST /system-logs", a.requireMenu("/monitor/system-logs", a.systemLogs))
@@ -379,7 +381,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusOK, 10002, "普通用户请使用企业 SSO 登录")
 		return
 	}
-	data, err := a.loginResponseData(r.Context(), user.ID, user.Avatar, user.Username, user.Nickname)
+	data, err := a.loginResponseData(r, user.ID, user.Avatar, user.Username, user.Nickname)
 	if err != nil {
 		writeDBError(w, err)
 		return
@@ -396,12 +398,21 @@ func (a *app) refreshToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, 401, "登录已超过 5 小时，请重新登录")
 		return
 	}
+	active, err := a.activeSession(r.Context(), tokenData, now)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if !active {
+		writeError(w, http.StatusUnauthorized, 401, "登录会话已失效，请重新登录")
+		return
+	}
 	var status int
 	if err := a.DB().QueryRowContext(r.Context(), `select status from sys_users where id = ?`, tokenData.UserID).Scan(&status); err != nil || status != 1 {
 		writeError(w, http.StatusUnauthorized, 401, "账号不存在或已停用")
 		return
 	}
-	writeOK(w, newLoginTokenResponse(tokenData.UserID, tokenData.SessionStartedAt, now))
+	writeOK(w, newLoginTokenResponse(tokenData.UserID, tokenData.SessionStartedAt, now, tokenData.SessionID))
 }
 
 func (a *app) uploadImage(w http.ResponseWriter, r *http.Request) {
@@ -667,20 +678,37 @@ func (a *app) asyncRoutes(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) users(w http.ResponseWriter, r *http.Request) {
 	body := readBody(r)
+	pageSize := intField(body, "pageSize")
+	currentPage := intField(body, "currentPage")
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	if currentPage <= 0 {
+		currentPage = 1
+	}
 	where, args := filters(body, map[string]string{
 		"username": "u.username like ?",
 		"phone":    "u.phone = ?",
 		"status":   "u.status = ?",
 		"deptId":   "u.dept_id = ?",
 	})
+	var total int
+	if err := a.DB().QueryRowContext(r.Context(), `select count(*) from sys_users u`+where, args...).Scan(&total); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	queryArgs := append(append([]any{}, args...), pageSize, (currentPage-1)*pageSize)
 	rows, err := a.queryMaps(r.Context(),
 		`select u.id, u.avatar, u.username, u.nickname, u.phone, u.email, u.sex, u.status,
 		        u.auth_provider as authProvider, u.employee_no as employeeNo, u.department_name as departmentName,
 		        cast(unix_timestamp(u.last_login_at) * 1000 as unsigned) as lastLoginAt,
 		        u.remark, cast(unix_timestamp(u.create_time) * 1000 as unsigned) as createTime,
 		        d.id as deptId, d.name as deptName
-		   from sys_users u left join sys_departments d on d.id = u.dept_id`+where+` order by u.id asc`,
-		args...,
+		   from sys_users u left join sys_departments d on d.id = u.dept_id`+where+` order by u.id asc limit ? offset ?`,
+		queryArgs...,
 	)
 	if err != nil {
 		writeDBError(w, err)
@@ -691,7 +719,10 @@ func (a *app) users(w http.ResponseWriter, r *http.Request) {
 		delete(row, "deptId")
 		delete(row, "deptName")
 	}
-	writeTable(w, rows)
+	if rows == nil {
+		rows = []map[string]any{}
+	}
+	writeOK(w, tableData{List: rows, Total: total, PageSize: pageSize, CurrentPage: currentPage})
 }
 
 func (a *app) allRoles(w http.ResponseWriter, r *http.Request) {
@@ -834,9 +865,7 @@ func (a *app) updateRoleMenus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) onlineLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, username, ip, address, sys_online_users.system, browser, status,
-	                     cast(unix_timestamp(login_time) * 1000 as unsigned) as loginTime
-	                from sys_online_users order by id desc`)
+	a.liveOnlineUsers(w, r)
 }
 
 func (a *app) loginLogs(w http.ResponseWriter, r *http.Request) {
@@ -857,7 +886,7 @@ func (a *app) loginLogs(w http.ResponseWriter, r *http.Request) {
 	var total int
 	if err := a.DB().QueryRowContext(
 		r.Context(),
-		"select count(*) from sys_login_logs"+where,
+		"select count(*) from sys_login_logs l"+where,
 		args...,
 	).Scan(&total); err != nil {
 		writeDBError(w, err)
@@ -866,9 +895,10 @@ func (a *app) loginLogs(w http.ResponseWriter, r *http.Request) {
 
 	queryArgs := append(append([]any{}, args...), pageSize, (currentPage-1)*pageSize)
 	rows, err := a.queryMaps(r.Context(),
-		`select id, username, ip, address, sys_login_logs.system, browser, status, behavior,
-		        cast(unix_timestamp(login_time) * 1000 as unsigned) as loginTime
-		   from sys_login_logs`+where+` order by id desc limit ? offset ?`,
+		`select l.id, l.username, coalesce(nullif(u.nickname, ''), l.username) as nickname,
+		        l.ip, l.address, l.system, l.browser, l.status, l.behavior,
+		        cast(unix_timestamp(l.login_time) * 1000 as unsigned) as loginTime
+		   from sys_login_logs l left join sys_users u on u.username = l.username`+where+` order by l.id desc limit ? offset ?`,
 		queryArgs...,
 	)
 	if err != nil {
@@ -887,15 +917,15 @@ func loginLogFilter(body map[string]any) (string, []any) {
 	var clauses []string
 	var args []any
 	if username := stringField(body, "username"); username != "" && username != "<nil>" {
-		clauses = append(clauses, "username like ?")
+		clauses = append(clauses, "l.username like ?")
 		args = append(args, "%"+username+"%")
 	}
 	if status := stringField(body, "status"); status == "0" || status == "1" {
-		clauses = append(clauses, "status = ?")
+		clauses = append(clauses, "l.status = ?")
 		args = append(args, status)
 	}
 	if start, end, ok := timeRangeField(body, "loginTime"); ok {
-		clauses = append(clauses, "login_time between ? and ?")
+		clauses = append(clauses, "l.login_time between ? and ?")
 		args = append(args, start, end)
 	}
 	if len(clauses) == 0 {
@@ -921,9 +951,7 @@ func timeRangeField(body map[string]any, key string) (time.Time, time.Time, bool
 }
 
 func (a *app) operationLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, username, module, summary, ip, address, sys_operation_logs.system, browser, method,
-	                     cast(unix_timestamp(operation_time) * 1000 as unsigned) as operationTime
-	                from sys_operation_logs order by id desc`)
+	a.filteredOperationLogs(w, r)
 }
 
 func (a *app) systemLogs(w http.ResponseWriter, r *http.Request) {
@@ -1140,10 +1168,16 @@ func (a *app) userPermissions(ctx context.Context, userID int) ([]string, error)
 }
 
 func (a *app) currentUserID(r *http.Request) (int, bool) {
-	token := strings.TrimSpace(r.Header.Get("Authorization"))
-	token = strings.TrimPrefix(token, "Bearer ")
-	tokenData, ok := parseAccessToken(token, time.Now())
+	tokenData, ok := accessTokenFromRequest(r)
 	if !ok {
+		return 0, false
+	}
+	active, err := a.activeSession(r.Context(), tokenData, time.Now())
+	if err != nil {
+		log.Printf("validate session failed: %v", err)
+		return 0, false
+	}
+	if !active {
 		return 0, false
 	}
 	return tokenData.UserID, true
@@ -1424,8 +1458,17 @@ func detectBrowser(userAgent string) string {
 
 type loggingResponseWriter struct {
 	http.ResponseWriter
-	status int
-	body   bytes.Buffer
+	status     int
+	body       bytes.Buffer
+	apiCode    int
+	hasAPICode bool
+}
+
+func (w *loggingResponseWriter) apiResponseOK() bool {
+	if w.hasAPICode {
+		return w.apiCode == 0
+	}
+	return apiResponseOK(w.body.String())
 }
 
 func (w *loggingResponseWriter) WriteHeader(status int) {
@@ -1455,21 +1498,29 @@ func (a *app) withRequestLogging(next http.Handler) http.Handler {
 			return
 		}
 		startedAt := time.Now()
-		redactRecommendation := strings.HasPrefix(r.URL.Path, "/business/recommendations/") || r.URL.Path == "/business/assistant/recommend"
+		path := canonicalAPIPath(r.URL.Path)
+		redactRecommendation := strings.HasPrefix(path, "/business/recommendations/") || path == "/business/assistant/recommend"
 		requestBody := "[recommendation request omitted]"
 		if !redactRecommendation {
 			requestBody = captureRequestBody(r)
+		}
+		auditActor := ""
+		if operationAction(r.URL.Path) != "" {
+			if userID, ok := a.currentUserID(r); ok {
+				auditActor, _ = a.usernameByID(r.Context(), userID)
+			}
 		}
 		recorder := &loggingResponseWriter{ResponseWriter: w}
 		next.ServeHTTP(recorder, r)
 		if recorder.status == 0 {
 			recorder.status = http.StatusOK
 		}
+		responseOK := recorder.apiResponseOK()
 		responseBody := recorder.body.String()
 		if redactRecommendation {
 			responseBody = "[recommendation response omitted]"
 		}
-		a.recordPostRequestLog(r, requestBody, responseBody, time.Since(startedAt), recorder.status)
+		a.recordPostRequestLog(r, requestBody, responseBody, time.Since(startedAt), recorder.status, auditActor, responseOK)
 	})
 }
 
@@ -1477,8 +1528,13 @@ func captureRequestBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
 	}
-	if strings.Contains(r.URL.Path, "/auth/sso/") {
+	path := canonicalAPIPath(r.URL.Path)
+	if strings.Contains(path, "/auth/sso/") {
 		return "[SSO credentials omitted]"
+	}
+	switch path {
+	case "/login", "/logout", "/refresh-token", "/mine/password", "/user/create", "/user/update", "/user/reset-password", "/business/ai-model/save":
+		return "[credentials omitted]"
 	}
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "multipart/form-data") {
@@ -1502,10 +1558,9 @@ func captureRequestBody(r *http.Request) string {
 	return strings.ToValidUTF8(string(body), "")
 }
 
-func (a *app) recordPostRequestLog(r *http.Request, requestBody, responseBody string, duration time.Duration, status int) {
+func (a *app) recordPostRequestLog(r *http.Request, requestBody, responseBody string, duration time.Duration, status int, auditActor string, responseOK bool) {
 	ip, address, systemName, browser := requestSecurityInfo(r)
-	username := a.requestUsername(r, requestBody)
-	module, summary := requestLogLabels(r.URL.Path, status, responseBody)
+	module, _ := requestLogLabels(r.URL.Path, status, responseOK)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if _, err := a.DB().ExecContext(ctx,
@@ -1516,13 +1571,19 @@ func (a *app) recordPostRequestLog(r *http.Request, requestBody, responseBody st
 	); err != nil {
 		log.Printf("record system log failed: %v", err)
 	}
-	if _, err := a.DB().ExecContext(ctx,
-		`insert into sys_operation_logs
-		  (username, module, summary, method, ip, address, `+"`system`"+`, browser)
-		 values (?, ?, ?, ?, ?, ?, ?, ?)`,
-		username, module, summary, r.Method, ip, address, systemName, browser,
-	); err != nil {
-		log.Printf("record operation log failed: %v", err)
+	if action := operationAction(r.URL.Path); action != "" && auditActor != "" {
+		outcome := 1
+		if status >= 400 || !responseOK {
+			outcome = 0
+		}
+		if _, err := a.DB().ExecContext(ctx,
+			`insert into sys_operation_logs
+		  (username, module, summary, method, status, audit_version, ip, address, `+"`system`"+`, browser)
+		 values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+			auditActor, operationModule(r.URL.Path), action, r.Method, outcome, ip, address, systemName, browser,
+		); err != nil {
+			log.Printf("record operation log failed: %v", err)
+		}
 	}
 }
 
@@ -1541,7 +1602,8 @@ func (a *app) requestUsername(r *http.Request, requestBody string) string {
 	return "anonymous"
 }
 
-func requestLogLabels(path string, status int, responseBody string) (string, string) {
+func requestLogLabels(path string, status int, responseOK bool) (string, string) {
+	path = canonicalAPIPath(path)
 	module := "接口请求"
 	switch {
 	case strings.HasPrefix(path, "/login") || strings.HasPrefix(path, "/refresh-token") || strings.Contains(path, "/auth/sso/"):
@@ -1558,7 +1620,7 @@ func requestLogLabels(path string, status int, responseBody string) (string, str
 		module = "文件上传"
 	}
 	result := "成功"
-	if status >= 400 || !apiResponseOK(responseBody) {
+	if status >= 400 || !responseOK {
 		result = "失败"
 	}
 	return module, fmt.Sprintf("%s %s %s", result, http.MethodPost, path)
@@ -1566,12 +1628,12 @@ func requestLogLabels(path string, status int, responseBody string) (string, str
 
 func apiResponseOK(responseBody string) bool {
 	var body struct {
-		Code int `json:"code"`
+		Code *int `json:"code"`
 	}
 	if err := json.Unmarshal([]byte(responseBody), &body); err != nil {
-		return true
+		return false
 	}
-	return body.Code == 0
+	return body.Code != nil && *body.Code == 0
 }
 
 func truncateLogText(value string, limit int) string {
@@ -1664,7 +1726,7 @@ func parseColumnValue(col string, value string) any {
 	intColumns := map[string]bool{
 		"id": true, "parentId": true, "menuType": true, "rank": true, "sort": true,
 		"status": true, "sex": true, "takesTime": true, "createTime": true,
-		"updateTime": true, "loginTime": true, "operationTime": true, "requestTime": true,
+		"updateTime": true, "loginTime": true, "lastActiveTime": true, "operationTime": true, "requestTime": true,
 	}
 	if intColumns[col] {
 		if n, err := strconv.Atoi(value); err == nil {
@@ -1722,7 +1784,16 @@ func writeDBError(w http.ResponseWriter, err error) {
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err == nil {
+		if recorder, ok := w.(*loggingResponseWriter); ok {
+			switch body := payload.(type) {
+			case apiResponse:
+				recorder.apiCode, recorder.hasAPICode = body.Code, true
+			case map[string]any:
+				recorder.apiCode, recorder.hasAPICode = body["code"].(int)
+			}
+		}
+	}
 }
 
 func readBody(r *http.Request) map[string]any {

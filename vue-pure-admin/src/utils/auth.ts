@@ -45,7 +45,7 @@ function scheduleSessionExpiry(sessionExpires: number) {
     () => {
       sessionExpiryTimer = undefined;
       scheduledSessionExpiry = 0;
-      useUserStoreHook().logOut();
+      useUserStoreHook().logOut({ localOnly: true });
     },
     Math.max(0, sessionExpires - Date.now())
   );

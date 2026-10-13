@@ -120,6 +120,11 @@ export const getOnlineLogsList = (data?: object) => {
   return http.request<ResultTable>("post", "/online-logs", { data });
 };
 
+/** 强制下线一个真实登录会话 */
+export const forceOnlineSessionOffline = (data: { id: number }) => {
+  return http.request<Result>("post", "/online-logs/offline", { data });
+};
+
 /** 获取系统监控-登录日志列表 */
 export const getLoginLogsList = (data?: object) => {
   return http.request<ResultTable>("post", "/login-logs", { data });

@@ -11,11 +11,19 @@ import {
   type UserResult,
   type RefreshTokenResult,
   getLogin,
+  logoutApi,
   submitUACSSOCallback,
   refreshTokenApi
 } from "@/api/user";
 import { useMultiTagsStoreHook } from "./multiTags";
-import { type DataInfo, setToken, removeToken, userKey } from "@/utils/auth";
+import {
+  type DataInfo,
+  getToken,
+  setToken,
+  removeToken,
+  userKey
+} from "@/utils/auth";
+import { message } from "@/utils/message";
 
 export const useUserStore = defineStore("pure-user", {
   state: (): userType => ({
@@ -108,15 +116,33 @@ export const useUserStore = defineStore("pure-user", {
           .catch(error => reject(error));
       });
     },
-    /** 前端登出（不调用接口） */
-    logOut() {
-      this.username = "";
-      this.roles = [];
-      this.permissions = [];
-      removeToken();
-      useMultiTagsStoreHook().handleTags("equal", [...routerArrays]);
-      resetRouter();
-      router.push("/login");
+    /** 退出服务端会话后清理本地登录态 */
+    async logOut(options?: { localOnly?: boolean }) {
+      try {
+        const session = options?.localOnly ? null : getToken();
+        if (session) {
+          const result = await logoutApi(session);
+          if (result.code !== 0) {
+            message("服务端会话未确认退出；本地登录信息已清除", {
+              type: "warning"
+            });
+          }
+        }
+      } catch {
+        if (!options?.localOnly) {
+          message("服务端会话未确认退出；本地登录信息已清除", {
+            type: "warning"
+          });
+        }
+      } finally {
+        this.username = "";
+        this.roles = [];
+        this.permissions = [];
+        removeToken();
+        useMultiTagsStoreHook().handleTags("equal", [...routerArrays]);
+        resetRouter();
+        router.push("/login");
+      }
     },
     /** 刷新`token` */
     async handRefreshToken(data) {

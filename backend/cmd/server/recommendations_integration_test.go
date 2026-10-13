@@ -47,6 +47,15 @@ func TestRecommendationDBSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sessionID, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionStartedAt := time.Now()
+	if err := a.createSession(httptest.NewRequest(http.MethodPost, "/login", nil), adminID, "admin", sessionID, sessionStartedAt); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = db.Exec(`delete from sys_sessions where session_hash=?`, sessionHash(sessionID)) })
 
 	marker := fmt.Sprintf("codex_rec_smoke_%d", time.Now().UnixNano())
 	market := marker + "_market"
@@ -89,7 +98,7 @@ func TestRecommendationDBSmoke(t *testing.T) {
 	}
 	creatorOne := addCreator(marker + "_creator_one")
 	ipOne := addIP(marker + "_ip_one")
-	token := fmt.Sprintf("Bearer kol.%d.%d.%d", adminID, time.Now().Unix(), time.Now().Unix())
+	token := "Bearer " + newLoginTokenResponse(adminID, sessionStartedAt, sessionStartedAt, sessionID)["accessToken"].(string)
 	var baselineUnread int
 	if err := db.QueryRowContext(ctx, `select count(*) from biz_recommendation_notifications where user_id=? and read_at is null`, adminID).Scan(&baselineUnread); err != nil {
 		t.Fatal(err)
@@ -133,6 +142,25 @@ func TestRecommendationDBSmoke(t *testing.T) {
 		}
 		if int64(row["resourceId"].(float64)) != want || row["source"] != "rule" || row["isNew"] != false {
 			t.Fatalf("unexpected immediate %s result: %+v", domain, row)
+		}
+		if domain == "ip" {
+			resultID := int64(row["id"].(float64))
+			status, _ = post(a.recommendationResultFeedback, map[string]any{"domain": "ip", "id": resultID, "feedback": "interested"}, token)
+			if status != http.StatusOK {
+				t.Fatalf("IP feedback before refresh failed: %d", status)
+			}
+			status, _ = post(a.recommendationRun, map[string]any{"domain": "ip", "subscriptionId": id}, token)
+			if status != http.StatusOK {
+				t.Fatalf("IP refresh failed: %d", status)
+			}
+			status, data = post(a.recommendationResultsList, map[string]any{"domain": "ip", "subscriptionId": id, "view": "all"}, token)
+			if status != http.StatusOK || data["total"].(float64) != 1 {
+				t.Fatalf("IP refresh created duplicate result: %d %+v", status, data)
+			}
+			refreshed := data["list"].([]any)[0].(map[string]any)
+			if refreshed["feedback"] != "interested" || refreshed["adviceSource"] != "rule" || refreshed["advice"] == "" {
+				t.Fatalf("IP refresh must preserve interest and backfill advice: %+v", refreshed)
+			}
 		}
 	}
 	for i := 2; i <= 7; i++ {
@@ -236,10 +264,10 @@ func TestRecommendationDBSmoke(t *testing.T) {
 	if notices["unread"].(float64) != float64(baselineUnread+3) {
 		t.Fatalf("stale reminders must be hidden from the bell: %+v", notices)
 	}
-	deniedToken := fmt.Sprintf("Bearer kol.%d.%d.%d", 9999999, time.Now().Unix(), time.Now().Unix())
+	deniedToken := fmt.Sprintf("Bearer kol.%d.%d.%d.%s", 9999999, time.Now().Unix(), time.Now().Unix(), sessionID)
 	status, _ = post(a.recommendationResultsList, map[string]any{"domain": "creator", "view": "all"}, deniedToken)
-	if status != http.StatusForbidden {
-		t.Fatalf("expected unauthorized menu to return 403, got %d", status)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected unregistered session to return 401, got %d", status)
 	}
 	// A read-only check that each subscription is tied to the admin owner.
 	for _, id := range subscriptionIDs {

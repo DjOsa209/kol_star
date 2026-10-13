@@ -63,7 +63,9 @@ func TestProductDiscoveryIntegration(t *testing.T) {
 	var projectID, resourceID, secondResourceID, publishedID, unpublishedID int64
 	var productID, brandID int64
 	var readerRoleID, readerUserID int64
+	var adminSessionID, readerSessionID string
 	t.Cleanup(func() {
+		_, _ = db.Exec(`delete from sys_sessions where session_hash in (?, ?)`, sessionHash(adminSessionID), sessionHash(readerSessionID))
 		_, _ = db.Exec(`delete from biz_cooperation_products where cooperation_id in (?, ?)`, publishedID, unpublishedID)
 		_, _ = db.Exec(`delete from biz_discovery_products where id = ?`, productID)
 		_, _ = db.Exec(`delete from biz_discovery_brands where id = ?`, brandID)
@@ -98,6 +100,23 @@ func TestProductDiscoveryIntegration(t *testing.T) {
 		select ?, id from sys_menus where path = '/business/resources'`, readerRoleID); err != nil {
 		t.Fatal(err)
 	}
+	adminSessionID, err = newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readerSessionID, err = newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionStart := time.Now()
+	if err := a.createSession(httptest.NewRequest(http.MethodPost, "/login", nil), 1, "admin", adminSessionID, sessionStart); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.createSession(httptest.NewRequest(http.MethodPost, "/login", nil), int(readerUserID), stamp+"-reader", readerSessionID, sessionStart); err != nil {
+		t.Fatal(err)
+	}
+	adminToken := "Bearer " + newLoginTokenResponse(1, sessionStart, sessionStart, adminSessionID)["accessToken"].(string)
+	readerToken := "Bearer " + newLoginTokenResponse(int(readerUserID), sessionStart, sessionStart, readerSessionID)["accessToken"].(string)
 	projectID = insert(`insert into biz_projects (name) values (?)`, stamp+"_NOTE EDGE_全球传播项目")
 	publishedURL := "https://example.test/mock/published/" + stamp
 	publishedID = insert(`insert into biz_cooperations
@@ -112,7 +131,7 @@ func TestProductDiscoveryIntegration(t *testing.T) {
 		payload, _ := json.Marshal(body)
 		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(payload))
 		if authenticated {
-			req.Header.Set("Authorization", "Bearer "+newLoginTokenResponse(1, time.Now(), time.Now())["accessToken"].(string))
+			req.Header.Set("Authorization", adminToken)
 		}
 		rec := httptest.NewRecorder()
 		handler(rec, req)
@@ -157,7 +176,7 @@ func TestProductDiscoveryIntegration(t *testing.T) {
 	a.routes(mux)
 	requestAsReader := func(path string, body string) int {
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
-		req.Header.Set("Authorization", "Bearer "+newLoginTokenResponse(int(readerUserID), time.Now(), time.Now())["accessToken"].(string))
+		req.Header.Set("Authorization", readerToken)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		return rec.Code

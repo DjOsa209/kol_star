@@ -3616,7 +3616,8 @@ func (a *app) createBusinessTag(w http.ResponseWriter, r *http.Request) {
 func (a *app) businessProjects(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.queryMaps(r.Context(),
 		`select id, name, target_market as targetMarket, language, platform, campaign_type as campaignType,
-		        budget, currency, status, owner, brief,
+		        budget, currency, status, owner, brief, created_by as uploadedBy,
+		        coalesce((select coalesce(nullif(u.nickname,''), u.username) from sys_users u where u.id=biz_projects.created_by), '') as uploaderName,
 		        date_format(cycle_start_date, '%Y-%m-%d') as cycleStartDate,
 		        date_format(cycle_end_date, '%Y-%m-%d') as cycleEndDate,
 		        date_format(report_update_date, '%Y-%m-%d') as reportUpdateDate,
@@ -3632,18 +3633,23 @@ func (a *app) businessProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) createBusinessProject(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "未登录或登录已过期")
+		return
+	}
 	body := readBody(r)
 	targetMarket := projectTargetMarketValue(body["targetMarket"])
 	result, err := a.DB().ExecContext(r.Context(),
 		`insert into biz_projects
 		 (name, target_market, language, platform, campaign_type, budget, currency, status, owner, brief,
-		  cycle_start_date, cycle_end_date, report_update_date)
-		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  cycle_start_date, cycle_end_date, report_update_date, created_by)
+		 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		str(body, "name"), targetMarket, str(body, "language"), str(body, "platform"),
 		str(body, "campaignType"), floatField(body, "budget"), defaultString(str(body, "currency"), "USD"),
 		projectStatusValue(body["status"]), str(body, "owner"), str(body, "brief"),
 		nullableDate(str(body, "cycleStartDate")), nullableDate(str(body, "cycleEndDate")),
-		nullableDate(str(body, "reportUpdateDate")),
+		nullableDate(str(body, "reportUpdateDate")), userID,
 	)
 	if err != nil {
 		writeDBError(w, err)
@@ -3658,6 +3664,11 @@ func (a *app) createBusinessProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) importBusinessProjects(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "未登录或登录已过期")
+		return
+	}
 	body := readBody(r)
 	rawRows, ok := body["rows"].([]any)
 	if !ok || len(rawRows) == 0 {
@@ -3706,12 +3717,12 @@ func (a *app) importBusinessProjects(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.ExecContext(r.Context(),
 			`insert into biz_projects
 			 (name, target_market, language, platform, campaign_type, budget, currency, status, owner, brief,
-			  cycle_start_date, cycle_end_date)
-			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			  cycle_start_date, cycle_end_date, created_by)
+			 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			name, targetMarket, str(row, "language"), str(row, "platform"), str(row, "campaignType"),
 			floatField(row, "budget"), defaultString(strings.ToUpper(str(row, "currency")), "USD"),
 			projectStatusValue(row["status"]), str(row, "owner"), str(row, "brief"),
-			nullableDate(str(row, "cycleStartDate")), nullableDate(str(row, "cycleEndDate")),
+			nullableDate(str(row, "cycleStartDate")), nullableDate(str(row, "cycleEndDate")), userID,
 		)
 		if err != nil {
 			writeDBError(w, err)

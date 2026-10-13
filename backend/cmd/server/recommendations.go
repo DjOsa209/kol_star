@@ -48,13 +48,29 @@ type recommendationSaveInput struct {
 }
 
 type recommendationCandidate struct {
-	ID       int64
-	Name     string
-	Score    int
-	Reason   string
-	Risks    string
-	Source   string
-	Resource map[string]any
+	ID             int64
+	Name           string
+	Score          int
+	Reason         string
+	Risks          string
+	Source         string
+	Resource       map[string]any
+	Advice         string
+	AdviceSource   string
+	Scenarios      []string
+	Evidence       []recommendationEvidence
+	EvidenceStatus string
+	ResourceHash   string
+}
+
+// External references are returned by the fixed, server-side search provider.
+// Model output can select these references by index, but cannot supply URLs.
+type recommendationEvidence struct {
+	Title       string `json:"title"`
+	URL         string `json:"url"`
+	Source      string `json:"source"`
+	PublishedAt string `json:"publishedAt,omitempty"`
+	Summary     string `json:"summary,omitempty"`
 }
 
 func readRecommendationJSON(w http.ResponseWriter, r *http.Request, out any) bool {
@@ -890,9 +906,13 @@ func sortRecommendationCandidates(values []recommendationCandidate) {
 }
 
 type recommendationAIRank struct {
-	ID     int64  `json:"id"`
-	Score  int    `json:"score"`
-	Reason string `json:"reason"`
+	ID              int64    `json:"id"`
+	Score           int      `json:"score"`
+	Reason          string   `json:"reason"`
+	Advice          string   `json:"advice"`
+	Scenarios       []string `json:"scenarios"`
+	ExternalInsight string   `json:"externalInsight"`
+	EvidenceIDs     []int    `json:"evidenceIds"`
 }
 
 func filterRecommendationAIRanks(candidates []recommendationCandidate, rankings []recommendationAIRank) []recommendationCandidate {
@@ -916,6 +936,32 @@ func filterRecommendationAIRanks(candidates []recommendationCandidate, rankings 
 				reason = string([]rune(reason)[:160])
 			}
 			c.Reason = reason
+		}
+		if advice := limitRecommendationText(rank.Advice, 420); recommendationValidAIAdvice(advice, c) {
+			c.Advice = advice
+			if caution := recommendationRightsCaution(c); caution != "" {
+				c.Advice += " " + caution
+			}
+			c.AdviceSource = "ai"
+		}
+		if c.AdviceSource == "ai" {
+			scenarios := make([]string, 0, 3)
+			for _, scenario := range rank.Scenarios {
+				if scenario = limitRecommendationText(scenario, 100); scenario != "" && !recommendationUnsupportedClaim(scenario) {
+					scenarios = append(scenarios, scenario)
+				}
+				if len(scenarios) == 3 {
+					break
+				}
+			}
+			if len(scenarios) > 0 {
+				c.Scenarios = scenarios
+			}
+			selected := selectedRecommendationEvidence(c.Evidence, rank.EvidenceIDs)
+			if insight := limitRecommendationText(rank.ExternalInsight, 260); insight != "" && len(selected) > 0 && !recommendationUnsupportedClaim(insight) {
+				c.Advice += " 外部背景：" + insight
+				c.Evidence = selected
+			}
 		}
 		c.Source = "ai"
 		out = append(out, c)
@@ -953,6 +999,14 @@ func (a *app) requestRecommendationAIRanks(ctx context.Context, model assistantA
 			for _, key := range []string{"ipType", "markets", "audience", "summary", "cooperationStatus", "currency", "priceMin", "priceMax", "licenseNotes"} {
 				item[key] = c.Resource[key]
 			}
+			publicEvidence := make([]map[string]any, 0, len(c.Evidence))
+			for index, evidence := range c.Evidence {
+				publicEvidence = append(publicEvidence, map[string]any{
+					"id": index + 1, "title": evidence.Title, "source": evidence.Source,
+					"summary": evidence.Summary,
+				})
+			}
+			item["publicEvidence"] = publicEvidence
 		}
 		safe = append(safe, item)
 		if len(safe) == 20 {
@@ -963,11 +1017,11 @@ func (a *app) requestRecommendationAIRanks(ctx context.Context, model assistantA
 	body, _ := json.Marshal(map[string]any{
 		"model": model.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": "你是资源推荐排序助手。只从 candidates 中选择真实资源 ID，按需求排序并说明具体匹配事实。不得编造价格、作品、版权或效果。仅返回 JSON：{\"recommendations\":[{\"id\":1,\"score\":85,\"reason\":\"理由\"}]}。最多 20 条。"},
+			{"role": "system", "content": recommendationAdviceSystemPrompt()},
 			{"role": "user", "content": string(payload)},
 		},
 		"temperature":     model.Temperature,
-		"max_tokens":      1500,
+		"max_tokens":      5000,
 		"response_format": map[string]string{"type": "json_object"},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -1027,8 +1081,23 @@ func (a *app) executeRecommendationRun(ctx context.Context, subscriptionID int64
 	if err != nil {
 		return nil, err
 	}
+	prepareRecommendationAdvice(s, candidates)
+	if s.Domain == "ip" && len(candidates) > 0 {
+		// External context is independent of the model. Bound the public
+		// lookup so rule advice can still show sources without delaying saves.
+		evidenceCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		for i := 0; i < len(candidates) && i < 3 && evidenceCtx.Err() == nil; i++ {
+			candidates[i].Evidence, candidates[i].EvidenceStatus = fetchIPRecommendationEvidence(evidenceCtx, candidates[i].Name, recommendationString(candidates[i].Resource["ipType"]))
+		}
+		cancel()
+	}
 	source := "rule"
-	if model, configured := a.assistantAIModel(ctx); configured && len(candidates) > 0 {
+	if model, configured := a.assistantAIModel(ctx); configured && model.EnableRecommendationReason && len(candidates) > 0 {
+		// This run also writes results and reloads current resource facts.
+		// Leave ample room below the frontend's 130-second request timeout.
+		if model.Timeout > 60*time.Second {
+			model.Timeout = 60 * time.Second
+		}
 		ranks, modelErr := a.requestRecommendationAIRanks(ctx, model, s, candidates)
 		if modelErr == nil && len(ranks) > 0 {
 			ranked := filterRecommendationAIRanks(candidates, ranks)
@@ -1072,7 +1141,11 @@ func (a *app) executeRecommendationRun(ctx context.Context, subscriptionID int64
 		if weekly {
 			isNew = 1
 		}
-		result, execErr := tx.ExecContext(ctx, `insert ignore into biz_recommendation_results (subscription_id,run_id,resource_id,resource_name,score,reason,risks,source,is_new) values (?,?,?,?,?,?,?,?,?)`, s.ID, runID, candidate.ID, candidate.Name, candidate.Score, candidate.Reason, candidate.Risks, candidate.Source, isNew)
+		scenariosJSON, _ := json.Marshal(candidate.Scenarios)
+		evidenceJSON, _ := json.Marshal(candidate.Evidence)
+		result, execErr := tx.ExecContext(ctx, `insert ignore into biz_recommendation_results
+			(subscription_id,run_id,resource_id,resource_name,score,reason,risks,source,is_new,advice,advice_source,scenarios,evidence,evidence_status,advice_resource_hash)
+			values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, s.ID, runID, candidate.ID, candidate.Name, candidate.Score, candidate.Reason, candidate.Risks, candidate.Source, isNew, candidate.Advice, candidate.AdviceSource, string(scenariosJSON), string(evidenceJSON), candidate.EvidenceStatus, candidate.ResourceHash)
 		if execErr != nil {
 			return nil, execErr
 		}
@@ -1080,7 +1153,16 @@ func (a *app) executeRecommendationRun(ctx context.Context, subscriptionID int64
 		if execErr != nil {
 			return nil, execErr
 		}
-		if inserted == 0 || !weekly || notices >= 5 {
+		if inserted == 0 {
+			// Refresh an existing match's explanation. Interest feedback and the
+			// original "new" marker belong to the user and remain untouched.
+			if _, execErr = tx.ExecContext(ctx, `update biz_recommendation_results set resource_name=?,score=?,reason=?,risks=?,source=?,advice=?,advice_source=?,scenarios=?,evidence=?,evidence_status=?,advice_resource_hash=? where subscription_id=? and resource_id=?`,
+				candidate.Name, candidate.Score, candidate.Reason, candidate.Risks, candidate.Source, candidate.Advice, candidate.AdviceSource, string(scenariosJSON), string(evidenceJSON), candidate.EvidenceStatus, candidate.ResourceHash, s.ID, candidate.ID); execErr != nil {
+				return nil, execErr
+			}
+			continue
+		}
+		if !weekly || notices >= 5 {
 			continue
 		}
 		resultID, execErr := result.LastInsertId()
@@ -1135,7 +1217,7 @@ func (a *app) recommendationResultsList(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *app) recommendationResultsData(ctx context.Context, userID int, domain string, subscriptionID int64, view string) ([]map[string]any, error) {
-	query := `select r.id,r.subscription_id,r.resource_id,r.resource_name,r.score,r.reason,r.risks,r.source,r.feedback,r.is_new,r.created_at from biz_recommendation_results r join biz_recommendation_subscriptions s on s.id=r.subscription_id where s.user_id=? and s.domain=?`
+	query := `select r.id,r.subscription_id,r.resource_id,r.resource_name,r.score,r.reason,r.risks,r.source,r.feedback,r.is_new,r.created_at,r.advice,r.advice_source,r.scenarios,r.evidence,r.evidence_status,r.advice_resource_hash from biz_recommendation_results r join biz_recommendation_subscriptions s on s.id=r.subscription_id where s.user_id=? and s.domain=?`
 	args := []any{userID, domain}
 	if subscriptionID > 0 {
 		query += ` and s.id=?`
@@ -1155,9 +1237,10 @@ func (a *app) recommendationResultsData(ctx context.Context, userID int, domain 
 	for rows.Next() {
 		var id, subID, resourceID int64
 		var score, isNew int
-		var name, reason, risks, source, feedback string
+		var name, reason, risks, source, feedback, adviceSource, evidenceStatus, resourceHash string
+		var advice, scenariosJSON, evidenceJSON sql.NullString
 		var created time.Time
-		if err := rows.Scan(&id, &subID, &resourceID, &name, &score, &reason, &risks, &source, &feedback, &isNew, &created); err != nil {
+		if err := rows.Scan(&id, &subID, &resourceID, &name, &score, &reason, &risks, &source, &feedback, &isNew, &created, &advice, &adviceSource, &scenariosJSON, &evidenceJSON, &evidenceStatus, &resourceHash); err != nil {
 			return nil, err
 		}
 		s, ok := subscriptions[subID]
@@ -1175,9 +1258,33 @@ func (a *app) recommendationResultsData(ctx context.Context, userID int, domain 
 		if resource == nil {
 			continue
 		}
+		visibleAdvice := ""
+		visibleAdviceSource := ""
+		visibleScenarios := []string{}
+		visibleEvidence := []recommendationEvidence{}
+		visibleEvidenceStatus := "not_searched"
+		if resourceHash != "" && resourceHash == recommendationResourceHash(current.Resource) {
+			visibleAdvice = advice.String
+			visibleAdviceSource = adviceSource
+			visibleEvidenceStatus = evidenceStatus
+			if scenariosJSON.Valid {
+				_ = json.Unmarshal([]byte(scenariosJSON.String), &visibleScenarios)
+			}
+			if evidenceJSON.Valid {
+				_ = json.Unmarshal([]byte(evidenceJSON.String), &visibleEvidence)
+			}
+			if visibleScenarios == nil {
+				visibleScenarios = []string{}
+			}
+			if visibleEvidence == nil {
+				visibleEvidence = []recommendationEvidence{}
+			}
+		}
 		list = append(list, map[string]any{
 			"id": id, "subscriptionId": subID, "resourceId": resourceID, "resourceName": current.Name,
 			"score": current.Score, "reason": current.Reason, "risks": current.Risks, "source": source,
+			"scoreSource": "rule", "advice": visibleAdvice, "adviceSource": visibleAdviceSource,
+			"scenarios": visibleScenarios, "evidence": visibleEvidence, "evidenceStatus": visibleEvidenceStatus,
 			"isNew": isNew == 1, "feedback": feedback, "createdAt": created.Format("2006-01-02 15:04"), "resource": resource,
 		})
 	}

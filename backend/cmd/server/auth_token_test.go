@@ -3,24 +3,26 @@ package main
 import (
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestAccessTokenHonorsAccessAndAbsoluteSessionExpiry(t *testing.T) {
 	sessionStartedAt := time.Unix(1_800_000_000, 0)
+	sessionID := strings.Repeat("a", 64)
 
-	fresh := fmt.Sprintf("kol.42.%d.%d", sessionStartedAt.Add(90*time.Minute).Unix(), sessionStartedAt.Unix())
+	fresh := fmt.Sprintf("kol.42.%d.%d.%s", sessionStartedAt.Add(90*time.Minute).Unix(), sessionStartedAt.Unix(), sessionID)
 	if data, ok := parseAccessToken(fresh, sessionStartedAt.Add(2*time.Hour)); !ok || data.UserID != 42 {
 		t.Fatalf("fresh access token rejected: data=%+v ok=%v", data, ok)
 	}
 
-	accessExpired := fmt.Sprintf("kol.42.%d.%d", sessionStartedAt.Unix(), sessionStartedAt.Unix())
+	accessExpired := fmt.Sprintf("kol.42.%d.%d.%s", sessionStartedAt.Unix(), sessionStartedAt.Unix(), sessionID)
 	if _, ok := parseAccessToken(accessExpired, sessionStartedAt.Add(accessTokenLifetime)); ok {
 		t.Fatal("access token was accepted at its two-hour expiry")
 	}
 
-	nearSessionEnd := fmt.Sprintf("kol.42.%d.%d", sessionStartedAt.Add(4*time.Hour+59*time.Minute).Unix(), sessionStartedAt.Unix())
+	nearSessionEnd := fmt.Sprintf("kol.42.%d.%d.%s", sessionStartedAt.Add(4*time.Hour+59*time.Minute).Unix(), sessionStartedAt.Unix(), sessionID)
 	if _, ok := parseAccessToken(nearSessionEnd, sessionStartedAt.Add(maximumSessionLifetime)); ok {
 		t.Fatal("access token was accepted at the five-hour absolute session expiry")
 	}
@@ -28,13 +30,14 @@ func TestAccessTokenHonorsAccessAndAbsoluteSessionExpiry(t *testing.T) {
 
 func TestRefreshTokenDoesNotSlideFiveHourSession(t *testing.T) {
 	sessionStartedAt := time.Unix(1_800_000_000, 0)
-	token := fmt.Sprintf("kol.7.refresh.%d", sessionStartedAt.Unix())
+	sessionID := strings.Repeat("b", 64)
+	token := fmt.Sprintf("kol.7.refresh.%d.%s", sessionStartedAt.Unix(), sessionID)
 
 	data, ok := parseRefreshToken(token, sessionStartedAt.Add(4*time.Hour+59*time.Minute))
 	if !ok || data.SessionStartedAt.Unix() != sessionStartedAt.Unix() {
 		t.Fatalf("valid refresh token rejected: data=%+v ok=%v", data, ok)
 	}
-	refreshed := newLoginTokenResponse(data.UserID, data.SessionStartedAt, sessionStartedAt.Add(4*time.Hour+59*time.Minute))
+	refreshed := newLoginTokenResponse(data.UserID, data.SessionStartedAt, sessionStartedAt.Add(4*time.Hour+59*time.Minute), data.SessionID)
 	if got := refreshed["refreshToken"]; got != token {
 		t.Fatalf("refresh token slid the session start: got %v want %v", got, token)
 	}
@@ -45,6 +48,16 @@ func TestRefreshTokenDoesNotSlideFiveHourSession(t *testing.T) {
 
 	if _, ok := parseRefreshToken(token, sessionStartedAt.Add(maximumSessionLifetime)); ok {
 		t.Fatal("refresh token was accepted at the five-hour absolute session expiry")
+	}
+}
+
+func TestLegacyUnsignedTokensAreRejected(t *testing.T) {
+	now := time.Now()
+	if _, ok := parseAccessToken(fmt.Sprintf("kol.7.%d.%d", now.Unix(), now.Unix()), now); ok {
+		t.Fatal("unsigned legacy access token accepted")
+	}
+	if _, ok := parseRefreshToken(fmt.Sprintf("kol.7.refresh.%d", now.Unix()), now); ok {
+		t.Fatal("unsigned legacy refresh token accepted")
 	}
 }
 

@@ -437,6 +437,20 @@ function confirmedProductNames(item: RecommendationResult) {
     .slice(0, 3);
 }
 
+function savedScenarioItems(item: RecommendationResult): string[] {
+  return Array.isArray(item.scenarios)
+    ? item.scenarios.filter(
+        scenario => typeof scenario === "string" && scenario.trim()
+      )
+    : [];
+}
+
+function savedAdviceHeading(item: RecommendationResult): string {
+  if (item.adviceSource === "ai") return "AI 合作建议";
+  if (item.adviceSource === "rule") return "规则合作建议";
+  return "合作建议";
+}
+
 async function feedbackSavedResult(item: RecommendationResult) {
   try {
     const response = await sendRecommendationFeedback(
@@ -1188,14 +1202,44 @@ onBeforeUnmount(stopTimer);
             </div>
             <div class="saved-match-score">
               <strong>{{ item.score }}</strong
-              ><span>/100 匹配</span>
+              ><span>/100 规则匹配</span>
             </div>
           </div>
           <div class="saved-result-details">
             <p>
-              <strong>推荐依据</strong>
+              <strong>规则匹配依据</strong>
               {{ item.reason || "综合匹配当前寻找条件" }}
             </p>
+            <div
+              v-if="item.advice?.trim() || savedScenarioItems(item).length"
+              class="saved-advice"
+            >
+              <strong>{{ savedAdviceHeading(item) }}</strong>
+              <p v-if="item.advice?.trim()">{{ item.advice }}</p>
+              <div
+                v-if="savedScenarioItems(item).length"
+                class="saved-scenarios"
+              >
+                <span>适用场景</span>
+                <ul>
+                  <li
+                    v-for="(scenario, index) in savedScenarioItems(item)"
+                    :key="`${item.id}-${index}`"
+                  >
+                    {{ scenario }}
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <div v-else class="saved-advice-empty">
+              <span>该历史结果尚无合作建议。</span>
+              <el-button
+                link
+                :loading="savedLoading"
+                @click="refreshSavedSearch"
+                >立即更新建议 →</el-button
+              >
+            </div>
             <p v-if="confirmedProductNames(item).length">
               <strong>已确认合作产品</strong>
               {{ confirmedProductNames(item).join("、") }}
@@ -1212,7 +1256,7 @@ onBeforeUnmount(stopTimer);
               }}
             </p>
             <small
-              >{{ item.source === "ai" ? "AI 排序 · 实时依据" : "规则匹配" }} ·
+              >{{ item.source === "ai" ? "AI 排序" : "规则排序" }} ·
               合作产品依据来自已确认记录；预估费用需最终报价确认</small
             >
           </div>
@@ -2001,6 +2045,50 @@ onBeforeUnmount(stopTimer);
 .saved-result-details p strong {
   margin-right: 7px;
   color: #17181b;
+}
+.saved-advice {
+  padding: 10px 12px;
+  margin: 9px 0;
+  background: #f7faed;
+  border-left: 3px solid #b4e600;
+  border-radius: 5px;
+}
+.saved-advice > strong {
+  font-size: 12px;
+  color: #3e5f0d;
+}
+.saved-result-details .saved-advice p {
+  margin: 5px 0 0;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+.saved-scenarios {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.saved-scenarios > span {
+  flex: none;
+  color: #71805b;
+}
+.saved-scenarios ul {
+  display: grid;
+  gap: 3px;
+  padding-left: 16px;
+  margin: 0;
+}
+.saved-advice-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 7px 0;
+  font-size: 12px;
+  color: #858d82;
+}
+.saved-advice-empty :deep(.el-button) {
+  margin: 0;
 }
 .saved-result-details small {
   color: #999;

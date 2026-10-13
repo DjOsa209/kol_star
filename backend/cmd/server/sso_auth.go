@@ -141,7 +141,7 @@ func (a *app) ssoUACCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, 10002, "当前账号已停用")
 		return
 	}
-	data, err := a.loginResponseData(r.Context(), user.ID, user.Avatar, user.Username, user.Nickname)
+	data, err := a.loginResponseData(r, user.ID, user.Avatar, user.Username, user.Nickname)
 	if err != nil {
 		writeDBError(w, err)
 		return
@@ -339,12 +339,12 @@ func assignDefaultSSORole(ctx context.Context, tx *sql.Tx, userID int, roleCode 
 	return err
 }
 
-func (a *app) loginResponseData(ctx context.Context, userID int, avatar, username, nickname string) (map[string]any, error) {
-	roles, err := a.roleCodes(ctx, userID)
+func (a *app) loginResponseData(r *http.Request, userID int, avatar, username, nickname string) (map[string]any, error) {
+	roles, err := a.roleCodes(r.Context(), userID)
 	if err != nil {
 		return nil, err
 	}
-	permissions, err := a.userPermissions(ctx, userID)
+	permissions, err := a.userPermissions(r.Context(), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -352,6 +352,13 @@ func (a *app) loginResponseData(ctx context.Context, userID int, avatar, usernam
 		permissions = []string{"*:*:*"}
 	}
 	now := time.Now()
+	sessionID, err := newSessionID()
+	if err != nil {
+		return nil, err
+	}
+	if err := a.createSession(r, userID, username, sessionID, now); err != nil {
+		return nil, err
+	}
 	data := map[string]any{
 		"avatar":      avatar,
 		"username":    username,
@@ -359,7 +366,7 @@ func (a *app) loginResponseData(ctx context.Context, userID int, avatar, usernam
 		"roles":       roles,
 		"permissions": permissions,
 	}
-	for key, value := range newLoginTokenResponse(userID, now, now) {
+	for key, value := range newLoginTokenResponse(userID, now, now, sessionID) {
 		data[key] = value
 	}
 	return data, nil

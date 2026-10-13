@@ -266,17 +266,30 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
       const { code } = await deleteUser({ id: row.id });
       if (code === 0) {
         message(`已删除用户编号为${row.id}的这条数据`, { type: "success" });
+        adjustPageAfterDeletion(1);
         onSearch();
       }
     });
   }
 
+  function adjustPageAfterDeletion(deletedCount: number) {
+    const remainingTotal = Math.max(0, pagination.total - deletedCount);
+    const lastPage = Math.max(
+      1,
+      Math.ceil(remainingTotal / pagination.pageSize)
+    );
+    pagination.currentPage = Math.min(pagination.currentPage, lastPage);
+  }
+
   function handleSizeChange(val: number) {
-    console.log(`${val} items per page`);
+    pagination.pageSize = val;
+    pagination.currentPage = 1;
+    onSearch();
   }
 
   function handleCurrentChange(val: number) {
-    console.log(`current page: ${val}`);
+    pagination.currentPage = val;
+    onSearch();
   }
 
   /** 当CheckBox选择项发生变化时会触发该事件 */
@@ -298,30 +311,48 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
     // 返回当前选中的行
     const curSelected = tableRef.value.getTableRef().getSelectionRows();
     // 接下来根据实际业务，通过选中行的某项数据，比如下面的id，调用接口进行批量删除
-    Promise.all(curSelected.map(item => deleteUser({ id: item.id }))).then(
-      () => {
-        message(`已删除用户编号为 ${getKeyList(curSelected, "id")} 的数据`, {
-          type: "success"
-        });
-        tableRef.value.getTableRef().clearSelection();
-        onSearch();
+    Promise.allSettled(
+      curSelected.map(item => deleteUser({ id: item.id }))
+    ).then(results => {
+      const deletedRows = curSelected.filter((_, index) => {
+        const result = results[index];
+        return result.status === "fulfilled" && result.value.code === 0;
+      });
+      if (deletedRows.length === 0) {
+        message("删除失败，请重试", { type: "error" });
+        return;
       }
-    );
+      message(`已删除用户编号为 ${getKeyList(deletedRows, "id")} 的数据`, {
+        type: "success"
+      });
+      tableRef.value.getTableRef().clearSelection();
+      adjustPageAfterDeletion(deletedRows.length);
+      onSearch();
+    });
   }
 
   async function onSearch() {
     loading.value = true;
-    const { code, data } = await getUserList(toRaw(form));
-    if (code === 0) {
-      dataList.value = data.list;
-      pagination.total = data.total;
-      pagination.pageSize = data.pageSize;
-      pagination.currentPage = data.currentPage;
-    }
-
-    setTimeout(() => {
+    try {
+      const { code, data } = await getUserList({
+        ...toRaw(form),
+        pageSize: pagination.pageSize,
+        currentPage: pagination.currentPage
+      });
+      if (code === 0) {
+        dataList.value = data.list;
+        pagination.total = data.total;
+        pagination.pageSize = data.pageSize;
+        pagination.currentPage = data.currentPage;
+      }
+    } finally {
       loading.value = false;
-    }, 500);
+    }
+  }
+
+  function handleSearch() {
+    pagination.currentPage = 1;
+    onSearch();
   }
 
   const resetForm = formEl => {
@@ -329,11 +360,13 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
     formEl.resetFields();
     form.deptId = "";
     treeRef.value.onTreeReset();
+    pagination.currentPage = 1;
     onSearch();
   };
 
   function onTreeSelect({ id, selected }) {
     form.deptId = selected ? id : "";
+    pagination.currentPage = 1;
     onSearch();
   }
 
@@ -570,6 +603,7 @@ export function useUser(tableRef: Ref, treeRef: Ref) {
     buttonClass,
     deviceDetection,
     onSearch,
+    handleSearch,
     resetForm,
     onbatchDel,
     openDialog,

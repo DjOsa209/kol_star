@@ -38,11 +38,24 @@ export interface RecommendationResult {
   score: number;
   reason: string;
   risks?: string[] | string;
+  advice?: string;
+  adviceSource?: "ai" | "rule";
+  scenarios?: string[];
+  evidence?: RecommendationEvidence[];
+  evidenceStatus?: "available" | "none" | "unavailable" | "not_searched";
   source: "ai" | "rule" | string;
   isNew: boolean;
   feedback?: RecommendationFeedback | null;
   createdAt: string;
   resource: Record<string, any>;
+}
+
+export interface RecommendationEvidence {
+  title: string;
+  url: string;
+  source: string;
+  publishedAt?: string;
+  summary?: string;
 }
 
 export interface RecommendationNotification {

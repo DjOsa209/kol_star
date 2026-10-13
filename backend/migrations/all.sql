@@ -157,19 +157,6 @@ insert ignore into sys_menus (id, parent_id, menu_type, title, path, name, compo
 insert ignore into sys_role_menus (role_id, menu_id)
 select 1, id from sys_menus;
 
-insert ignore into sys_online_users (id, username, ip, address, `system`, browser, status) values
-(1, 'admin', '127.0.0.1', '本机', 'macOS', 'Chrome', 1);
-
-insert ignore into sys_login_logs (id, username, ip, address, `system`, browser, status, behavior) values
-(1, 'admin', '127.0.0.1', '本机', 'macOS', 'Chrome', 1, '登录系统'),
-(2, 'common', '127.0.0.1', '本机', 'Windows', 'Edge', 1, '登录系统');
-
-insert ignore into sys_operation_logs (id, username, module, summary, method, ip, address, `system`, browser) values
-(1, 'admin', '系统管理', '查询用户列表', 'POST', '127.0.0.1', '本机', 'macOS', 'Chrome');
-
-insert ignore into sys_system_logs (id, module, url, method, ip, address, `system`, browser, takes_time, request_body, response_body) values
-(1, '系统管理', '/user', 'POST', '127.0.0.1', '本机', 'macOS', 'Chrome', 38, '{}', '{"code":0}');
-
 -- ============================================================
 -- Source: migrations/002_business.sql
 -- ============================================================
@@ -2213,3 +2200,64 @@ from sys_role_menus rm
 join sys_menus m on m.id in (920, 925)
 where rm.menu_id in (922, 923, 924);
 -- END 048_ip_recommendation_access.sql
+
+
+-- BEGIN 049_recommendation_advice.sql
+use kol_admin;
+
+alter table biz_recommendation_results
+  add column advice text null,
+  add column advice_source varchar(16) not null default 'rule',
+  add column scenarios json null,
+  add column evidence json null,
+  add column evidence_status varchar(16) not null default 'not_searched',
+  add column advice_resource_hash char(64) not null default '';
+-- END 049_recommendation_advice.sql
+
+-- BEGIN 050_project_upload_audit.sql
+use kol_admin;
+
+-- 0 identifies projects created before uploader auditing was introduced.
+alter table biz_projects
+  add column created_by bigint not null default 0 after owner,
+  add index idx_biz_projects_created_by (created_by, created_at);
+-- END 050_project_upload_audit.sql
+
+-- BEGIN 051_monitor_live_sessions.sql
+use kol_admin;
+
+create table if not exists sys_sessions (
+  id bigint primary key auto_increment,
+  session_hash char(64) not null,
+  user_id bigint not null,
+  username varchar(64) not null,
+  ip varchar(64) not null default '',
+  address varchar(128) not null default '',
+  `system` varchar(64) not null default '',
+  browser varchar(64) not null default '',
+  started_at_unix bigint not null,
+  last_seen_unix bigint not null,
+  expires_at_unix bigint not null,
+  revoked_at_unix bigint null,
+  unique key uq_sys_sessions_hash (session_hash),
+  key idx_sys_sessions_online (revoked_at_unix, expires_at_unix, last_seen_unix),
+  key idx_sys_sessions_user (user_id, started_at_unix)
+);
+
+alter table sys_operation_logs
+  add column status tinyint not null default 1 after method,
+  add column audit_version tinyint not null default 0 after status;
+
+create index idx_sys_operation_logs_filter
+  on sys_operation_logs (audit_version, operation_time, status, module);
+
+insert into sys_menus
+  (id, parent_id, menu_type, title, path, name, component, `rank`, icon, auths, show_link)
+values
+  (1106, 1101, 3, '强制下线', '', '', '', 1, '', 'monitor:online:offline', 0)
+on duplicate key update
+  parent_id = values(parent_id), title = values(title), auths = values(auths);
+
+insert ignore into sys_role_menus (role_id, menu_id)
+select id, 1106 from sys_roles where code = 'admin' and status = 1;
+-- END 051_monitor_live_sessions.sql

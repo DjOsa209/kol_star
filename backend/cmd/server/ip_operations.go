@@ -234,6 +234,8 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.queryMaps(r.Context(), `select id, name, ip_type as ipType, rights_owner as rightsOwner,
 		markets, audience, summary, cooperation_status as cooperationStatus, currency,
 		price_min as priceMin, price_max as priceMax,
+		created_by as uploadedBy,
+		coalesce((select coalesce(nullif(u.nickname,''), u.username) from sys_users u where u.id=biz_ip_resources.created_by), '') as uploaderName,
 		(select f.id from biz_ip_files f where f.ip_id=biz_ip_resources.id and f.file_kind='visual' order by f.id desc limit 1) as visualFileId,
 		(`+ipCompletenessSQL+` * 12.5) as completeness,
 		date_format(updated_at, '%Y-%m-%d %H:%i') as updatedAt
@@ -260,6 +262,11 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) ipResourceSave(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "未登录或登录已过期")
+		return
+	}
 	var item ipResourceInput
 	if !readIPJSON(w, r, &item) {
 		return
@@ -297,7 +304,6 @@ func (a *app) ipResourceSave(w http.ResponseWriter, r *http.Request) {
 		_ = result
 		id = item.ID
 	} else {
-		userID, _ := a.currentUserID(r)
 		result, err := a.DB().ExecContext(r.Context(), `insert into biz_ip_resources (name,ip_type,rights_owner,contact,markets,audience,summary,cooperation_status,currency,price_min,price_max,license_notes,profile,created_by) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			item.Name, item.IPType, item.RightsOwner, item.Contact, ipJSON(item.Markets), item.Audience, item.Summary, item.CooperationStatus, item.Currency, item.PriceMin, item.PriceMax, item.LicenseNotes, ipJSON(item.Profile), userID)
 		if err != nil {
@@ -326,6 +332,8 @@ func (a *app) ipResourceDetail(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.queryMaps(r.Context(), `select id, name, ip_type as ipType, rights_owner as rightsOwner, contact,
 		markets, audience, summary, cooperation_status as cooperationStatus, currency,
 		price_min as priceMin, price_max as priceMax, license_notes as licenseNotes, profile,
+		created_by as uploadedBy,
+		coalesce((select coalesce(nullif(u.nickname,''), u.username) from sys_users u where u.id=biz_ip_resources.created_by), '') as uploaderName,
 		date_format(created_at, '%Y-%m-%d %H:%i') as createdAt,
 		date_format(updated_at, '%Y-%m-%d %H:%i') as updatedAt
 		from biz_ip_resources where id=?`, id)
@@ -344,7 +352,8 @@ func (a *app) ipResourceDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files, err := a.queryMaps(r.Context(), `select id, ip_id as ipId, case_id as caseId, file_kind as fileKind,
-		original_name as originalName, size_bytes as sizeBytes,
+		original_name as originalName, size_bytes as sizeBytes, uploaded_by as uploadedBy,
+		coalesce((select coalesce(nullif(u.nickname,''), u.username) from sys_users u where u.id=biz_ip_files.uploaded_by), '') as uploaderName,
 		date_format(created_at, '%Y-%m-%d %H:%i') as createdAt from biz_ip_files where ip_id=? order by id desc`, id)
 	if err != nil {
 		writeDBError(w, err)
@@ -403,6 +412,11 @@ func validIPDisplayFilename(name, currentExtension string) bool {
 }
 
 func (a *app) ipFileUpload(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "未登录或登录已过期")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 22<<20)
 	if err := r.ParseMultipartForm(22 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, 400, "文件不能超过20MB")
@@ -470,7 +484,6 @@ func (a *app) ipFileUpload(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
-	userID, _ := a.currentUserID(r)
 	var nullableCase any
 	if kind == "case" {
 		nullableCase = caseID
@@ -734,6 +747,11 @@ func (a *app) ipImportPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) ipImport(w http.ResponseWriter, r *http.Request) {
+	userID, ok := a.currentUserID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, 401, "未登录或登录已过期")
+		return
+	}
 	var input ipImportInput
 	if !readIPJSON(w, r, &input) {
 		return
@@ -747,7 +765,6 @@ func (a *app) ipImport(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
-	userID, _ := a.currentUserID(r)
 	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeDBError(w, err)

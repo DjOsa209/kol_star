@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRole } from "./hook";
+import { useUserStoreHook } from "@/store/modules/user";
 import { PureTableBar } from "@/components/RePureTableBar";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 
@@ -12,6 +13,13 @@ defineOptions({
 });
 
 const formRef = ref();
+const userStore = useUserStoreHook();
+const canForceOffline = computed(() =>
+  userStore.permissions.some(
+    permission =>
+      permission === "*:*:*" || permission === "monitor:online:offline"
+  )
+);
 const {
   form,
   loading,
@@ -22,9 +30,13 @@ const {
   resetForm,
   handleOffline,
   handleSizeChange,
-  handleCurrentChange,
-  handleSelectionChange
+  handleCurrentChange
 } = useRole();
+const displayColumns = computed(() =>
+  canForceOffline.value
+    ? columns
+    : columns.filter(column => column.slot !== "operation")
+);
 </script>
 
 <template>
@@ -59,8 +71,8 @@ const {
     </el-form>
 
     <PureTableBar
-      title="在线用户（仅演示，操作后不生效）"
-      :columns="columns"
+      title="在线用户（最近 15 分钟有活动）"
+      :columns="displayColumns"
       @refresh="onSearch"
     >
       <template v-slot="{ size, dynamicColumns }">
@@ -79,11 +91,10 @@ const {
             background: 'var(--el-fill-color-light)',
             color: 'var(--el-text-color-primary)'
           }"
-          @selection-change="handleSelectionChange"
           @page-size-change="handleSizeChange"
           @page-current-change="handleCurrentChange"
         >
-          <template #operation="{ row }">
+          <template v-if="canForceOffline" #operation="{ row }">
             <el-popconfirm
               :title="`是否强制下线${row.username}`"
               @confirm="handleOffline(row)"

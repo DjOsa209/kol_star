@@ -77,6 +77,7 @@ class PureHttp {
         /** 请求白名单，放置一些不需要`token`的接口（通过设置请求白名单，防止`token`过期后再请求造成的死循环问题） */
         const whiteList = [
           "/refresh-token",
+          "/logout",
           "/login",
           "/auth/config",
           "/auth/sso/uac/callback"
@@ -88,7 +89,7 @@ class PureHttp {
               if (data) {
                 const now = new Date().getTime();
                 if (data.sessionExpires - now <= 0) {
-                  useUserStoreHook().logOut();
+                  useUserStoreHook().logOut({ localOnly: true });
                   message(transformI18n($t("login.pureLoginExpired")), {
                     type: "warning"
                   });
@@ -110,7 +111,7 @@ class PureHttp {
                       })
                       .catch(_err => {
                         PureHttp.requests = [];
-                        useUserStoreHook().logOut();
+                        useUserStoreHook().logOut({ localOnly: true });
                         message(transformI18n($t("login.pureLoginExpired")), {
                           type: "warning"
                         });
@@ -157,7 +158,10 @@ class PureHttp {
       (error: PureHttpError) => {
         const $error = error;
         $error.isCancelRequest = Axios.isCancel($error);
-        if ($error.response?.status === 401) {
+        if (
+          $error.response?.status === 401 &&
+          !$error.config?.url?.endsWith("/logout")
+        ) {
           handleUnauthorized();
         }
         // 所有的响应异常 区分来源为取消请求/非取消请求

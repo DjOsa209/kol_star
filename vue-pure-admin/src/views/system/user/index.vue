@@ -34,6 +34,7 @@ const {
   buttonClass,
   deviceDetection,
   onSearch,
+  handleSearch,
   resetForm,
   onbatchDel,
   openDialog,
@@ -100,7 +101,7 @@ const {
             type="primary"
             :icon="useRenderIcon('ri/search-line')"
             :loading="loading"
-            @click="onSearch"
+            @click="handleSearch"
           >
             搜索
           </el-button>
@@ -110,7 +111,7 @@ const {
         </el-form-item>
       </el-form>
 
-      <PureTableBar title="用户管理" :columns="columns" @refresh="onSearch">
+      <PureTableBar title="用户管理" :columns="columns" @refresh="handleSearch">
         <template #buttons>
           <el-button
             v-perms="'system:user:add'"

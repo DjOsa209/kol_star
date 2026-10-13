@@ -119,7 +119,8 @@ func ipTestPost(t *testing.T, a *app, handler http.HandlerFunc, payload any) (in
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+newLoginTokenResponse(1, time.Now(), time.Now())["accessToken"].(string))
+	startedAt := time.Now().Truncate(time.Second)
+	req.Header.Set("Authorization", "Bearer "+newLoginTokenResponse(1, startedAt, startedAt, strings.Repeat("b", 64))["accessToken"].(string))
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 	var response map[string]any
@@ -129,6 +130,12 @@ func ipTestPost(t *testing.T, a *app, handler http.HandlerFunc, payload any) (in
 	return rec.Code, response
 }
 
+func expectIPTestSession(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(`select s.last_seen_unix from sys_sessions`).
+		WithArgs(sessionHash(strings.Repeat("b", 64)), 1, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"last_seen_unix"}).AddRow(time.Now().Unix()))
+}
+
 func TestIPExternalOnlySubmissionCanEnterFeedbackAndMarketingFlow(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -136,6 +143,7 @@ func TestIPExternalOnlySubmissionCanEnterFeedbackAndMarketingFlow(t *testing.T) 
 	}
 	defer db.Close()
 	a := newApp(db, Config{})
+	expectIPTestSession(mock)
 	mock.ExpectBegin()
 	mock.ExpectExec("insert into biz_ip_requests").WillReturnResult(sqlmock.NewResult(81, 1))
 	mock.ExpectCommit()
@@ -197,6 +205,7 @@ func TestIPDraftSubmissionRejectsLostStatusTransition(t *testing.T) {
 	}
 	defer db.Close()
 	a := newApp(db, Config{})
+	expectIPTestSession(mock)
 	mock.ExpectBegin()
 	mock.ExpectQuery("select count\\(\\*\\) from biz_ip_requests where id=\\? and status='draft'").
 		WithArgs(int64(81), 1).

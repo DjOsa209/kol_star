@@ -211,6 +211,46 @@ function riskItems(value: RecommendationResult["risks"]): string[] {
   return value ? [String(value)] : [];
 }
 
+function scenarioItems(value: RecommendationResult["scenarios"]): string[] {
+  return Array.isArray(value)
+    ? value.filter(item => typeof item === "string" && item.trim())
+    : [];
+}
+
+function evidenceItems(value: RecommendationResult["evidence"]) {
+  return Array.isArray(value)
+    ? value.filter(item => item && (item.title || item.source))
+    : [];
+}
+
+function safeExternalUrl(value: unknown): string | undefined {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function evidenceEmptyText(item: RecommendationResult): string {
+  if (!item.advice?.trim())
+    return "这条历史推荐尚未检索外部资料，可点击“立即刷新”更新。";
+  if (item.evidenceStatus === "unavailable")
+    return "外部资料检索暂不可用，本次建议仅参考库内档案。";
+  if (item.evidenceStatus === "none")
+    return "未找到相关的公开背景资料，请参考库内版权资料。";
+  if (item.evidenceStatus === "not_searched")
+    return "公开背景检索覆盖排序靠前的 3 条推荐；本条可查看库内版权资料。";
+  if (item.evidenceStatus === "available") return "暂无可展示的公开资料链接。";
+  return "暂未获取外部背景资料。";
+}
+
+function adviceHeading(item: RecommendationResult): string {
+  if (item.adviceSource === "ai") return "AI 合作建议";
+  if (item.adviceSource === "rule") return "规则合作建议";
+  return "合作建议";
+}
+
 function formatTime(value: string | undefined | null) {
   return value ? String(value).replace("T", " ").slice(0, 16) : "尚未运行";
 }
@@ -412,7 +452,11 @@ async function runNow() {
   if (!selectedId.value) return;
   running.value = true;
   try {
-    await runRecommendationSubscription("ip", selectedId.value);
+    const response = await runRecommendationSubscription(
+      "ip",
+      selectedId.value
+    );
+    if (response.code !== 0) throw new Error(response.message);
     await loadSubscriptions(selectedId.value);
     await loadResults();
     activeView.value = "all";
@@ -533,7 +577,7 @@ async function addToIntent(item: RecommendationResult) {
     query: {
       mode: "new",
       recommendedIp: String(id),
-      recommendationReason: item.reason
+      recommendationReason: item.advice?.trim() || item.reason
     }
   });
 }
@@ -885,9 +929,9 @@ onUnmounted(() => {
                 <div class="result-topline">
                   <div>
                     <span v-if="item.isNew" class="new-pill">NEW</span
-                    ><span class="score-pill">匹配度 {{ item.score }}%</span
+                    ><span class="score-pill">规则匹配 {{ item.score }}%</span
                     ><span class="source-pill">{{
-                      item.source === "ai" ? "AI 排序 · 实时依据" : "规则推荐"
+                      item.source === "ai" ? "AI 排序" : "规则推荐"
                     }}</span>
                   </div>
                   <time>{{ formatTime(item.createdAt) }}</time>
@@ -902,8 +946,86 @@ onUnmounted(() => {
                   · {{ item.resource?.cooperationStatus || "合作状态待确认" }}
                 </p>
                 <p class="reason">
-                  <b>推荐理由</b>{{ item.reason || "符合当前寻找条件" }}
+                  <b>规则匹配依据</b>{{ item.reason || "符合当前寻找条件" }}
                 </p>
+                <section
+                  v-if="
+                    item.advice?.trim() || scenarioItems(item.scenarios).length
+                  "
+                  class="ai-advice"
+                  :aria-label="adviceHeading(item)"
+                >
+                  <div class="ai-advice-heading">
+                    <b>{{ adviceHeading(item) }}</b>
+                    <span>结合寻找条件与可用资料</span>
+                  </div>
+                  <p v-if="item.advice?.trim()">{{ item.advice }}</p>
+                  <div
+                    v-if="scenarioItems(item.scenarios).length"
+                    class="scenario-list"
+                  >
+                    <span class="scenario-label">适用场景</span>
+                    <ul>
+                      <li
+                        v-for="(scenario, index) in scenarioItems(
+                          item.scenarios
+                        )"
+                        :key="`${item.id}-${index}`"
+                      >
+                        {{ scenario }}
+                      </li>
+                    </ul>
+                  </div>
+                </section>
+                <div v-else class="advice-empty">
+                  <span>{{
+                    item.source === "ai"
+                      ? "该历史结果仅由 AI 排序，尚无合作建议。"
+                      : "该历史结果尚无合作建议。"
+                  }}</span>
+                  <button type="button" :disabled="running" @click="runNow">
+                    立即刷新建议 →
+                  </button>
+                </div>
+                <section class="evidence-section" aria-label="外部背景资料">
+                  <b>外部背景资料（供核对）</b>
+                  <ul v-if="evidenceItems(item.evidence).length">
+                    <li
+                      v-for="(evidence, index) in evidenceItems(item.evidence)"
+                      :key="`${item.id}-evidence-${index}`"
+                    >
+                      <a
+                        v-if="safeExternalUrl(evidence.url)"
+                        :href="safeExternalUrl(evidence.url)"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >{{ evidence.title || evidence.source }} ↗</a
+                      >
+                      <span v-else>{{
+                        evidence.title || evidence.source
+                      }}</span>
+                      <small>
+                        {{ evidence.source || "来源未注明" }}
+                        <template v-if="evidence.publishedAt">
+                          ·
+                          {{
+                            String(evidence.publishedAt).slice(0, 10)
+                          }}</template
+                        >
+                      </small>
+                      <p v-if="evidence.summary">{{ evidence.summary }}</p>
+                    </li>
+                  </ul>
+                  <p
+                    v-if="evidenceItems(item.evidence).length"
+                    class="evidence-context"
+                  >
+                    公开资料仅供背景参考，授权范围与报价以版权方确认为准。
+                  </p>
+                  <p v-else class="evidence-empty">
+                    {{ evidenceEmptyText(item) }}
+                  </p>
+                </section>
                 <div v-if="riskItems(item.risks).length" class="risk">
                   <b>待关注</b>{{ riskItems(item.risks).join("；") }}
                 </div>
@@ -1485,6 +1607,118 @@ onUnmounted(() => {
 .risk b {
   flex: none;
   color: #5f722b;
+}
+.ai-advice {
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: #f7faed;
+  border-left: 3px solid #b4e600;
+  border-radius: 6px;
+}
+.ai-advice-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.ai-advice-heading b {
+  font-size: 13px;
+  color: #3e5f0d;
+}
+.ai-advice-heading span,
+.scenario-label {
+  font-size: 11px;
+  color: #7b8374;
+}
+.ai-advice p {
+  margin: 7px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+.scenario-list {
+  display: flex;
+  gap: 10px;
+  margin-top: 9px;
+}
+.scenario-label {
+  flex: none;
+  padding-top: 2px;
+  font-weight: 700;
+}
+.scenario-list ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 16px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.advice-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #879084;
+}
+.advice-empty button {
+  padding: 0;
+  font-weight: 700;
+  color: #557513;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+.advice-empty button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+.evidence-section {
+  padding: 10px 12px;
+  margin-top: 10px;
+  border: 1px solid #e9ebe3;
+  border-radius: 6px;
+}
+.evidence-section > b {
+  font-size: 12px;
+  color: #444e3b;
+}
+.evidence-section ul {
+  display: grid;
+  gap: 9px;
+  padding: 0;
+  margin: 7px 0 0;
+  list-style: none;
+}
+.evidence-section li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+}
+.evidence-section a {
+  font-weight: 650;
+  color: #557513;
+  overflow-wrap: anywhere;
+}
+.evidence-section small,
+.evidence-empty {
+  color: #8b9390;
+}
+.evidence-section li p {
+  margin: 2px 0 0;
+  line-height: 1.5;
+  color: #68716c;
+}
+.evidence-context {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: #8b9390;
+}
+.evidence-empty {
+  margin: 6px 0 0;
+  font-size: 12px;
 }
 .risk {
   color: #c16c35;

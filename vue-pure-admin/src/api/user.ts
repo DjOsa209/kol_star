@@ -1,4 +1,5 @@
 import { http } from "@/utils/http";
+import { type DataInfo, formatToken } from "@/utils/auth";
 
 export type UserResult = {
   code: number;
@@ -95,6 +96,16 @@ type Result = {
 /** 登录 */
 export const getLogin = (data?: object) => {
   return http.request<UserResult>("post", "/login", { data });
+};
+
+/** 退出当前登录会话并使服务端令牌失效 */
+export const logoutApi = (session: DataInfo<number>) => {
+  return http.request<Result>("post", "/logout", {
+    data: { refreshToken: session.refreshToken },
+    headers: session.accessToken
+      ? { Authorization: formatToken(session.accessToken) }
+      : {}
+  });
 };
 
 /** 登录方式配置 */

@@ -32,6 +32,11 @@ export function useRole() {
       minWidth: 100
     },
     {
+      label: "用户昵称",
+      prop: "nickname",
+      minWidth: 120
+    },
+    {
       label: "登录 IP",
       prop: "ip",
       minWidth: 140
