@@ -137,10 +137,8 @@ func TestIPStageNotificationResolvesUnloggedSSOColleagueByEmployeeNo(t *testing.
 		case "/service-pf-open-gateway/oauth/token":
 			_, _ = w.Write([]byte(`{"code":"0","data":{"access_token":"mock-token","expires_in":1800}}`))
 		case "/service-pf-open-gateway/open-apis/v2/api/uac-user/user/pages":
-			var body struct {
-				Param map[string]any `json:"param"`
-			}
-			if r.Header.Get("Authorization") != "Bearer mock-token" || json.NewDecoder(r.Body).Decode(&body) != nil || body.Param["empNo"] != "1001" {
+			body := decodeSignedUACDirectoryPage(t, r, "uac-app", "uac-secret")
+			if body.Current != 1 || body.Param["empNo"] != "1001" || body.Param["status"] != "OK" {
 				t.Error("unexpected UAC employee lookup")
 			}
 			_, _ = w.Write([]byte(`{"code":"0","data":{"dataList":[{"uid":"15682833519993842","realName":"张三","employeeNo":"1001","email":"zhang@example.com","status":"OK"}]}}`))
@@ -192,6 +190,10 @@ func TestIPStageNotificationRechecksCachedSSOStatus(t *testing.T) {
 		case "/service-pf-open-gateway/oauth/token":
 			_, _ = w.Write([]byte(`{"code":"0","data":{"access_token":"mock-token","expires_in":1800}}`))
 		case "/service-pf-open-gateway/open-apis/v2/api/uac-user/user/pages":
+			body := decodeSignedUACDirectoryPage(t, r, "uac-app", "uac-secret")
+			if body.Current != 1 || body.Param["empNo"] != "1001" {
+				t.Errorf("unexpected UAC status recheck: %+v", body)
+			}
 			_, _ = w.Write([]byte(`{"code":"0","data":{"dataList":[{"uid":"501","realName":"已停用同事","employeeNo":"1001","email":"old@example.com","status":"FREEZE"}]}}`))
 		default:
 			http.NotFound(w, r)

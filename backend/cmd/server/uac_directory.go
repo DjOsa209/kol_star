@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,11 +94,22 @@ func (client *uacDirectoryClient) queryUsers(ctx context.Context, page int, para
 	if err != nil {
 		return nil, false, err
 	}
-	requestBody, _ := json.Marshal(map[string]any{
+	paramJSON, err := json.Marshal(map[string]any{
 		"current": page, "size": uacDirectoryPageSize, "searchTotal": false, "param": param,
 	})
+	if err != nil {
+		return nil, false, errors.New("创建 UAC 目录查询参数失败")
+	}
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return nil, false, errors.New("创建 UAC 目录签名随机数失败")
+	}
+	requestBody, err := uacSignedDirectoryBody(client.cfg.UACAppID, client.cfg.UACAppSecret, paramJSON, time.Now(), hex.EncodeToString(nonceBytes))
+	if err != nil {
+		return nil, false, errors.New("创建 UAC 目录签名请求失败")
+	}
 	endpoint := strings.TrimRight(client.cfg.UACGateway, "/") + "/service-pf-open-gateway/open-apis/v2/api/uac-user/user/pages"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(requestBody)))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, false, errors.New("创建 UAC 目录请求失败")
 	}
@@ -152,6 +167,45 @@ func (client *uacDirectoryClient) queryUsers(ctx context.Context, page int, para
 		})
 	}
 	return people, payload.Data.HasNext, nil
+}
+
+// UAC's open gateway signs the outer request fields. The pagination object is
+// serialized as the param_json string before signing, as required by the
+// platform's POST request format.
+func uacSignedDirectoryBody(appID, appSecret string, paramJSON []byte, timestamp time.Time, nonce string) ([]byte, error) {
+	if !json.Valid(paramJSON) {
+		return nil, errors.New("UAC 目录查询参数不是 JSON")
+	}
+	fields := map[string]string{
+		"app_id":      strings.TrimSpace(appID),
+		"sign_method": "md5",
+		"timestamp":   strconv.FormatInt(timestamp.UnixMilli(), 10),
+		"nonce":       nonce,
+		"param_json":  string(paramJSON),
+	}
+	fields["sign"] = uacDirectorySignature(fields, strings.TrimSpace(appSecret))
+	return json.Marshal(fields)
+}
+
+func uacDirectorySignature(fields map[string]string, secret string) string {
+	keys := make([]string, 0, len(fields))
+	for key, value := range fields {
+		if key != "sign" && value != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var input strings.Builder
+	for _, key := range keys {
+		input.WriteString(key)
+		input.WriteByte('=')
+		input.WriteString(fields[key])
+		input.WriteByte('&')
+	}
+	input.WriteString("secret=")
+	input.WriteString(secret)
+	digest := md5.Sum([]byte(input.String()))
+	return strings.ToUpper(hex.EncodeToString(digest[:]))
 }
 
 func (client *uacDirectoryClient) applicationToken(ctx context.Context) (string, error) {
