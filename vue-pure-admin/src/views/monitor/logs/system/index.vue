@@ -6,7 +6,6 @@ import { PureTableBar } from "@/components/RePureTableBar";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 
 import View from "~icons/ep/view";
-import Delete from "~icons/ep/delete";
 import Refresh from "~icons/ep/refresh";
 
 defineOptions({
@@ -14,26 +13,19 @@ defineOptions({
 });
 
 const formRef = ref();
-const tableRef = ref();
-
 const {
   form,
   loading,
   columns,
   dataList,
   pagination,
-  selectedNum,
   onSearch,
   onDetail,
-  clearAll,
   resetForm,
-  onbatchDel,
   handleSizeChange,
-  onSelectionCancel,
   handleCellDblclick,
-  handleCurrentChange,
-  handleSelectionChange
-} = useRole(tableRef);
+  handleCurrentChange
+} = useRole();
 </script>
 
 <template>
@@ -77,45 +69,9 @@ const {
       </el-form-item>
     </el-form>
 
-    <PureTableBar
-      title="系统日志（仅演示，操作后不生效）"
-      :columns="columns"
-      @refresh="onSearch"
-    >
-      <template #buttons>
-        <el-popconfirm title="确定要删除所有日志数据吗？" @confirm="clearAll">
-          <template #reference>
-            <el-button type="danger" :icon="useRenderIcon(Delete)">
-              清空日志
-            </el-button>
-          </template>
-        </el-popconfirm>
-      </template>
+    <PureTableBar title="系统日志" :columns="columns" @refresh="onSearch">
       <template v-slot="{ size, dynamicColumns }">
-        <div
-          v-if="selectedNum > 0"
-          v-motion-fade
-          class="bg-(--el-fill-color-light) w-full h-11.5 mb-2 pl-4 flex items-center"
-        >
-          <div class="flex-auto">
-            <span
-              style="font-size: var(--el-font-size-base)"
-              class="text-[rgba(42,46,54,0.5)] dark:text-[rgba(220,220,242,0.5)]"
-            >
-              已选 {{ selectedNum }} 项
-            </span>
-            <el-button type="primary" text @click="onSelectionCancel">
-              取消选择
-            </el-button>
-          </div>
-          <el-popconfirm title="是否确认删除?" @confirm="onbatchDel">
-            <template #reference>
-              <el-button type="danger" text class="mr-1!"> 批量删除 </el-button>
-            </template>
-          </el-popconfirm>
-        </div>
         <pure-table
-          ref="tableRef"
           row-key="id"
           align-whole="center"
           table-layout="auto"
@@ -130,7 +86,6 @@ const {
             background: 'var(--el-fill-color-light)',
             color: 'var(--el-text-color-primary)'
           }"
-          @selection-change="handleSelectionChange"
           @page-size-change="handleSizeChange"
           @page-current-change="handleCurrentChange"
           @cell-dblclick="handleCellDblclick"

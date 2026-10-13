@@ -955,9 +955,7 @@ func (a *app) operationLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) systemLogs(w http.ResponseWriter, r *http.Request) {
-	a.table(w, r, `select id, module, url, method, ip, address, sys_system_logs.system, browser, takes_time as takesTime,
-	                     cast(unix_timestamp(request_time) * 1000 as unsigned) as requestTime
-	                from sys_system_logs order by id desc`)
+	a.filteredSystemLogs(w, r)
 }
 
 func (a *app) systemLogDetail(w http.ResponseWriter, r *http.Request) {

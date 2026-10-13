@@ -2261,3 +2261,12 @@ on duplicate key update
 insert ignore into sys_role_menus (role_id, menu_id)
 select id, 1106 from sys_roles where code = 'admin' and status = 1;
 -- END 051_monitor_live_sessions.sql
+
+-- BEGIN 052_log_list_performance.sql
+use kol_admin;
+
+-- The operation log list filters audit_version and orders by newest id.
+-- The existing time-based index does not support that order.
+create index idx_sys_operation_logs_feed
+  on sys_operation_logs (audit_version, id);
+-- END 052_log_list_performance.sql

@@ -47,6 +47,8 @@ Apply `migrations/050_project_upload_audit.sql` before deploying project uploade
 
 Apply `migrations/051_monitor_live_sessions.sql` before deploying live online users and operation auditing. Every local or SSO login now creates a random server-side session; access and refresh tokens are accepted only while that session is active, and **在线用户** shows sessions with activity in the last 15 minutes. The forced-offline action and ordinary logout revoke the selected session immediately. The old deterministic token format is rejected on deployment, so existing users must sign in again. Operation logs include only authenticated write attempts, record success or failure, and support module, status, date, and page filters. Read-only POSTs continue to appear in the system request log but not in operation logs. Earlier rows made by the former all-POST logger remain stored but are excluded by `audit_version=1`; the old demo monitor rows are removed by exact-match cleanup. New installations do not seed monitor logs. Credential-bearing request bodies are omitted from system logs.
 
+Apply `migrations/052_log_list_performance.sql` before deploying the log list performance update. System logs now query one page at a time instead of loading the full table, and the new `(audit_version, id)` index supports the operation log's newest-first list. Existing log rows remain intact.
+
 You can also load another config file:
 
 ```bash

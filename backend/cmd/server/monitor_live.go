@@ -18,6 +18,10 @@ func monitorPage(body map[string]any) (size, page int) {
 	if page <= 0 {
 		page = 1
 	}
+	maxInt := int(^uint(0) >> 1)
+	if page > maxInt/size {
+		page = maxInt / size
+	}
 	return
 }
 
