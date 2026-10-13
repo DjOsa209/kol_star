@@ -79,6 +79,7 @@ type SSOConfig struct {
 	DefaultRoleCode string `mapstructure:"default_role_code"`
 	UACGateway      string `mapstructure:"uac_gateway"`
 	UACAppID        string `mapstructure:"uac_app_id"`
+	UACAppSecret    string `mapstructure:"uac_app_secret"`
 	UACLang         string `mapstructure:"uac_lang"`
 	UACSource       string `mapstructure:"uac_source"`
 }

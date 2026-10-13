@@ -150,9 +150,19 @@ export const submitIPMarketing = (data: object) =>
     data
   });
 
-export const searchIPColleagues = (q: string) =>
-  http.request<Result<Array<{ id: string; name: string; department: string }>>>(
-    "get",
-    "/business/ip/colleagues",
-    { params: { q } }
-  );
+export type IPColleague = {
+  id: string | number;
+  name: string;
+  department: string;
+  employeeNo?: string;
+  notifiable?: boolean;
+};
+
+export const searchIPColleagues = (q: string, page = 1) =>
+  http.request<
+    Result<IPColleague[]> & {
+      hasNext?: boolean;
+      directorySource?: "uac" | "cache";
+      directoryWarning?: string;
+    }
+  >("get", "/business/ip/colleagues", { params: { q, page } });

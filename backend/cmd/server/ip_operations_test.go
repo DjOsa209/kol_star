@@ -190,6 +190,96 @@ func TestIPExternalOnlySubmissionCanEnterFeedbackAndMarketingFlow(t *testing.T) 
 	}
 }
 
+func TestIPDraftSubmissionRejectsLostStatusTransition(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := newApp(db, Config{})
+	mock.ExpectBegin()
+	mock.ExpectQuery("select count\\(\\*\\) from biz_ip_requests where id=\\? and status='draft'").
+		WithArgs(int64(81), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("update biz_ip_requests set project_name=").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	status, response := ipTestPost(t, a, a.ipRequestSave, map[string]any{
+		"id": 81, "projectName": "库外IP需求", "department": "营销", "markets": []string{"南亚"},
+		"goal": "新品推广", "description": "寻找动画IP", "budgetCurrency": "USD",
+		"budgetMin": 1000, "budgetMax": 10000, "candidateIds": []int{},
+		"brief": ipTestBrief(), "submit": true,
+	})
+	if status != http.StatusConflict || response["code"] != float64(409) {
+		t.Fatalf("lost draft transition: status=%d response=%v", status, response)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIPFeedbackAllowsMultipleIPsAtSameTier(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := newApp(db, Config{})
+	mock.ExpectBegin()
+	mock.ExpectQuery("select status from biz_ip_requests").WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("submitted"))
+	mock.ExpectExec("insert into biz_ip_request_candidates").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("insert into biz_ip_request_candidates").WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectExec("update biz_ip_requests set status='ip_reviewed'").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	assessment := map[string]any{
+		"licenseContent": "形象", "licenseTerritory": "南亚", "ipResources": "素材包", "brandResources": "渠道",
+		"businessRisk": "低", "publicRisk": "低", "ownershipClarity": "清晰",
+		"scoreDimensions": map[string]any{"audienceMatch": 90, "marketCoverage": 90, "scheduleAvailability": 80, "licenseRisk": 90},
+	}
+	status, response := ipTestPost(t, a, a.ipRequestFeedback, map[string]any{
+		"requestId": 81, "candidates": []any{
+			map[string]any{"ipId": 91, "priorityOrder": 0, "feasibility": "可行", "recommendation": "推荐", "reason": "匹配", "assessment": assessment},
+			map[string]any{"ipId": 92, "priorityOrder": 0, "feasibility": "可行", "recommendation": "推荐", "reason": "匹配", "assessment": assessment},
+		},
+	})
+	if status != http.StatusOK || response["code"] != float64(0) {
+		t.Fatalf("shared T0 feedback: status=%d response=%v", status, response)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIPRequestListIncludesCompletedFeedback(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := newApp(db, Config{})
+	mock.ExpectQuery("select count\\(\\*\\) from biz_ip_requests.*status in").
+		WithArgs("submitted", "ip_reviewed", "marketing_reviewed").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery("select id, project_name as projectName").
+		WithArgs("submitted", "ip_reviewed", "marketing_reviewed", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "projectName", "status"}).
+			AddRow(1, "待反馈需求", "submitted").AddRow(2, "已反馈需求", "ip_reviewed"))
+	status, response := ipTestPost(t, a, a.ipRequestsList, map[string]any{
+		"statuses": []string{"submitted", "ip_reviewed", "marketing_reviewed"},
+		"page":     1, "pageSize": 20,
+	})
+	if status != http.StatusOK || response["code"] != float64(0) {
+		t.Fatalf("feedback list: status=%d response=%v", status, response)
+	}
+	data := response["data"].(map[string]any)
+	if data["total"] != float64(2) || len(data["list"].([]any)) != 2 {
+		t.Fatalf("completed feedback missing from list: %v", data)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIPLegacyRecommendationAloneCannotSubmitNewDemand(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -263,16 +353,16 @@ func TestIPImportPreviewReportsInvalidOptionsByRow(t *testing.T) {
 	}
 }
 
-func TestIPColleaguesSearchUsesActiveDirectory(t *testing.T) {
+func TestIPColleaguesSearchUsesActiveSSOUsers(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	a := newApp(db, Config{})
-	mock.ExpectQuery("from sys_users u left join sys_departments d").
-		WithArgs("%张%", "%张%", "%张%", "%张%").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "department"}).AddRow(7, "张三", "IP营销"))
+	mock.ExpectQuery("from sys_users u left join sys_departments d.*where u.status=1 and u.auth_provider='uac'").
+		WithArgs("%张%", "%张%", "%张%", "%张%", 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "department", "employeeNo", "notifiable"}).AddRow(7, "张三", "IP营销", "1001", 1))
 	req := httptest.NewRequest(http.MethodGet, "/business/ip/colleagues?q=张", nil)
 	rec := httptest.NewRecorder()
 	a.ipColleagues(rec, req)

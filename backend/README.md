@@ -31,6 +31,10 @@ For an existing database, apply `migrations/042_ip_operations.sql` and then `mig
 
 To enable product cooperation discovery and the two recommendation modules on an existing database, apply `migrations/044_product_discovery.sql`, `migrations/045_recommendations.sql`, and `migrations/046_recommendation_menus.sql` in that order, then restart the API. Product names extracted from published internal cooperations remain pending until an operator confirms their brand and product; only confirmed records appear in brand/product search and recommendation evidence. Saved searches produce an immediate result set and are checked each Monday after 09:00 Asia/Shanghai; each saved search creates at most five new in-app notifications per week. Recommendation requests and responses are omitted from system request logs.
 
+For the IP feedback priority update, apply `migrations/047_ip_priority_tiers.sql` once before deploying the updated API. It converts existing numbered recommendation ranks to T0/T1/T2; multiple IPs may share a tier.
+
+Apply `migrations/048_ip_recommendation_access.sql` to grant the IP recommendation menu to roles that already have IP demand, feedback, or marketing access. This also repairs environments where the recommendation menu was missing.
+
 You can also load another config file:
 
 ```bash
@@ -62,11 +66,14 @@ sso:
   redirect_uri: https://xmp.example.com/sso/callback
   uac_gateway: https://uac.example.com
   uac_app_id: your_app_id
+  uac_app_secret: your_app_secret
   uac_lang: zh_CN
   uac_source: ""
 ```
 
 Register the exact path-based `redirect_uri` in UAC; URL fragments such as `#/sso/callback` must not be used because UAC redirects do not preserve them. Apply `migrations/032_sso_users.sql` before enabling SSO. UAC callback tokens are never stored in request logs.
+
+The IP contact picker searches UAC through the server-side `uac-user/user/pages` API using the application's client credentials. Grant this app access to that API and the `uid`, `realName`, `employeeNo`, `email`, `status`, and department fields. The API returns only active colleagues to the browser and never exposes their email there. If `uac_app_secret` is missing or UAC search is unavailable, the picker falls back to SSO users who have already signed in to XMP and labels the limited result. IP stage notifications recheck the selected employee number and UID in UAC before sending a Feishu application message. Delivery runs in the background after each committed stage change and is best effort; failures are logged without rolling back the submitted workflow.
 
 Platform-synced resource images are stored under `uploads/resource-images/{resourceId}/`. Each resource avatar and platform-post cover uses a stable filename, so later syncs replace the existing image instead of creating timestamped copies. Post covers keep their original remote URL in `cover_remote_url` and their local cache path in `cover_url`; APIs prefer the remote URL and expose the local path as a fallback. Image downloads retry temporary network failures and reuse `platform_apis.youtube_proxy_url` when it is configured.
 

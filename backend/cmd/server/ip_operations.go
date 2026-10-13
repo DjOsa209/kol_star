@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"mime"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ipResourceInput struct {
@@ -522,7 +525,34 @@ func (a *app) ipColleagues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, 400, "搜索词过长")
 		return
 	}
-	where := " where u.status=1"
+	page := 1
+	if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, 400, "页码无效")
+			return
+		}
+		page = parsed
+	}
+	directory := newUACDirectoryClient(a.Config().SSO, nil)
+	if query != "" && directory.configured() {
+		ctx, cancel := context.WithTimeout(r.Context(), 7*time.Second)
+		people, hasNext, err := directory.search(ctx, query, page)
+		cancel()
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"code": 0, "message": "操作成功", "data": people,
+				"directorySource": "uac", "hasNext": hasNext,
+			})
+			return
+		}
+		log.Printf("[ip-directory] UAC query unavailable: %v", err)
+		// Directory permissions or availability can fail independently of XMP.
+		// Return the cached SSO accounts and clearly mark this limited result.
+	}
+	// UAC identities are saved here when colleagues sign in to XMP. Local
+	// administrator accounts are not colleagues in the enterprise directory.
+	where := " where u.status=1 and u.auth_provider='uac'"
 	args := []any{}
 	if query != "" {
 		query = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(query)
@@ -531,11 +561,14 @@ func (a *app) ipColleagues(w http.ResponseWriter, r *http.Request) {
 			args = append(args, "%"+query+"%")
 		}
 	}
+	args = append(args, (page-1)*uacDirectoryPageSize)
 	rows, err := a.queryMaps(r.Context(), `select u.id,
 		coalesce(nullif(u.nickname,''),u.username) as name,
-		coalesce(nullif(u.department_name,''),nullif(d.name,''),'') as department
+		coalesce(nullif(u.department_name,''),nullif(d.name,''),'') as department,
+		u.employee_no as employeeNo,
+		case when coalesce(u.email,'')='' then 0 else 1 end as notifiable
 		from sys_users u left join sys_departments d on d.id=u.dept_id`+where+
-		` order by coalesce(nullif(u.nickname,''),u.username),u.id limit 20`, args...)
+		` order by coalesce(nullif(u.nickname,''),u.username),u.id limit 21 offset ?`, args...)
 	if err != nil {
 		writeDBError(w, err)
 		return
@@ -543,7 +576,15 @@ func (a *app) ipColleagues(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []map[string]any{}
 	}
-	writeOK(w, rows)
+	hasNext := len(rows) > uacDirectoryPageSize
+	if hasNext {
+		rows = rows[:uacDirectoryPageSize]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"code": 0, "message": "操作成功", "data": rows,
+		"directorySource": "cache", "hasNext": hasNext,
+		"directoryWarning": "企业目录暂不可用，仅显示已登录 XMP 的同事",
+	})
 }
 
 func (a *app) ipFileRead(w http.ResponseWriter, r *http.Request) {
@@ -751,10 +792,11 @@ func (a *app) ipImport(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) ipRequestsList(w http.ResponseWriter, r *http.Request) {
 	var filter struct {
-		Keyword  string `json:"keyword"`
-		Status   string `json:"status"`
-		Page     int    `json:"page"`
-		PageSize int    `json:"pageSize"`
+		Keyword  string   `json:"keyword"`
+		Status   string   `json:"status"`
+		Statuses []string `json:"statuses"`
+		Page     int      `json:"page"`
+		PageSize int      `json:"pageSize"`
 	}
 	if !readIPJSON(w, r, &filter) {
 		return
@@ -771,7 +813,19 @@ func (a *app) ipRequestsList(w http.ResponseWriter, r *http.Request) {
 		where += " and project_name like ?"
 		args = append(args, "%"+strings.TrimSpace(filter.Keyword)+"%")
 	}
-	if filter.Status != "" {
+	if len(filter.Statuses) > 0 {
+		placeholders := make([]string, 0, len(filter.Statuses))
+		for _, status := range filter.Statuses {
+			if strings.TrimSpace(status) == "" {
+				continue
+			}
+			placeholders = append(placeholders, "?")
+			args = append(args, status)
+		}
+		if len(placeholders) > 0 {
+			where += " and status in (" + strings.Join(placeholders, ",") + ")"
+		}
+	} else if filter.Status != "" {
 		where += " and status=?"
 		args = append(args, filter.Status)
 	}
@@ -865,7 +919,17 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 			writeDBError(w, err)
 			return
 		}
-		_ = result
+		if item.Submit {
+			affected, err := result.RowsAffected()
+			if err != nil {
+				writeDBError(w, err)
+				return
+			}
+			if affected != 1 {
+				writeError(w, http.StatusConflict, 409, "需求已提交，请刷新后查看")
+				return
+			}
+		}
 		if _, err := tx.ExecContext(r.Context(), "delete from biz_ip_request_candidates where request_id=?", id); err != nil {
 			writeDBError(w, err)
 			return
@@ -880,12 +944,12 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		id, _ = result.LastInsertId()
 	}
 	seen := map[int64]bool{}
-	for index, ipID := range item.CandidateIDs {
+	for _, ipID := range item.CandidateIDs {
 		if ipID <= 0 || seen[ipID] {
 			continue
 		}
 		seen[ipID] = true
-		result, err := tx.ExecContext(r.Context(), `insert into biz_ip_request_candidates (request_id,ip_id,priority_order) select ?,id,? from biz_ip_resources where id=?`, id, index+1, ipID)
+		result, err := tx.ExecContext(r.Context(), `insert into biz_ip_request_candidates (request_id,ip_id,priority_order) select ?,id,? from biz_ip_resources where id=?`, id, 1, ipID)
 		if err != nil {
 			writeDBError(w, err)
 			return
@@ -899,6 +963,9 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(); err != nil {
 		writeDBError(w, err)
 		return
+	}
+	if item.Submit {
+		a.notifyIPStageAsync(id, "submitted")
 	}
 	writeOK(w, map[string]any{"id": id, "status": status})
 }
@@ -926,7 +993,7 @@ func (a *app) ipRequestDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	candidates, err := a.queryMaps(r.Context(), `select c.id,c.ip_id as ipId,r.name,r.ip_type as ipType,r.markets,
 		(select f.id from biz_ip_files f where f.ip_id=r.id and f.file_kind='visual' order by f.id desc limit 1) as visualFileId,
-		c.priority_order as priorityOrder,c.feasibility,c.recommendation,c.reason,c.assessment
+		least(2, greatest(0, c.priority_order)) as priorityOrder,c.feasibility,c.recommendation,c.reason,c.assessment
 		from biz_ip_request_candidates c join biz_ip_resources r on r.id=c.ip_id where c.request_id=? order by c.priority_order,c.id`, id)
 	if err != nil {
 		writeDBError(w, err)
@@ -970,7 +1037,6 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seenIPs := map[int64]bool{}
-	seenPriorities := map[int]bool{}
 	for _, candidate := range input.Candidates {
 		if candidate.IPID <= 0 || seenIPs[candidate.IPID] {
 			writeError(w, http.StatusBadRequest, 400, "评估IP不可重复")
@@ -981,12 +1047,11 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, 400, "请填写每个IP的可行性、推荐意见和理由")
 			return
 		}
+		if candidate.PriorityOrder < 0 || candidate.PriorityOrder > 2 {
+			writeError(w, http.StatusBadRequest, 400, "优先级只能选择T0、T1或T2")
+			return
+		}
 		if !input.SaveDraft {
-			if candidate.PriorityOrder < 1 || candidate.PriorityOrder > len(input.Candidates) || seenPriorities[candidate.PriorityOrder] {
-				writeError(w, http.StatusBadRequest, 400, "请为意向IP设置不重复的推荐排序")
-				return
-			}
-			seenPriorities[candidate.PriorityOrder] = true
 			for _, key := range []string{"licenseContent", "licenseTerritory", "ipResources", "brandResources", "businessRisk", "publicRisk", "ownershipClarity"} {
 				if ipMapText(candidate.Assessment, key) == "" {
 					writeError(w, http.StatusBadRequest, 400, "请补齐授权、资源和风险评估信息")
@@ -1030,6 +1095,9 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(); err != nil {
 		writeDBError(w, err)
 		return
+	}
+	if !input.SaveDraft {
+		a.notifyIPStageAsync(input.RequestID, "ip_reviewed")
 	}
 	writeOK(w, nil)
 }
@@ -1094,6 +1162,9 @@ func (a *app) ipRequestMarketing(w http.ResponseWriter, r *http.Request) {
 	if affected == 0 {
 		writeError(w, http.StatusConflict, 409, "需求未处于待营销补充状态")
 		return
+	}
+	if !input.SaveDraft {
+		a.notifyIPStageAsync(input.RequestID, "marketing_reviewed")
 	}
 	writeOK(w, nil)
 }

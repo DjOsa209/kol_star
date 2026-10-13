@@ -13,6 +13,7 @@ import {
   saveIPRequest,
   submitIPFeedback,
   submitIPMarketing,
+  type IPColleague,
   type IPRequestInput
 } from "@/api/ip";
 
@@ -116,7 +117,12 @@ const contactStages = [
   { key: "media", label: "媒介投放" },
   { key: "pr", label: "PR" }
 ];
-type Colleague = { id?: string | number; name: string; department?: string };
+type Colleague = {
+  id?: string | number;
+  name: string;
+  department?: string;
+  employeeNo?: string;
+};
 function emptyContactsByStage(): Record<string, Colleague> {
   return Object.fromEntries(
     contactStages.map(stage => [stage.key, { name: "" }])
@@ -134,7 +140,10 @@ function normalizedContactsByStage(value: unknown): Record<string, Colleague> {
           : {
               name: String(item?.name || ""),
               ...(item?.id ? { id: item.id } : {}),
-              ...(item?.department ? { department: item.department } : {})
+              ...(item?.department ? { department: item.department } : {}),
+              ...(item?.employeeNo
+                ? { employeeNo: String(item.employeeNo) }
+                : {})
             }
       ];
     })
@@ -193,6 +202,15 @@ const assessmentFields = [
     hint: "排他、监修或时间限制（选填）"
   }
 ];
+const requiredAssessmentFields = new Set([
+  "licenseContent",
+  "licenseTerritory",
+  "ipResources",
+  "brandResources",
+  "businessRisk",
+  "publicRisk",
+  "ownershipClarity"
+]);
 const scoreFields = [
   { key: "audienceMatch", label: "受众匹配", weight: 0.3 },
   { key: "marketCoverage", label: "市场覆盖", weight: 0.25 },
@@ -273,6 +291,17 @@ const marketingFields = [
   },
   { key: "prOpinion", label: "PR · 舆情判断", hint: "舆论风险与公关建议" }
 ];
+const requiredMarketingFields = new Set([
+  "marketHeat",
+  "fanAudience",
+  "commercialValue",
+  "marketingRisks",
+  "recentTrend",
+  "socialFollowers",
+  "ugcForecast",
+  "audienceMatch",
+  "prOpinion"
+]);
 function objectValue(value: unknown): Record<string, any> {
   if (value && typeof value === "object" && !Array.isArray(value))
     return value as Record<string, any>;
@@ -291,6 +320,13 @@ const statusText: Record<string, string> = {
   ip_reviewed: "待营销补充",
   marketing_reviewed: "营销意见已提交"
 };
+function listStatusText(status: string) {
+  if (menuKind.value === "feedback") {
+    if (status === "ip_reviewed") return "已反馈 · 待营销补充";
+    if (status === "marketing_reviewed") return "已反馈 · 营销已完成";
+  }
+  return statusText[status] || status;
+}
 const initialForm = (): IPRequestInput => ({
   projectName: "",
   department: "",
@@ -314,8 +350,19 @@ const form = ref<IPRequestInput>(initialForm());
 const briefOpen = ref(["brief"]);
 const invalidField = ref("");
 const brokenExternalImageUrls = ref<Record<number, boolean>>({});
-const colleagueSearchStatus = ref<Record<string, "" | "empty" | "failed">>({});
+const colleagueSearchStatus = ref<
+  Record<string, "" | "empty" | "failed" | "limited">
+>({});
 const colleagueActiveQuery = ref<Record<string, string>>({});
+const colleaguePickerOpen = ref(false);
+const colleaguePickerStage = ref("");
+const colleaguePickerQuery = ref("");
+const colleaguePickerPage = ref(1);
+const colleaguePickerHasNext = ref(false);
+const colleaguePickerRows = ref<IPColleague[]>([]);
+const colleaguePickerLoading = ref(false);
+const colleaguePickerWarning = ref("");
+let colleaguePickerRequest = 0;
 type ColleagueSuggestion = Colleague & { value: string };
 async function fetchColleagueSuggestions(
   stage: string,
@@ -338,7 +385,11 @@ async function fetchColleagueSuggestions(
       ...person,
       value: person.name
     }));
-    colleagueSearchStatus.value[stage] = suggestions.length ? "" : "empty";
+    colleagueSearchStatus.value[stage] = response.directoryWarning
+      ? "limited"
+      : suggestions.length
+        ? ""
+        : "empty";
     callback(suggestions);
   } catch {
     if (colleagueActiveQuery.value[stage] !== query) {
@@ -353,9 +404,63 @@ function selectContact(stage: string, colleague: Record<string, any>) {
   form.value.brief.contactsByStage[stage] = {
     id: colleague.id,
     name: String(colleague.name || colleague.value || ""),
-    department: String(colleague.department || "")
+    department: String(colleague.department || ""),
+    employeeNo: String(colleague.employeeNo || "")
   };
   invalidField.value = "";
+}
+function openColleaguePicker(stage: string) {
+  colleaguePickerRequest++;
+  colleaguePickerStage.value = stage;
+  colleaguePickerQuery.value =
+    form.value.brief.contactsByStage[stage].name || "";
+  colleaguePickerPage.value = 1;
+  colleaguePickerRows.value = [];
+  colleaguePickerHasNext.value = false;
+  colleaguePickerWarning.value = "";
+  colleaguePickerOpen.value = true;
+  if (colleaguePickerQuery.value.trim()) void loadColleaguePickerPage(1);
+}
+function onColleaguePickerQueryInput() {
+  colleaguePickerRequest++;
+  colleaguePickerLoading.value = false;
+  colleaguePickerPage.value = 1;
+  colleaguePickerRows.value = [];
+  colleaguePickerHasNext.value = false;
+  colleaguePickerWarning.value = "";
+}
+async function loadColleaguePickerPage(targetPage: number) {
+  const query = colleaguePickerQuery.value.trim();
+  if (!query || targetPage < 1) {
+    colleaguePickerRows.value = [];
+    colleaguePickerHasNext.value = false;
+    colleaguePickerWarning.value = query ? "" : "请输入姓名或工号";
+    return;
+  }
+  const request = ++colleaguePickerRequest;
+  colleaguePickerLoading.value = true;
+  try {
+    const response = await searchIPColleagues(query, targetPage);
+    if (request !== colleaguePickerRequest || !colleaguePickerOpen.value)
+      return;
+    colleaguePickerPage.value = targetPage;
+    colleaguePickerRows.value = response.data || [];
+    colleaguePickerHasNext.value = Boolean(response.hasNext);
+    colleaguePickerWarning.value = response.directoryWarning || "";
+  } catch {
+    if (request !== colleaguePickerRequest || !colleaguePickerOpen.value)
+      return;
+    colleaguePickerRows.value = [];
+    colleaguePickerHasNext.value = false;
+    colleaguePickerWarning.value = "搜索失败，请重试";
+  } finally {
+    if (request === colleaguePickerRequest)
+      colleaguePickerLoading.value = false;
+  }
+}
+function chooseColleagueFromPicker(person: IPColleague) {
+  selectContact(colleaguePickerStage.value, person);
+  colleaguePickerOpen.value = false;
 }
 function onContactInput(stage: string, value: string | number) {
   form.value.brief.contactsByStage[stage] = { name: String(value) };
@@ -455,20 +560,24 @@ function priceText(row: any) {
 async function loadRows() {
   loading.value = true;
   try {
-    const status =
+    const statuses =
       menuKind.value === "feedback"
-        ? "submitted"
+        ? ["submitted", "ip_reviewed", "marketing_reviewed"]
         : menuKind.value === "marketing"
-          ? "ip_reviewed"
-          : "";
+          ? ["ip_reviewed", "marketing_reviewed"]
+          : [];
     const result = await listIPRequests({
       keyword: keyword.value,
-      status,
+      statuses,
       page: page.value,
       pageSize: 20
     });
     rows.value = result.data.list || [];
     total.value = result.data.total || 0;
+  } catch {
+    rows.value = [];
+    total.value = 0;
+    ElMessage.error("IP需求列表加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }
@@ -544,32 +653,43 @@ function storeRecommendationContext() {
     })
   );
 }
+function canOpenIPRecommendations() {
+  if (router.hasRoute("IPRecommendations")) return true;
+  ElMessage.warning("当前账号尚未开通 IP AI 推荐，请联系管理员配置菜单权限");
+  return false;
+}
+function openRecommendationsFromForm(event: MouseEvent) {
+  if (!canOpenIPRecommendations()) {
+    event.preventDefault();
+    return;
+  }
+  storeRecommendationContext();
+}
 function openRecommendationsFromDetail() {
   if (!detail.value) return;
+  if (!canOpenIPRecommendations()) return;
   if (detail.value.request.status === "draft") {
     editDraft();
     storeRecommendationContext();
     window.open(recommendationHref.value, "_blank", "noopener");
     return;
   }
-  window.open(
-    router.resolve({
-      path: "/business/ip/recommendations",
-      query: { requestId: String(detail.value.request.id) }
-    }).href,
-    "_blank",
-    "noopener"
-  );
+  router.push({
+    path: "/business/ip/recommendations",
+    query: { requestId: String(detail.value.request.id) }
+  });
 }
 async function loadDetail(id: number) {
   loading.value = true;
   try {
     detail.value = (await getIPRequest(id)).data;
-    await loadIPImages(detail.value.candidates, "ipId");
-    feedback.value = detail.value.candidates.map((row, index) => ({
+    void loadIPImages(detail.value.candidates, "ipId");
+    feedback.value = detail.value.candidates.map(row => ({
       ipId: Number(row.ipId),
       name: row.name,
-      priorityOrder: Number(row.priorityOrder) || index + 1,
+      priorityOrder: [0, 1, 2].includes(Number(row.priorityOrder))
+        ? Number(row.priorityOrder)
+        : 1,
       feasibility: row.feasibility || "",
       recommendation: row.recommendation || "",
       reason: row.reason || "",
@@ -596,6 +716,10 @@ async function loadDetail(id: number) {
       marketingComments: item.marketingComments || "",
       marketingProfile: savedOpinions
     };
+  } catch {
+    detail.value = null;
+    ElMessage.error("IP需求详情加载失败，请稍后重试");
+    router.replace({ path: route.path });
   } finally {
     loading.value = false;
   }
@@ -610,7 +734,7 @@ function addFeedbackCandidate() {
   feedback.value.push({
     ipId: id,
     name: selectedIP(id)?.name || "IP",
-    priorityOrder: feedback.value.length + 1,
+    priorityOrder: 1,
     feasibility: "",
     recommendation: "",
     reason: "",
@@ -815,6 +939,7 @@ async function exportEvaluation(candidate: any) {
     ["联动条款", "IP方可提供资源", assessment.ipResources],
     ["联动条款", "Infinix侧需提供资源", assessment.brandResources],
     ["商务判断", "风险评估", assessment.businessRisk],
+    ["商务判断", "优先级", `T${candidate.priorityOrder}`],
     [
       "商务判断",
       "合作案例",
@@ -995,28 +1120,18 @@ async function sendFeedback(saveDraft = false) {
     ElMessage.warning("请填写每个IP的可行性、推荐意见和理由");
     return;
   }
-  const priorities = feedback.value.map(row => Number(row.priorityOrder));
   if (
-    !saveDraft &&
-    (new Set(priorities).size !== priorities.length ||
-      priorities.some(value => value < 1 || value > priorities.length))
+    feedback.value.some(row => ![0, 1, 2].includes(Number(row.priorityOrder)))
   ) {
-    ElMessage.warning("请设置不重复的推荐顺序");
+    ElMessage.warning("请选择T0、T1或T2优先级");
     return;
   }
-  const required = [
-    "licenseContent",
-    "licenseTerritory",
-    "ipResources",
-    "brandResources",
-    "businessRisk",
-    "publicRisk",
-    "ownershipClarity"
-  ];
   if (
     !saveDraft &&
     feedback.value.some(row =>
-      required.some(key => !String(row.assessment[key] || "").trim())
+      [...requiredAssessmentFields].some(
+        key => !String(row.assessment[key] || "").trim()
+      )
     )
   ) {
     ElMessage.warning("请补齐每个IP的授权、资源、商务与舆情风险信息");
@@ -1050,21 +1165,10 @@ async function sendMarketing(saveDraft = false) {
     ElMessage.warning("请填写营销补充意见");
     return;
   }
-  const required = [
-    "marketHeat",
-    "fanAudience",
-    "commercialValue",
-    "marketingRisks",
-    "recentTrend",
-    "socialFollowers",
-    "ugcForecast",
-    "audienceMatch",
-    "prOpinion"
-  ];
   if (
     !saveDraft &&
     detail.value.candidates.some(candidate =>
-      required.some(
+      [...requiredMarketingFields].some(
         key => !marketingCandidates.value[String(candidate.ipId)]?.[key]?.trim()
       )
     )
@@ -1229,22 +1333,28 @@ onUnmounted(() => {
             ><template #default="scope"
               ><el-tag
                 :type="
-                  scope.row.status === 'marketing_reviewed'
+                  scope.row.status === 'marketing_reviewed' ||
+                  (menuKind === 'feedback' &&
+                    scope.row.status === 'ip_reviewed')
                     ? 'success'
                     : scope.row.status === 'draft'
                       ? 'info'
                       : 'warning'
                 "
-                >{{ statusText[scope.row.status] || scope.row.status }}</el-tag
+                >{{ listStatusText(scope.row.status) }}</el-tag
               ></template
             ></el-table-column
           ><el-table-column label="操作" width="115"
             ><template #default="scope"
               ><el-button link type="primary" @click="goDetail(scope.row.id)">{{
                 menuKind === "feedback"
-                  ? "填写反馈"
+                  ? scope.row.status === "submitted"
+                    ? "填写反馈"
+                    : "查看反馈"
                   : menuKind === "marketing"
-                    ? "补充意见"
+                    ? scope.row.status === "ip_reviewed"
+                      ? "补充意见"
+                      : "查看意见"
                     : "查看详情"
               }}</el-button></template
             ></el-table-column
@@ -1379,7 +1489,7 @@ onUnmounted(() => {
                 :href="recommendationHref"
                 target="_blank"
                 rel="noopener"
-                @click="storeRecommendationContext"
+                @click="openRecommendationsFromForm"
                 >AI寻找匹配IP ↗</a
               >
             </div>
@@ -1589,7 +1699,11 @@ onUnmounted(() => {
                 </div>
                 <div class="ip-stage-head">
                   <h3>各环节对接人</h3>
-                  <p>输入姓名可搜索同事；未找到时也可直接填写姓名。</p>
+                  <p>输入姓名或工号搜索同事；未找到时也可直接填写姓名。</p>
+                  <p>
+                    选择 SSO
+                    同事且有可用邮箱时，流程推进会发送飞书提醒；手动输入姓名可保存，但不会自动提醒。
+                  </p>
                   <p
                     v-if="
                       form.brief.contacts &&
@@ -1621,17 +1735,28 @@ onUnmounted(() => {
                       :debounce="300"
                       :trigger-on-focus="false"
                       clearable
-                      placeholder="搜索或输入同事姓名"
+                      placeholder="搜索姓名或工号"
                       @input="value => onContactInput(stage.key, value)"
                       @select="person => selectContact(stage.key, person)"
                     >
                       <template #default="{ item }">
                         <span>{{ item.name }}</span>
-                        <small v-if="item.department">{{
-                          item.department
-                        }}</small>
+                        <small v-if="item.employeeNo || item.department">
+                          {{
+                            [item.employeeNo, item.department]
+                              .filter(Boolean)
+                              .join(" · ")
+                          }}
+                        </small>
                       </template>
                     </el-autocomplete>
+                    <el-button
+                      link
+                      type="primary"
+                      class="ip-colleague-more"
+                      @click="openColleaguePicker(stage.key)"
+                      >搜索更多同事</el-button
+                    >
                     <small
                       v-if="colleagueSearchStatus[stage.key] === 'empty'"
                       class="ip-colleague-hint"
@@ -1641,6 +1766,11 @@ onUnmounted(() => {
                       v-if="colleagueSearchStatus[stage.key] === 'failed'"
                       class="ip-colleague-hint"
                       >搜索暂不可用，可直接填写姓名。</small
+                    >
+                    <small
+                      v-if="colleagueSearchStatus[stage.key] === 'limited'"
+                      class="ip-colleague-hint"
+                      >企业目录暂不可用，仅显示已登录 XMP 的同事。</small
                     >
                   </label>
                 </div>
@@ -1777,7 +1907,7 @@ onUnmounted(() => {
         <div class="ip-stack">
           <div v-if="menuKind !== 'marketing'" class="ip-card">
             <h2>IP组评估</h2>
-            <p>请根据评估结果填写推荐意见，并给出优先级排序。</p>
+            <p>请根据评估结果填写推荐意见。评分各项均为百分制。</p>
             <p v-if="!feedback.length">
               暂无资源库内的意向IP。可先在资源库新建，再在下方加入评估。
             </p>
@@ -1839,7 +1969,7 @@ onUnmounted(() => {
               </div>
               <div class="ip-form-grid">
                 <label
-                  >可行性判断<el-select
+                  >可行性判断 *<el-select
                     v-model="item.feasibility"
                     :disabled="!canFeedback"
                     ><el-option label="可行" value="可行" /><el-option
@@ -1848,7 +1978,7 @@ onUnmounted(() => {
                       label="不可行"
                       value="不可行" /></el-select></label
                 ><label
-                  >推荐意见<el-select
+                  >推荐意见 *<el-select
                     v-model="item.recommendation"
                     :disabled="!canFeedback"
                     ><el-option label="优先合作" value="优先合作" /><el-option
@@ -1857,13 +1987,16 @@ onUnmounted(() => {
                       label="暂不合作"
                       value="暂不合作" /></el-select></label
                 ><label
-                  >优先级<el-input-number
+                  >优先级 *<el-select
                     v-model="item.priorityOrder"
-                    :min="1"
-                    :max="8"
-                    :disabled="!canFeedback" /></label
+                    :disabled="!canFeedback"
+                    ><el-option label="T0 · 最高优先级" :value="0" /><el-option
+                      label="T1 · 优先推进"
+                      :value="1" /><el-option
+                      label="T2 · 后续考虑"
+                      :value="2" /></el-select></label
                 ><label class="ip-span"
-                  >理由说明<el-input
+                  >理由说明 *<el-input
                     v-model="item.reason"
                     type="textarea"
                     :rows="2"
@@ -1872,10 +2005,14 @@ onUnmounted(() => {
                 /></label>
               </div>
               <el-collapse class="ip-assessment-collapse">
-                <el-collapse-item title="评分与授权明细" :name="item.ipId">
+                <el-collapse-item
+                  title="评分与授权明细（各项均为百分制）"
+                  :name="item.ipId"
+                >
                   <div class="ip-score-grid">
                     <label v-for="field in scoreFields" :key="field.key">
-                      {{ field.label }} · {{ Math.round(field.weight * 100) }}%
+                      {{ field.label }} * · 权重
+                      {{ Math.round(field.weight * 100) }}%
                       <el-input-number
                         v-model="item.assessment.scoreDimensions[field.key]"
                         :min="0"
@@ -1891,7 +2028,10 @@ onUnmounted(() => {
                       :key="field.key"
                       class="ip-span"
                     >
-                      {{ field.label }}
+                      {{ field.label
+                      }}{{
+                        requiredAssessmentFields.has(field.key) ? " *" : ""
+                      }}
                       <el-input
                         v-model="item.assessment[field.key]"
                         :disabled="!canFeedback"
@@ -2010,6 +2150,7 @@ onUnmounted(() => {
                     class="ip-span"
                   >
                     {{ field.label
+                    }}{{ requiredMarketingFields.has(field.key) ? " *" : ""
                     }}<el-input
                       v-model="
                         marketingCandidates[String(candidate.ipId)][field.key]
@@ -2066,8 +2207,9 @@ onUnmounted(() => {
               <div>
                 <strong>{{ item.name }}</strong>
                 <small
-                  >{{ item.recommendation }} · 优先级
-                  {{ item.priorityOrder }}</small
+                  >{{ item.recommendation }} · 优先级 T{{
+                    item.priorityOrder
+                  }}</small
                 >
                 <p>{{ item.reason }}</p>
               </div>
@@ -2106,6 +2248,65 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
+    <el-dialog
+      v-model="colleaguePickerOpen"
+      title="搜索同事"
+      width="640px"
+      @closed="colleaguePickerRequest++"
+    >
+      <div class="ip-colleague-picker-search">
+        <el-input
+          v-model="colleaguePickerQuery"
+          clearable
+          placeholder="输入姓名或工号"
+          @input="onColleaguePickerQueryInput"
+          @keyup.enter="loadColleaguePickerPage(1)"
+        />
+        <el-button type="primary" @click="loadColleaguePickerPage(1)"
+          >搜索</el-button
+        >
+      </div>
+      <p v-if="colleaguePickerWarning" class="ip-colleague-hint">
+        {{ colleaguePickerWarning }}
+      </p>
+      <div
+        v-loading="colleaguePickerLoading"
+        class="ip-colleague-picker-results"
+      >
+        <button
+          v-for="person in colleaguePickerRows"
+          :key="String(person.id)"
+          type="button"
+          class="ip-colleague-picker-person"
+          @click="chooseColleagueFromPicker(person)"
+        >
+          <strong>{{ person.name }}</strong>
+          <span>{{
+            [person.employeeNo, person.department].filter(Boolean).join(" · ")
+          }}</span>
+        </button>
+        <p v-if="!colleaguePickerLoading && !colleaguePickerRows.length">
+          {{
+            colleaguePickerQuery.trim()
+              ? "暂无匹配同事"
+              : "输入姓名或工号开始搜索"
+          }}
+        </p>
+      </div>
+      <div class="ip-colleague-picker-pages">
+        <el-button
+          :disabled="colleaguePickerLoading || colleaguePickerPage <= 1"
+          @click="loadColleaguePickerPage(colleaguePickerPage - 1)"
+          >上一页</el-button
+        >
+        <span>第 {{ colleaguePickerPage }} 页</span>
+        <el-button
+          :disabled="colleaguePickerLoading || !colleaguePickerHasNext"
+          @click="loadColleaguePickerPage(colleaguePickerPage + 1)"
+          >下一页</el-button
+        >
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -2361,6 +2562,52 @@ onUnmounted(() => {
 
 .ip-contact-grid .el-autocomplete {
   width: 100%;
+}
+
+.ip-colleague-more {
+  align-self: flex-start;
+  margin: -3px 0 0;
+}
+
+.ip-colleague-picker-search,
+.ip-colleague-picker-pages {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ip-colleague-picker-results {
+  min-height: 120px;
+  max-height: 360px;
+  overflow: auto;
+  margin: 16px 0;
+}
+
+.ip-colleague-picker-person {
+  display: flex;
+  width: 100%;
+  padding: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #edf0e9;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ip-colleague-picker-person:hover {
+  background: #f5f8e9;
+}
+
+.ip-colleague-picker-person span {
+  color: #7e858b;
+  font-size: 12px;
+}
+
+.ip-colleague-picker-pages {
+  justify-content: flex-end;
 }
 
 .ip-legacy-contacts,

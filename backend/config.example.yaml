@@ -47,5 +47,6 @@ sso:
     redirect_uri: http://localhost:8848/sso/callback
     uac_gateway: ""
     uac_app_id: ""
+    uac_app_secret: ""
     uac_lang: zh_CN
     uac_source: ""
