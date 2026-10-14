@@ -235,6 +235,10 @@ func defaultIPPresentation(candidates []map[string]any, source string) ipRecomme
 	return p
 }
 func (a *app) requestIPConversationPlan(ctx context.Context, model assistantAIModel, s recommendationSubscription, message, action string, candidates []map[string]any, compareIDs []int64) (ipConversationPlan, error) {
+	return a.requestIPConversationPlanResponse(ctx, model, s, message, action, candidates, compareIDs, false, nil)
+}
+
+func (a *app) requestIPConversationPlanResponse(ctx context.Context, model assistantAIModel, s recommendationSubscription, message, action string, candidates []map[string]any, compareIDs []int64, streaming bool, emit func(ipRecommendationPresentation) error) (ipConversationPlan, error) {
 	criteria := s
 	criteria.IPWorkspace = nil
 	history := []ipRecommendationMessage{}
@@ -252,7 +256,11 @@ func (a *app) requestIPConversationPlan(ctx context.Context, model assistantAIMo
 		}
 	}
 	payload, _ := json.Marshal(map[string]any{"criteria": criteria, "history": history, "message": message, "action": action, "candidates": safe, "compareIds": compareIDs, "allowedIPTypes": ipWorkspaceKinds})
-	body, _ := json.Marshal(map[string]any{"model": model.Model, "messages": []map[string]string{{"role": "system", "content": ipRecommendationConversationPrompt}, {"role": "user", "content": string(payload)}}, "temperature": model.Temperature, "max_tokens": 2200, "response_format": map[string]string{"type": "json_object"}})
+	prompt := ipRecommendationConversationPrompt
+	if streaming {
+		prompt += "\n为及时呈现回答，JSON首先输出presentation，先写headline、explanation，再写其余字段和criteria。"
+	}
+	body, _ := json.Marshal(map[string]any{"model": model.Model, "messages": []map[string]string{{"role": "system", "content": prompt}, {"role": "user", "content": string(payload)}}, "temperature": model.Temperature, "max_tokens": 2200, "stream": streaming, "response_format": map[string]string{"type": "json_object"}})
 	endpoint := strings.TrimRight(model.BaseURL, "/")
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
@@ -263,8 +271,17 @@ func (a *app) requestIPConversationPlan(ctx context.Context, model assistantAIMo
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+model.APIKey)
+	if streaming {
+		req.Header.Set("Accept", "text/event-stream")
+	}
 	timeout := model.Timeout
-	if timeout <= 0 || timeout > 25*time.Second {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if streaming && timeout > 120*time.Second {
+		timeout = 120 * time.Second
+	}
+	if !streaming && timeout > 25*time.Second {
 		timeout = 25 * time.Second
 	}
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
@@ -275,21 +292,46 @@ func (a *app) requestIPConversationPlan(ctx context.Context, model assistantAIMo
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return ipConversationPlan{}, fmt.Errorf("模型服务状态 %d", resp.StatusCode)
 	}
-	var completion struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&completion); err != nil {
-		return ipConversationPlan{}, err
-	}
-	if len(completion.Choices) == 0 {
-		return ipConversationPlan{}, errors.New("模型未返回内容")
+	var modelContent string
+	if streaming {
+		if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+			return ipConversationPlan{}, errors.New("模型服务未返回流式响应")
+		}
+		last := ""
+		modelContent, err = readIPChatCompletionStream(resp.Body, func(content string) error {
+			if emit == nil {
+				return nil
+			}
+			if p, ok := partialIPPresentation(content, candidates); ok {
+				encoded, _ := json.Marshal(p)
+				if string(encoded) != last {
+					last = string(encoded)
+					return emit(p)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return ipConversationPlan{}, err
+		}
+	} else {
+		var completion struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&completion); err != nil {
+			return ipConversationPlan{}, err
+		}
+		if len(completion.Choices) == 0 {
+			return ipConversationPlan{}, errors.New("模型未返回内容")
+		}
+		modelContent = completion.Choices[0].Message.Content
 	}
 	var result ipConversationPlan
-	if err = json.Unmarshal([]byte(cleanJSONContent(completion.Choices[0].Message.Content)), &result); err != nil {
+	if err = json.Unmarshal([]byte(cleanJSONContent(modelContent)), &result); err != nil {
 		return result, err
 	}
 	result.Presentation = cleanIPPresentation(result.Presentation, candidates)
@@ -338,6 +380,7 @@ func (a *app) ipRecommendationConversation(w http.ResponseWriter, r *http.Reques
 		Action         string                     `json:"action"`
 		CompareIDs     []int64                    `json:"compareIds"`
 		DocumentText   string                     `json:"documentText"`
+		Stream         bool                       `json:"stream"`
 	}
 	if !readRecommendationJSON(w, r, &input) {
 		return
@@ -421,16 +464,47 @@ func (a *app) ipRecommendationConversation(w http.ResponseWriter, r *http.Reques
 		}
 		candidates = selected
 	}
+	var stream *ipConversationStream
+	if input.Stream {
+		stream = newIPConversationStream(r.Context(), w)
+		defer stream.close()
+		r = r.WithContext(stream.ctx)
+		if stream.send("status", map[string]string{"message": "正在理解项目需求与偏好…"}) != nil {
+			return
+		}
+	}
+	emit := func(p ipRecommendationPresentation) error {
+		if stream == nil {
+			return nil
+		}
+		return stream.send("presentation", p)
+	}
+	fail := func(message string) {
+		if stream != nil {
+			_ = stream.send("error", map[string]string{"message": message})
+		} else {
+			writeError(w, http.StatusInternalServerError, 500, message)
+		}
+	}
 	presentation := ipRecommendationPresentation{Source: "rule", Headline: "已整理当前项目需求", Explanation: "请核对寻找条件，确认后开始推荐。", Questions: []string{}, Basis: []ipRecommendationBasis{}, Adjustments: []string{}, SuggestedPrompts: []string{"优先艺术与设计，排除游戏", "先寻找东南亚市场的IP"}}
 	aiOK := false
-	if model, configured := a.assistantAIModel(r.Context()); configured && model.EnableRecommendationReason {
-		if plan, err := a.requestIPConversationPlan(r.Context(), model, s, input.Message, input.Action, candidates, input.CompareIDs); err == nil {
+	model, configured := a.assistantAIModel(r.Context())
+	configured = configured && model.EnableRecommendationReason
+	if configured {
+		preview := emit
+		if input.Action == "recommend" {
+			preview = nil
+		} // Old candidates cannot support the new recommendation.
+		if plan, err := a.requestIPConversationPlanResponse(r.Context(), model, s, input.Message, input.Action, candidates, input.CompareIDs, input.Stream, preview); err == nil {
 			if input.Action == "clarify" || input.Action == "recommend" {
 				s = applyIPConversationCriteria(s, plan.Criteria)
 			}
 			presentation = plan.Presentation
 			aiOK = true
 		}
+	}
+	if r.Context().Err() != nil {
+		return
 	}
 	if !aiOK && input.Message != "" && (input.Action == "clarify" || input.Action == "recommend") {
 		s = ruleIPConversationCriteria(s, input.Message)
@@ -464,28 +538,56 @@ func (a *app) ipRecommendationConversation(w http.ResponseWriter, r *http.Reques
 	}
 	id, err := a.persistIPConversation(r.Context(), s, previous, userID)
 	if err != nil {
-		writeDBError(w, err)
+		fail("会话保存失败，请保留需求并重试")
 		return
 	}
 	s.ID = id
+	if stream != nil {
+		if stream.send("session", map[string]int64{"id": id}) != nil {
+			return
+		}
+	}
 	if input.Action == "recommend" {
+		if stream != nil {
+			if stream.send("status", map[string]string{"message": "正在筛选候选并核对合作资料…"}) != nil {
+				return
+			}
+		}
 		candidates, err = a.executeRecommendationRun(r.Context(), id, userID, "ip", fmt.Sprintf("conversation-%d", time.Now().UnixNano()), false)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, 500, "会话已保存，但推荐生成失败，请重试")
+			fail("会话已保存，但推荐生成失败，请重试")
 			return
 		}
 		adjustments := presentation.Adjustments
 		presentation = defaultIPPresentation(candidates, "rule")
+		if stream != nil && configured && len(candidates) > 0 {
+			if stream.send("status", map[string]string{"message": "正在结合本轮候选生成推荐判断…"}) != nil {
+				return
+			}
+			plan, planErr := a.requestIPConversationPlanResponse(r.Context(), model, s, input.Message, "discuss", candidates, nil, true, emit)
+			if planErr == nil {
+				presentation = plan.Presentation
+			}
+		}
 		presentation.Adjustments = adjustments
 	} else if (input.Action == "compare" || input.Action == "discuss") && !aiOK {
 		presentation = defaultIPPresentation(candidates, "rule")
 		presentation.Source = "rule"
 		presentation.Explanation = "按当前候选排序与库内资料进行对比；模型暂不可用，请结合右侧契合点、合作切入和待确认事项进一步判断。"
 	}
-	s.IPWorkspace.Messages = append(s.IPWorkspace.Messages, ipRecommendationMessage{Role: "assistant", Content: presentation.Headline, CreatedAt: time.Now().Format("2006-01-02 15:04"), Presentation: &presentation})
-	if _, err = a.persistIPConversation(r.Context(), s, s, userID); err != nil {
-		writeDBError(w, err)
+	if r.Context().Err() != nil {
 		return
 	}
-	writeOK(w, map[string]any{"subscription": s, "results": candidates, "presentation": presentation})
+	s.IPWorkspace.Messages = append(s.IPWorkspace.Messages, ipRecommendationMessage{Role: "assistant", Content: presentation.Headline, CreatedAt: time.Now().Format("2006-01-02 15:04"), Presentation: &presentation})
+	if _, err = a.persistIPConversation(r.Context(), s, s, userID); err != nil {
+		fail("回答保存失败，请保留需求并重试")
+		return
+	}
+	result := map[string]any{"subscription": s, "results": candidates, "presentation": presentation}
+	if stream != nil {
+		_ = stream.send("presentation", presentation) // Replaces any incomplete or fallback preview.
+		_ = stream.send("done", apiResponse{Code: 0, Message: "ok", Data: result})
+		return
+	}
+	writeOK(w, result)
 }

@@ -1,4 +1,8 @@
 import { http } from "@/utils/http";
+import {
+  readRecommendationStream,
+  type RecommendationStreamOptions
+} from "./recommendationStream";
 
 export type RecommendationDomain = "creator" | "ip";
 export type RecommendationFeedback = "interested" | "not_interested";
@@ -110,14 +114,24 @@ type Result<T> = { code: number; message: string; data: T };
 type RecommendationPage = { list: RecommendationResult[]; total: number };
 const prefix = "/business/recommendations";
 
-export const converseIPRecommendations = (data: {
+export interface IPRecommendationConversationInput {
   subscriptionId?: number;
   criteria?: RecommendationSubscriptionInput;
   message: string;
   action: "clarify" | "recommend" | "compare" | "discuss";
   compareIds?: number[];
   documentText?: string;
-}) =>
+}
+
+export type IPRecommendationConversationResult = Result<{
+  subscription: RecommendationSubscription;
+  results: RecommendationResult[];
+  presentation: IPRecommendationPresentation;
+}>;
+
+export const converseIPRecommendations = (
+  data: IPRecommendationConversationInput
+) =>
   http.request<
     Result<{
       subscription: RecommendationSubscription;
@@ -125,6 +139,27 @@ export const converseIPRecommendations = (data: {
       presentation: IPRecommendationPresentation;
     }>
   >("post", `${prefix}/ip/conversation`, { data }, { timeout: 180000 });
+
+export async function streamIPRecommendations(
+  data: IPRecommendationConversationInput,
+  options: RecommendationStreamOptions = {}
+) {
+  // Axios's fetch adapter preserves the existing login/refresh interceptors
+  // while exposing the response body as a browser ReadableStream.
+  const stream = await http.request<ReadableStream<Uint8Array>>(
+    "post",
+    `${prefix}/ip/conversation`,
+    {
+      data: { ...data, stream: true },
+      headers: { Accept: "text/event-stream" },
+      adapter: "fetch",
+      responseType: "stream",
+      signal: options.signal
+    },
+    { timeout: 420000 }
+  );
+  return readRecommendationStream(stream, options);
+}
 
 export const listRecommendationSubscriptions = (domain: RecommendationDomain) =>
   http.request<Result<{ list: RecommendationSubscription[] }>>(

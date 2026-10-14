@@ -13,10 +13,11 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { formatBytes } from "@pureadmin/utils";
 import VuePdfEmbed, { useVuePdfEmbed } from "vue-pdf-embed";
 import { Icon } from "@iconify/vue";
+import dayjs from "dayjs";
 import * as XLSX from "xlsx";
 import { workspaceIcons as icons } from "./icons";
 import {
-  converseIPRecommendations,
+  streamIPRecommendations,
   type IPRecommendationPresentation,
   type IPRecommendationMessage,
   deleteRecommendationSubscription,
@@ -402,6 +403,9 @@ function startNew() {
   chosenIds.value = [];
   composerText.value = "";
   conversationError.value = "";
+  streamingPresentation.value = null;
+  pendingUserMessage.value = null;
+  resumableSessionId.value = null;
   attachment.value = null;
   historyOpen.value = false;
   workbenchTab.value = "candidates";
@@ -618,6 +622,11 @@ onUnmounted(() => {
 const composerText = ref("");
 const conversationBusy = ref(false);
 const conversationError = ref("");
+const streamingPresentation = ref<IPRecommendationPresentation | null>(null);
+const streamingStatus = ref("");
+const pendingUserMessage = ref<IPRecommendationMessage | null>(null);
+const resumableSessionId = ref<number | null>(null);
+let conversationController: AbortController | null = null;
 let failedConversation: {
   action: "clarify" | "recommend" | "compare" | "discuss";
   text: string;
@@ -643,15 +652,19 @@ let conversationSequence = 0;
 const conversationMessages = computed<IPRecommendationMessage[]>(
   () => selectedSubscription.value?.ipWorkspace?.messages || []
 );
-const latestUser = computed(() =>
-  [...conversationMessages.value]
-    .reverse()
-    .find(message => message.role === "user")
+const latestUser = computed(
+  () =>
+    pendingUserMessage.value ||
+    [...conversationMessages.value]
+      .reverse()
+      .find(message => message.role === "user")
 );
 const assistantMessages = computed(() =>
   conversationMessages.value.filter(message => message.role === "assistant")
 );
-const latestAssistant = computed(() => assistantMessages.value.at(-1));
+const latestAssistant = computed(() =>
+  conversationBusy.value ? undefined : assistantMessages.value.at(-1)
+);
 const currentCandidate = computed(
   () =>
     visibleResults.value.find(
@@ -676,6 +689,8 @@ const currentStage = computed(() => {
   return selectedSubscription.value.ipWorkspace?.stage === "compare" ? 3 : 2;
 });
 const presentation = computed<IPRecommendationPresentation | null>(() => {
+  if (streamingPresentation.value) return streamingPresentation.value;
+  if (conversationBusy.value) return null;
   if (latestAssistant.value?.presentation)
     return latestAssistant.value.presentation;
   const item = currentCandidate.value;
@@ -787,28 +802,56 @@ async function converse(
     return;
   }
   const sequence = ++conversationSequence;
-  const sessionId = selectedId.value;
+  const sessionId = selectedId.value || resumableSessionId.value;
   conversationBusy.value = true;
   conversationError.value = "";
+  streamingPresentation.value = null;
+  streamingStatus.value = "正在理解项目需求与偏好…";
+  pendingUserMessage.value = text
+    ? {
+        role: "user",
+        content: text,
+        createdAt: dayjs().format("YYYY-MM-DD HH:mm")
+      }
+    : null;
+  const controller = new AbortController();
+  conversationController = controller;
   try {
-    const response = await converseIPRecommendations({
-      subscriptionId: sessionId || undefined,
-      criteria: sessionId
-        ? undefined
-        : {
-            ...form,
-            query: form.query || text,
-            name: form.name || text.slice(0, 30),
-            requestId: requestId.value || undefined
-          },
-      message: text,
-      action,
-      compareIds: action === "compare" ? compareIds.value : [],
-      documentText:
-        attachment.value && (action === "clarify" || action === "recommend")
-          ? `【${attachment.value.name.slice(0, 120)}】\n${attachment.value.text}`
-          : undefined
-    });
+    const response = await streamIPRecommendations(
+      {
+        subscriptionId: sessionId || undefined,
+        criteria: sessionId
+          ? undefined
+          : {
+              ...form,
+              query: form.query || text,
+              name: form.name || text.slice(0, 30),
+              requestId: requestId.value || undefined
+            },
+        message: text,
+        action,
+        compareIds: action === "compare" ? compareIds.value : [],
+        documentText:
+          attachment.value && (action === "clarify" || action === "recommend")
+            ? `【${attachment.value.name.slice(0, 120)}】\n${attachment.value.text}`
+            : undefined
+      },
+      {
+        signal: controller.signal,
+        onStatus(message) {
+          if (sequence === conversationSequence && !disposed)
+            streamingStatus.value = message;
+        },
+        onSession(id) {
+          if (sequence === conversationSequence && !disposed)
+            resumableSessionId.value = id;
+        },
+        onPresentation(value) {
+          if (sequence === conversationSequence && !disposed)
+            streamingPresentation.value = value;
+        }
+      }
+    );
     if (sequence !== conversationSequence || disposed) return;
     const updated = response.data.subscription;
     const index = subscriptions.value.findIndex(item => item.id === updated.id);
@@ -828,19 +871,30 @@ async function converse(
     if (action === "compare") workbenchTab.value = "compare";
     else if (action === "recommend") workbenchTab.value = "candidates";
     composerText.value = "";
+    streamingPresentation.value = null;
+    pendingUserMessage.value = null;
+    resumableSessionId.value = null;
+    failedConversation = null;
     if (action === "clarify" || action === "recommend") attachment.value = null;
     void loadImages(results.value);
   } catch (error) {
     if (sequence === conversationSequence) {
       failedConversation = { action, text };
-      conversationError.value =
-        error instanceof Error
+      conversationError.value = controller.signal.aborted
+        ? "已停止生成，当前回答尚未完成；可保留需求并重试。"
+        : error instanceof Error
           ? error.message
           : "对话生成失败，请保留需求并重试";
     }
   } finally {
-    if (sequence === conversationSequence) conversationBusy.value = false;
+    if (sequence === conversationSequence) {
+      conversationBusy.value = false;
+      conversationController = null;
+    }
   }
+}
+function stopConversation() {
+  conversationController?.abort();
 }
 function retryConversation() {
   if (failedConversation)
@@ -991,6 +1045,9 @@ watch(selectedId, () => {
   if (conversationBusy.value || attachmentReading.value) return;
   ++conversationSequence;
   conversationError.value = "";
+  streamingPresentation.value = null;
+  pendingUserMessage.value = null;
+  resumableSessionId.value = null;
   compareIds.value = [];
   activeCandidateId.value = null;
 });
@@ -1002,6 +1059,7 @@ watch(visibleResults, () => {
 });
 onUnmounted(() => {
   ++conversationSequence;
+  conversationController?.abort();
 });
 </script>
 
@@ -1202,7 +1260,7 @@ onUnmounted(() => {
                 ><strong>{{
                   presentation.source === "ai" ? "AI 推荐助手" : "规则合作建议"
                 }}</strong
-                ><time v-if="latestAssistant">{{
+                ><time v-if="latestAssistant && !streamingPresentation">{{
                   formatTime(latestAssistant.createdAt).slice(-5)
                 }}</time>
               </div>
@@ -1279,11 +1337,14 @@ onUnmounted(() => {
               class="conversation-progress"
               role="status"
             >
-              <Icon :icon="icons.spark" /><span>{{
-                currentStage < 2
-                  ? "正在理解项目需求与偏好…"
-                  : "正在核对资料并整理推荐判断…"
-              }}</span>
+              <Icon :icon="icons.spark" /><span>{{ streamingStatus }}</span>
+              <button
+                type="button"
+                class="quiet-button"
+                @click="stopConversation"
+              >
+                停止生成
+              </button>
             </div>
             <div
               v-if="presentation?.suggestedPrompts?.length"
@@ -2834,6 +2895,15 @@ onUnmounted(() => {
 .conversation-progress svg {
   width: 20px;
   height: 20px;
+}
+
+.conversation-progress > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.conversation-progress > button {
+  flex: none;
 }
 
 .conversation-error {

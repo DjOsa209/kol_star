@@ -42,7 +42,20 @@
 - 上传支持 PDF、TXT、Markdown、CSV、XLSX、XLS，最大 15MB。PDF 提取最多 12 页，表格最多 3 个工作表，正文最多取 3800 字进入当前推荐请求；扫描 PDF 无可提取文本时明确提示。文件本身不上传到资源库。
 - 预览中的 ORBIT DESIGN、MOON STUDIO 与光域艺术计划为示例内容，不写入真实资源库。实际界面显示数据库候选与资料。
 
-## 验证
+## 流式调用
+
+协议参考：[TranAI 接入文档](https://transsioner.feishu.cn/wiki/CQmwwlIh5ibGclkKDjPcKwI3nfh)，读取版本 3616。模型沿用业务环境中配置的 Base URL、模型名和服务端密钥，使用 ChatCompletion `stream: true`，读取 `choices[0].delta.content`；密钥不发送到浏览器。文档中的使用人工号、姓名和部门请求头为可选，本次沿用现有鉴权头。
+
+- 前端调用原接口 `POST /business/recommendations/ip/conversation` 并发送 `stream: true`，保留普通 JSON 请求的兼容性。请求使用 Axios fetch adapter 和 ReadableStream，复用登录与 token 刷新流程。
+- 后端先校验权限、会话归属及比较候选，再开启 `text/event-stream`。`status` 表示实际处理阶段，`presentation` 为经过校验的结构化快照；标题和解释随模型片段逐步更新，其他字段完整后显示。前端不显示原始 JSON 或模型推理过程。
+- `session` 提前提供已保存的会话 ID，断流重试复用该会话。`done` 只在完整回答保存成功后发送，并携带原有的会话、候选和最终判断；`error` 表示处理或保存失败。断流不能被当作成功，输入与已收到的片段保留供重试。
+- 新推荐先理解条件并检索、校验候选，再根据本轮实际候选流式生成最终结论，避免提前展示基于旧候选的判断。候选排序继续使用现有流程；模型不可用时明确显示规则结果，不用延时动画模拟流式输出。
+- 支持停止生成与离开页面取消，取消传递到上游 HTTP 请求和数据库调用；取消前已保存的条件与候选运行仍可能保留，未完成的助手回答不会写入历史。
+- 设置即时 Flush、10 秒心跳、`Cache-Control: no-cache, no-transform` 和 `X-Accel-Buffering: no`；请求日志包装器支持解包刷新与正确记录最终成功或错误。流式前端总超时 420 秒，单次上游调用遵守模型配置且不超过 120 秒。
+
+部署时需确保外层代理对该路径不缓存 SSE，且允许长连接；应用返回的禁用缓冲响应头需要代理保留。
+
+## 验证范围
 
 详见根目录 `design-qa.md`。服务端测试覆盖排除条件、规则筛选、历史建议兼容、模型 JSON 契约、候选 ID 白名单和未登录访问。早期隔离 API 示例验证了四阶段、对比、追问、资料读取、错误重试和多 IP 意向回填，但未覆盖现有框架，因此不能作为框架适配的验收依据。修正后使用 Chrome 访问 `http://localhost:8848/#/business/ip/recommendations`，连接实际 Go 服务和本地 MySQL，验证登录、资源与推荐结果读取、原系统菜单切换、Logo 加载以及桌面和手机布局。
 

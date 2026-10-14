@@ -1463,6 +1463,10 @@ type loggingResponseWriter struct {
 	hasAPICode bool
 }
 
+func (w *loggingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func (w *loggingResponseWriter) apiResponseOK() bool {
 	if w.hasAPICode {
 		return w.apiCode == 0
