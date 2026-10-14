@@ -1123,239 +1123,248 @@ onUnmounted(() => {
       </div>
       <div class="research-columns">
         <section class="conversation-panel" aria-label="项目研究对话">
-          <template v-if="!presentation && !conversationBusy">
-            <div class="conversation-welcome">
-              <Icon :icon="icons.spark" />
-              <h2>这次想寻找怎样的合作 IP？</h2>
-              <p>
-                描述项目方向，或带入已有提需与资料。我们会一起确认偏好，再寻找值得进一步评估的候选。
-              </p>
-              <div class="entry-actions">
-                <button type="button" @click="showConditions">
-                  <Icon :icon="icons.file" />填写 / 关联提需</button
-                ><button type="button" @click="attachmentInput?.click()">
-                  <Icon :icon="icons.attach" />上传需求资料
-                </button>
-              </div>
-              <button
-                type="button"
-                class="welcome-example"
-                @click="
-                  composerText =
-                    '为新品寻找合作IP，重点是沉浸体验和设计表达，优先东南亚市场。'
-                "
-              >
-                试试：为新品寻找设计与沉浸体验方向的 IP
-                <Icon :icon="icons.arrow" />
-              </button>
-            </div>
-          </template>
-          <button
-            v-if="conversationMessages.length > 2"
-            type="button"
-            class="history-toggle"
-            :aria-expanded="historyOpen"
-            @click="historyOpen = !historyOpen"
-          >
-            {{
-              historyOpen
-                ? "收起历史对话"
-                : `查看历史对话 · ${conversationMessages.length - 2} 条`
-            }}
-          </button>
-          <div v-if="historyOpen" class="conversation-history">
-            <div
-              v-for="(message, index) in conversationMessages.slice(0, -2)"
-              :key="index"
-              :class="message.role"
-            >
-              <small
-                >{{
-                  message.role === "user"
-                    ? "我"
-                    : message.presentation?.source === "ai"
-                      ? "AI推荐助手"
-                      : "规则建议"
-                }}
-                · {{ formatTime(message.createdAt) }}</small
-              >
-              <p>{{ message.content }}</p>
-            </div>
-          </div>
-          <div v-if="latestUser" class="user-message">
-            <small
-              >我
-              <time>{{
-                formatTime(latestUser.createdAt).slice(-5)
-              }}</time></small
-            >
-            <p>{{ latestUser.content }}</p>
-          </div>
-          <article
-            v-if="presentation"
-            class="assistant-message"
-            aria-live="polite"
-          >
-            <div class="assistant-identity">
-              <span>{{ presentation.source === "ai" ? "AI" : "规则" }}</span
-              ><strong>{{
-                presentation.source === "ai" ? "AI 推荐助手" : "规则合作建议"
-              }}</strong
-              ><time v-if="latestAssistant">{{
-                formatTime(latestAssistant.createdAt).slice(-5)
-              }}</time>
-            </div>
-            <div class="assistant-content">
-              <h2>{{ presentation.headline }}</h2>
-              <p class="recommendation-explanation">
-                {{ presentation.explanation }}
-              </p>
-              <div v-if="evidenceCandidates.length" class="judgment-sources">
-                <button
-                  v-for="item in evidenceCandidates"
-                  :key="item.resourceId"
-                  type="button"
-                  @click="openResourceDrawer(item.resourceId)"
-                >
-                  <Icon :icon="icons.file" />{{ item.resourceName }} · 库内资料
-                </button>
-              </div>
-              <div v-if="presentation.basis?.length" class="judgment-basis">
-                <h3>判断依据</h3>
-                <dl>
-                  <div v-for="row in presentation.basis" :key="row.label">
-                    <dt>{{ row.label }}</dt>
-                    <dd>{{ row.value }}</dd>
-                  </div>
-                </dl>
-              </div>
-              <div
-                v-if="presentation.questions?.length"
-                class="clarification-questions"
-              >
-                <h3>还需要确认</h3>
-                <p v-for="question in presentation.questions" :key="question">
-                  {{ question }}
+          <div class="conversation-body">
+            <template v-if="!presentation && !conversationBusy">
+              <div class="conversation-welcome">
+                <Icon :icon="icons.spark" />
+                <h2>这次想寻找怎样的合作 IP？</h2>
+                <p>
+                  描述项目方向，或带入已有提需与资料。我们会一起确认偏好，再寻找值得进一步评估的候选。
                 </p>
+                <div class="entry-actions">
+                  <button type="button" @click="showConditions">
+                    <Icon :icon="icons.file" />填写 / 关联提需</button
+                  ><button type="button" @click="attachmentInput?.click()">
+                    <Icon :icon="icons.attach" />上传需求资料
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  class="welcome-example"
+                  @click="
+                    composerText =
+                      '为新品寻找合作IP，重点是沉浸体验和设计表达，优先东南亚市场。'
+                  "
+                >
+                  试试：为新品寻找设计与沉浸体验方向的 IP
+                  <Icon :icon="icons.arrow" />
+                </button>
               </div>
+            </template>
+            <button
+              v-if="conversationMessages.length > 2"
+              type="button"
+              class="history-toggle"
+              :aria-expanded="historyOpen"
+              @click="historyOpen = !historyOpen"
+            >
+              {{
+                historyOpen
+                  ? "收起历史对话"
+                  : `查看历史对话 · ${conversationMessages.length - 2} 条`
+              }}
+            </button>
+            <div v-if="historyOpen" class="conversation-history">
               <div
-                v-if="presentation.adjustments?.length"
-                class="round-adjustments"
+                v-for="(message, index) in conversationMessages.slice(0, -2)"
+                :key="index"
+                :class="message.role"
               >
-                <strong>本轮调整</strong>
-                <div>
-                  <p>{{ presentation.adjustments.join(" · ") }}</p>
-                  <small>具体授权范围、报价与档期仍需版权方确认。</small>
+                <small
+                  >{{
+                    message.role === "user"
+                      ? "我"
+                      : message.presentation?.source === "ai"
+                        ? "AI推荐助手"
+                        : "规则建议"
+                  }}
+                  · {{ formatTime(message.createdAt) }}</small
+                >
+                <p>{{ message.content }}</p>
+              </div>
+            </div>
+            <div v-if="latestUser" class="user-message">
+              <small
+                >我
+                <time>{{
+                  formatTime(latestUser.createdAt).slice(-5)
+                }}</time></small
+              >
+              <p>{{ latestUser.content }}</p>
+            </div>
+            <article
+              v-if="presentation"
+              class="assistant-message"
+              aria-live="polite"
+            >
+              <div class="assistant-identity">
+                <span>{{ presentation.source === "ai" ? "AI" : "规则" }}</span
+                ><strong>{{
+                  presentation.source === "ai" ? "AI 推荐助手" : "规则合作建议"
+                }}</strong
+                ><time v-if="latestAssistant">{{
+                  formatTime(latestAssistant.createdAt).slice(-5)
+                }}</time>
+              </div>
+              <div class="assistant-content">
+                <h2>{{ presentation.headline }}</h2>
+                <p class="recommendation-explanation">
+                  {{ presentation.explanation }}
+                </p>
+                <div v-if="evidenceCandidates.length" class="judgment-sources">
+                  <button
+                    v-for="item in evidenceCandidates"
+                    :key="item.resourceId"
+                    type="button"
+                    @click="openResourceDrawer(item.resourceId)"
+                  >
+                    <Icon :icon="icons.file" />{{ item.resourceName }} ·
+                    库内资料
+                  </button>
+                </div>
+                <div v-if="presentation.basis?.length" class="judgment-basis">
+                  <h3>判断依据</h3>
+                  <dl>
+                    <div v-for="row in presentation.basis" :key="row.label">
+                      <dt>{{ row.label }}</dt>
+                      <dd>{{ row.value }}</dd>
+                    </div>
+                  </dl>
+                </div>
+                <div
+                  v-if="presentation.questions?.length"
+                  class="clarification-questions"
+                >
+                  <h3>还需要确认</h3>
+                  <p v-for="question in presentation.questions" :key="question">
+                    {{ question }}
+                  </p>
+                </div>
+                <div
+                  v-if="presentation.adjustments?.length"
+                  class="round-adjustments"
+                >
+                  <strong>本轮调整</strong>
+                  <div>
+                    <p>{{ presentation.adjustments.join(" · ") }}</p>
+                    <small>具体授权范围、报价与档期仍需版权方确认。</small>
+                  </div>
+                </div>
+                <div
+                  v-if="
+                    evidenceCandidates.some(
+                      item => evidenceItems(item.evidence).length
+                    )
+                  "
+                  class="external-evidence"
+                >
+                  <h3>公开背景资料</h3>
+                  <template
+                    v-for="item in evidenceCandidates"
+                    :key="item.resourceId"
+                    ><a
+                      v-for="(source, index) in evidenceItems(item.evidence)"
+                      :key="`${item.id}-${index}`"
+                      :href="safeExternalUrl(source.url)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >{{ source.title || source.source }}
+                      <Icon :icon="icons.external" /></a></template
+                  ><small>用于核对一般背景，授权与报价以版权方确认为准。</small>
                 </div>
               </div>
-              <div
-                v-if="
-                  evidenceCandidates.some(
-                    item => evidenceItems(item.evidence).length
-                  )
-                "
-                class="external-evidence"
-              >
-                <h3>公开背景资料</h3>
-                <template
-                  v-for="item in evidenceCandidates"
-                  :key="item.resourceId"
-                  ><a
-                    v-for="(source, index) in evidenceItems(item.evidence)"
-                    :key="`${item.id}-${index}`"
-                    :href="safeExternalUrl(source.url)"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >{{ source.title || source.source }}
-                    <Icon :icon="icons.external" /></a></template
-                ><small>用于核对一般背景，授权与报价以版权方确认为准。</small>
-              </div>
-            </div>
-          </article>
-          <div
-            v-if="conversationBusy"
-            class="conversation-progress"
-            role="status"
-          >
-            <Icon :icon="icons.spark" /><span>{{
-              currentStage < 2
-                ? "正在理解项目需求与偏好…"
-                : "正在核对资料并整理推荐判断…"
-            }}</span>
-          </div>
-          <div
-            v-if="presentation?.suggestedPrompts?.length"
-            class="follow-up-actions"
-          >
-            <button
-              v-for="text in presentation.suggestedPrompts"
-              :key="text"
-              type="button"
-              :disabled="conversationBusy"
-              @click="followUp(text)"
+            </article>
+            <div
+              v-if="conversationBusy"
+              class="conversation-progress"
+              role="status"
             >
-              {{ text }}
-            </button>
-          </div>
-          <div v-if="conversationError" class="conversation-error" role="alert">
-            <p>{{ conversationError }}</p>
-            <button type="button" @click="retryConversation">重试</button>
-          </div>
-          <div class="conversation-composer">
-            <textarea
-              v-model="composerText"
-              :disabled="conversationBusy || attachmentReading"
-              maxlength="1200"
-              rows="2"
-              aria-label="继续描述或调整项目需求"
-              placeholder="继续追问，调整偏好，或补充项目资料…"
-              @keydown="composerKeydown"
-            />
-            <div v-if="attachment" class="attached-document">
-              <Icon :icon="icons.file" /><span>{{ attachment.name }}</span
-              ><button
-                type="button"
-                aria-label="移除资料"
-                @click="attachment = null"
-              >
-                <Icon :icon="icons.close" />
-              </button>
+              <Icon :icon="icons.spark" /><span>{{
+                currentStage < 2
+                  ? "正在理解项目需求与偏好…"
+                  : "正在核对资料并整理推荐判断…"
+              }}</span>
             </div>
-            <div class="composer-actions">
+            <div
+              v-if="presentation?.suggestedPrompts?.length"
+              class="follow-up-actions"
+            >
               <button
+                v-for="text in presentation.suggestedPrompts"
+                :key="text"
                 type="button"
-                :disabled="conversationBusy || attachmentReading"
-                @click="attachmentInput?.click()"
+                :disabled="conversationBusy"
+                @click="followUp(text)"
               >
-                <Icon :icon="icons.attach" />{{
-                  attachmentReading ? "正在读取资料…" : "添加资料"
-                }}</button
-              ><span>Ctrl / ⌘ + Enter 发送</span
-              ><button
-                type="button"
-                class="send-message"
-                :disabled="
-                  conversationBusy ||
-                  attachmentReading ||
-                  (!composerText.trim() && !attachment && !criteria.query)
-                "
-                aria-label="发送需求或调整偏好"
-                @click="sendMessage"
-              >
-                <Icon :icon="icons.arrow" />
+                {{ text }}
               </button>
             </div>
-            <input
-              ref="attachmentInput"
-              type="file"
-              class="attachment-input"
-              accept=".pdf,.txt,.md,.csv,.xlsx,.xls"
-              @change="readAttachment"
-            />
+            <div
+              v-if="conversationError"
+              class="conversation-error"
+              role="alert"
+            >
+              <p>{{ conversationError }}</p>
+              <button type="button" @click="retryConversation">重试</button>
+            </div>
           </div>
-          <p class="composer-note">
-            支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。
-          </p>
+          <div class="conversation-dock">
+            <div class="conversation-composer">
+              <textarea
+                v-model="composerText"
+                :disabled="conversationBusy || attachmentReading"
+                maxlength="1200"
+                rows="2"
+                aria-label="继续描述或调整项目需求"
+                placeholder="继续追问，调整偏好，或补充项目资料…"
+                @keydown="composerKeydown"
+              />
+              <div v-if="attachment" class="attached-document">
+                <Icon :icon="icons.file" /><span>{{ attachment.name }}</span
+                ><button
+                  type="button"
+                  aria-label="移除资料"
+                  @click="attachment = null"
+                >
+                  <Icon :icon="icons.close" />
+                </button>
+              </div>
+              <div class="composer-actions">
+                <button
+                  type="button"
+                  :disabled="conversationBusy || attachmentReading"
+                  @click="attachmentInput?.click()"
+                >
+                  <Icon :icon="icons.attach" />{{
+                    attachmentReading ? "正在读取资料…" : "添加资料"
+                  }}</button
+                ><span>Ctrl / ⌘ + Enter 发送</span
+                ><button
+                  type="button"
+                  class="send-message"
+                  :disabled="
+                    conversationBusy ||
+                    attachmentReading ||
+                    (!composerText.trim() && !attachment && !criteria.query)
+                  "
+                  aria-label="发送需求或调整偏好"
+                  @click="sendMessage"
+                >
+                  <Icon :icon="icons.arrow" />
+                </button>
+              </div>
+              <input
+                ref="attachmentInput"
+                type="file"
+                class="attachment-input"
+                accept=".pdf,.txt,.md,.csv,.xlsx,.xls"
+                @change="readAttachment"
+              />
+            </div>
+            <p class="composer-note">
+              支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。
+            </p>
+          </div>
         </section>
         <section
           class="cooperation-workbench"
@@ -2473,12 +2482,23 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(360px, 1fr);
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .conversation-panel {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding: 12px 0 0;
+}
+
+.conversation-body {
+  min-width: 0;
+}
+
+.conversation-dock {
+  padding-top: 18px;
+  margin-top: auto;
 }
 
 .conversation-welcome {
@@ -2838,7 +2858,6 @@ onUnmounted(() => {
 
 .conversation-composer {
   padding: 16px 16px 12px;
-  margin-top: 18px;
   background: white;
   border-radius: 12px;
   box-shadow: 0 5px 22px #26351b0d;
@@ -2959,6 +2978,8 @@ onUnmounted(() => {
 }
 
 .cooperation-workbench {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding: 24px 28px;
   background: #f0f2ec;
@@ -3386,8 +3407,14 @@ onUnmounted(() => {
 
 .workbench-footer {
   padding-top: 12px;
-  margin-top: 12px;
+  margin-top: auto;
   border-top: 1px solid #dbe1d3;
+}
+
+.candidate-workspace,
+.compare-workspace,
+.intent-workspace {
+  padding-bottom: 12px;
 }
 
 .intent-preview p {
