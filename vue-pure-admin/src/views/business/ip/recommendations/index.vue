@@ -14,6 +14,10 @@ import { formatBytes } from "@pureadmin/utils";
 import VuePdfEmbed, { useVuePdfEmbed } from "vue-pdf-embed";
 import { Icon } from "@iconify/vue";
 import dayjs from "dayjs";
+import { storeToRefs } from "pinia";
+import { useIPRecommendationSessionsStore } from "@/store/modules/ipRecommendationSessions";
+import { useAppStoreHook } from "@/store/modules/app";
+import { useSettingStoreHook } from "@/store/modules/settings";
 import * as XLSX from "xlsx";
 import { workspaceIcons as icons } from "./icons";
 import {
@@ -42,9 +46,18 @@ const route = useRoute();
 const router = useRouter();
 const loading = ref(false);
 const saving = ref(false);
-const subscriptions = ref<RecommendationSubscription[]>([]);
+const sessionStore = useIPRecommendationSessionsStore();
+const { subscriptions, selectedId } = storeToRefs(sessionStore);
+const appStore = useAppStoreHook();
+const settingStore = useSettingStoreHook();
+const showInlineSessions = computed(
+  () =>
+    settingStore.hiddenSideBar ||
+    appStore.layout === "horizontal" ||
+    !appStore.sidebar.opened ||
+    appStore.device === "mobile"
+);
 const results = ref<RecommendationResult[]>([]);
-const selectedId = ref<number | null>(null);
 const activeView = ref<"new" | "all" | "subscriptions">("all");
 const editing = ref(false);
 const imageUrls = ref<Record<number, string>>({});
@@ -302,16 +315,24 @@ function pdfFailed() {
 }
 
 async function loadSubscriptions(selectId?: number) {
-  const response = await listRecommendationSubscriptions("ip");
-  subscriptions.value = response.data.list || [];
-  const requested = selectId || Number(route.query.subscriptionId);
-  if (requested && subscriptions.value.some(item => item.id === requested))
-    selectedId.value = requested;
-  else if (
-    !selectedId.value ||
-    !subscriptions.value.some(item => item.id === selectedId.value)
-  )
-    selectedId.value = subscriptions.value[0]?.id || null;
+  sessionStore.loadError = false;
+  try {
+    const response = await listRecommendationSubscriptions("ip");
+    subscriptions.value = response.data.list || [];
+    const requested = selectId || Number(route.query.subscriptionId);
+    if (requested && subscriptions.value.some(item => item.id === requested))
+      selectedId.value = requested;
+    else if (
+      !selectedId.value ||
+      !subscriptions.value.some(item => item.id === selectedId.value)
+    )
+      selectedId.value = subscriptions.value[0]?.id || null;
+  } catch (error) {
+    sessionStore.loadError = true;
+    throw error;
+  } finally {
+    sessionStore.loaded = true;
+  }
 }
 
 let resultsRequestSequence = 0;
@@ -1060,7 +1081,32 @@ watch(visibleResults, () => {
 onUnmounted(() => {
   ++conversationSequence;
   conversationController?.abort();
+  sessionStore.$reset();
 });
+
+watch(
+  () => conversationBusy.value || attachmentReading.value || saving.value,
+  busy => {
+    sessionStore.busy = busy;
+  },
+  { immediate: true, flush: "sync" }
+);
+watch(
+  () => sessionStore.navigation,
+  async request => {
+    if (!request || sessionStore.busy) return;
+    if (request.action === "new") startNew();
+    else if (request.action === "select") selectSubscription(request.id);
+    else {
+      try {
+        await loadSubscriptions();
+        await loadResults();
+      } catch {
+        ElMessage.error("项目会话暂时无法加载，请稍后重试");
+      }
+    }
+  }
+);
 </script>
 
 <template>
@@ -1072,6 +1118,7 @@ onUnmounted(() => {
           <p>通过对话明确合作方向，研究候选并形成初步意向</p>
         </div>
         <el-button
+          v-if="showInlineSessions"
           :disabled="conversationBusy || attachmentReading"
           @click="startNew"
         >
@@ -1079,7 +1126,7 @@ onUnmounted(() => {
         </el-button>
       </header>
       <div class="research-session-bar">
-        <label class="session-switch">
+        <label v-if="showInlineSessions" class="session-switch">
           <span>项目会话</span>
           <el-select
             class="project-session-select"
@@ -2351,6 +2398,7 @@ onUnmounted(() => {
 .project-context {
   min-width: 0;
   max-width: 58%;
+  margin-left: auto;
   text-align: right;
 }
 
@@ -3741,6 +3789,7 @@ onUnmounted(() => {
 
   .project-context {
     max-width: 100%;
+    margin-left: 0;
     text-align: left;
   }
 

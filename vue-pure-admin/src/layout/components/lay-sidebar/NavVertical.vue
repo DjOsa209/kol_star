@@ -9,6 +9,7 @@ import { usePermissionStoreHook } from "@/store/modules/permission";
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import LaySidebarLogo from "../lay-sidebar/components/SidebarLogo.vue";
 import LaySidebarItem from "../lay-sidebar/components/SidebarItem.vue";
+import IPRecommendationSessions from "./components/IPRecommendationSessions.vue";
 import LaySidebarLeftCollapse from "../lay-sidebar/components/SidebarLeftCollapse.vue";
 import LaySidebarCenterCollapse from "../lay-sidebar/components/SidebarCenterCollapse.vue";
 
@@ -116,6 +117,7 @@ onBeforeUnmount(() => {
           class="outer-most select-none"
         />
       </el-menu>
+      <IPRecommendationSessions :collapsed="isCollapse" />
     </el-scrollbar>
     <LaySidebarCenterCollapse
       v-if="device !== 'mobile' && (isShow || isCollapse)"
