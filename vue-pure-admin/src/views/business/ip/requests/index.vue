@@ -1229,9 +1229,22 @@ async function syncRoute() {
   } else if (route.query.mode === "new" && menuKind.value === "requests") {
     mode.value = "new";
     form.value = initialForm();
+    const recommendedIds = String(route.query.recommendedIps || "")
+      .split(",")
+      .map(Number)
+      .filter(id => Number.isInteger(id) && id > 0)
+      .slice(0, 5);
     const recommendedId = Number(route.query.recommendedIp);
-    if (recommendedId > 0) form.value.candidateIds = [recommendedId];
+    if (recommendedIds.length) {
+      form.value.candidateIds = [...new Set(recommendedIds)];
+      ensureCandidateEvaluations();
+    } else if (recommendedId > 0) form.value.candidateIds = [recommendedId];
     await loadResources();
+    for (const id of recommendedIds) {
+      form.value.brief.candidateEvaluations[id].reason = String(
+        route.query.recommendationReason || ""
+      );
+    }
     if (recommendedId > 0) {
       if (!selectedIP(recommendedId)) {
         try {

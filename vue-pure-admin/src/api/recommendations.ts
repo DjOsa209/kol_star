@@ -12,6 +12,7 @@ export interface RecommendationSubscriptionInput {
   platforms?: string[];
   resourceTypes?: string[];
   ipTypes?: string[];
+  excludedIPTypes?: string[];
   audience?: string;
   goal?: string;
   brand?: string;
@@ -28,6 +29,42 @@ export interface RecommendationSubscription extends RecommendationSubscriptionIn
   active: boolean;
   lastRunAt?: string | null;
   createdAt?: string;
+  ipWorkspace?: {
+    stage: "confirm" | "research" | "compare";
+    messages: IPRecommendationMessage[];
+  };
+}
+
+export interface IPRecommendationBasis {
+  label: string;
+  value: string;
+}
+
+export interface IPRecommendationAssessment {
+  verdict: string;
+  fit: string;
+  basis: IPRecommendationBasis[];
+  entryPoints: string[];
+  pending: string[];
+}
+
+export interface IPRecommendationPresentation {
+  headline: string;
+  explanation: string;
+  basis: IPRecommendationBasis[];
+  adjustments: string[];
+  questions: string[];
+  suggestedPrompts: string[];
+  primaryResourceId?: number;
+  alternativeResourceId?: number;
+  source: "ai" | "rule";
+}
+
+export interface IPRecommendationMessage {
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+  presentation?: IPRecommendationPresentation;
 }
 
 export interface RecommendationResult {
@@ -48,6 +85,7 @@ export interface RecommendationResult {
   feedback?: RecommendationFeedback | null;
   createdAt: string;
   resource: Record<string, any>;
+  assessment?: IPRecommendationAssessment;
 }
 
 export interface RecommendationEvidence {
@@ -71,6 +109,22 @@ export interface RecommendationNotification {
 type Result<T> = { code: number; message: string; data: T };
 type RecommendationPage = { list: RecommendationResult[]; total: number };
 const prefix = "/business/recommendations";
+
+export const converseIPRecommendations = (data: {
+  subscriptionId?: number;
+  criteria?: RecommendationSubscriptionInput;
+  message: string;
+  action: "clarify" | "recommend" | "compare" | "discuss";
+  compareIds?: number[];
+  documentText?: string;
+}) =>
+  http.request<
+    Result<{
+      subscription: RecommendationSubscription;
+      results: RecommendationResult[];
+      presentation: IPRecommendationPresentation;
+    }>
+  >("post", `${prefix}/ip/conversation`, { data }, { timeout: 180000 });
 
 export const listRecommendationSubscriptions = (domain: RecommendationDomain) =>
   http.request<Result<{ list: RecommendationSubscription[] }>>(

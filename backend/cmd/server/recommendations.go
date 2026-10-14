@@ -21,25 +21,27 @@ import (
 // domain check below is deliberately inside these handlers: a shared route
 // must never let an assistant user read IP searches (or vice versa).
 type recommendationSubscription struct {
-	ID             int64    `json:"id"`
-	Domain         string   `json:"domain"`
-	Name           string   `json:"name"`
-	Query          string   `json:"query"`
-	Markets        []string `json:"markets"`
-	Platforms      []string `json:"platforms"`
-	ResourceTypes  []string `json:"resourceTypes"`
-	IPTypes        []string `json:"ipTypes"`
-	Audience       string   `json:"audience"`
-	Goal           string   `json:"goal"`
-	Brand          string   `json:"brand"`
-	Product        string   `json:"product"`
-	BudgetCurrency string   `json:"budgetCurrency"`
-	BudgetMin      float64  `json:"budgetMin"`
-	BudgetMax      float64  `json:"budgetMax"`
-	Active         bool     `json:"active"`
-	RequestID      int64    `json:"requestId,omitempty"`
-	LastRunAt      string   `json:"lastRunAt,omitempty"`
-	CreatedAt      string   `json:"createdAt,omitempty"`
+	ID              int64                         `json:"id"`
+	Domain          string                        `json:"domain"`
+	Name            string                        `json:"name"`
+	Query           string                        `json:"query"`
+	Markets         []string                      `json:"markets"`
+	Platforms       []string                      `json:"platforms"`
+	ResourceTypes   []string                      `json:"resourceTypes"`
+	IPTypes         []string                      `json:"ipTypes"`
+	ExcludedIPTypes []string                      `json:"excludedIPTypes,omitempty"`
+	Audience        string                        `json:"audience"`
+	Goal            string                        `json:"goal"`
+	Brand           string                        `json:"brand"`
+	Product         string                        `json:"product"`
+	BudgetCurrency  string                        `json:"budgetCurrency"`
+	BudgetMin       float64                       `json:"budgetMin"`
+	BudgetMax       float64                       `json:"budgetMax"`
+	Active          bool                          `json:"active"`
+	RequestID       int64                         `json:"requestId,omitempty"`
+	LastRunAt       string                        `json:"lastRunAt,omitempty"`
+	CreatedAt       string                        `json:"createdAt,omitempty"`
+	IPWorkspace     *ipRecommendationConversation `json:"ipWorkspace,omitempty"`
 }
 
 type recommendationSaveInput struct {
@@ -61,6 +63,7 @@ type recommendationCandidate struct {
 	Evidence       []recommendationEvidence
 	EvidenceStatus string
 	ResourceHash   string
+	Assessment     *ipRecommendationAssessment
 }
 
 // External references are returned by the fixed, server-side search provider.
@@ -247,7 +250,20 @@ func (a *app) recommendationSubscriptionSave(w http.ResponseWriter, r *http.Requ
 	s.Platforms = cleanRecommendationStrings(s.Platforms)
 	s.ResourceTypes = cleanRecommendationStrings(s.ResourceTypes)
 	s.IPTypes = cleanRecommendationStrings(s.IPTypes)
-	if len(s.Query) > 1000 || len(s.Name) > 128 || len(s.Audience) > 255 || len(s.Goal) > 255 || s.BudgetMin < 0 || s.BudgetMax < 0 || (s.BudgetMax > 0 && s.BudgetMax < s.BudgetMin) {
+	s.ExcludedIPTypes = cleanRecommendationStrings(s.ExcludedIPTypes)
+	if s.ID > 0 {
+		s.IPWorkspace = existing.IPWorkspace
+		if s.IPWorkspace != nil && recommendationCriteriaChanged(existing, s) {
+			workspace := *s.IPWorkspace
+			workspace.Messages = slices.Clone(workspace.Messages)
+			workspace.Messages = append(workspace.Messages, ipRecommendationMessage{Role: "assistant", Content: "寻找条件已更新", CreatedAt: time.Now().Format("2006-01-02 15:04")})
+			workspace.Stage = "research"
+			s.IPWorkspace = &workspace
+		}
+	} else {
+		s.IPWorkspace = nil
+	}
+	if len([]rune(s.Query)) > 4000 || len(s.Name) > 128 || len(s.Audience) > 255 || len(s.Goal) > 255 || s.BudgetMin < 0 || s.BudgetMax < 0 || (s.BudgetMax > 0 && s.BudgetMax < s.BudgetMin) {
 		writeError(w, http.StatusBadRequest, 400, "寻找条件不合法")
 		return
 	}
@@ -335,6 +351,7 @@ func recommendationCriteriaChanged(previous, next recommendationSubscription) bo
 		!slices.Equal(previous.Platforms, next.Platforms) ||
 		!slices.Equal(previous.ResourceTypes, next.ResourceTypes) ||
 		!slices.Equal(previous.IPTypes, next.IPTypes) ||
+		!slices.Equal(previous.ExcludedIPTypes, next.ExcludedIPTypes) ||
 		previous.Audience != next.Audience ||
 		previous.Goal != next.Goal ||
 		previous.Brand != next.Brand ||
@@ -777,6 +794,9 @@ func deriveIPRecommendationCriteria(s recommendationSubscription) recommendation
 	}
 	if len(s.IPTypes) == 0 {
 		s.IPTypes = recommendationInferredIPTypes(s.Query)
+		s.IPTypes = slices.DeleteFunc(s.IPTypes, func(kind string) bool {
+			return recommendationMatchesAny(kind, recommendationIPTypeAliases(s.ExcludedIPTypes))
+		})
 	}
 	return s
 }
@@ -799,6 +819,11 @@ func (a *app) ipRecommendationCandidates(ctx context.Context, s recommendationSu
 			args = append(args, values...)
 		}
 	}
+	if clause, values := recommendationSQLAny("r.ip_type", recommendationIPTypeAliases(s.ExcludedIPTypes), false); clause != "" {
+		where += " and not " + clause
+		args = append(args, values...)
+	}
+
 	rows, err := a.queryMaps(ctx, `select r.id,r.name,r.ip_type as ipType,r.markets,r.audience,r.summary,r.cooperation_status as cooperationStatus,r.currency,r.price_min as priceMin,r.price_max as priceMax,r.license_notes as licenseNotes,(select f.id from biz_ip_files f where f.ip_id=r.id and f.file_kind='visual' order by f.id desc limit 1) as visualFileId from biz_ip_resources r`+where+` order by r.updated_at desc,r.id desc limit 300`, args...)
 	if err != nil {
 		return nil, err
@@ -825,6 +850,9 @@ func scoreIPRecommendation(row map[string]any, s recommendationSubscription) (re
 		return recommendationCandidate{}, false
 	}
 	if len(s.IPTypes) > 0 && !recommendationMatchesAny(recommendationString(row["ipType"]), recommendationIPTypeAliases(s.IPTypes)) {
+		return recommendationCandidate{}, false
+	}
+	if recommendationMatchesAny(recommendationString(row["ipType"]), recommendationIPTypeAliases(s.ExcludedIPTypes)) {
 		return recommendationCandidate{}, false
 	}
 	status := recommendationString(row["cooperationStatus"])
@@ -906,13 +934,14 @@ func sortRecommendationCandidates(values []recommendationCandidate) {
 }
 
 type recommendationAIRank struct {
-	ID              int64    `json:"id"`
-	Score           int      `json:"score"`
-	Reason          string   `json:"reason"`
-	Advice          string   `json:"advice"`
-	Scenarios       []string `json:"scenarios"`
-	ExternalInsight string   `json:"externalInsight"`
-	EvidenceIDs     []int    `json:"evidenceIds"`
+	ID              int64                       `json:"id"`
+	Score           int                         `json:"score"`
+	Reason          string                      `json:"reason"`
+	Advice          string                      `json:"advice"`
+	Scenarios       []string                    `json:"scenarios"`
+	ExternalInsight string                      `json:"externalInsight"`
+	EvidenceIDs     []int                       `json:"evidenceIds"`
+	Assessment      *ipRecommendationAssessment `json:"assessment,omitempty"`
 }
 
 func filterRecommendationAIRanks(candidates []recommendationCandidate, rankings []recommendationAIRank) []recommendationCandidate {
@@ -945,6 +974,9 @@ func filterRecommendationAIRanks(candidates []recommendationCandidate, rankings 
 			c.AdviceSource = "ai"
 		}
 		if c.AdviceSource == "ai" {
+			if c.Assessment != nil {
+				c.Assessment = cleanIPRecommendationAssessment(rank.Assessment, c.Assessment)
+			}
 			scenarios := make([]string, 0, 3)
 			for _, scenario := range rank.Scenarios {
 				if scenario = limitRecommendationText(scenario, 100); scenario != "" && !recommendationUnsupportedClaim(scenario) {
@@ -1145,7 +1177,7 @@ func (a *app) executeRecommendationRun(ctx context.Context, subscriptionID int64
 		evidenceJSON, _ := json.Marshal(candidate.Evidence)
 		result, execErr := tx.ExecContext(ctx, `insert ignore into biz_recommendation_results
 			(subscription_id,run_id,resource_id,resource_name,score,reason,risks,source,is_new,advice,advice_source,scenarios,evidence,evidence_status,advice_resource_hash)
-			values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, s.ID, runID, candidate.ID, candidate.Name, candidate.Score, candidate.Reason, candidate.Risks, candidate.Source, isNew, candidate.Advice, candidate.AdviceSource, string(scenariosJSON), string(evidenceJSON), candidate.EvidenceStatus, candidate.ResourceHash)
+			values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, s.ID, runID, candidate.ID, candidate.Name, candidate.Score, candidate.Reason, candidate.Risks, candidate.Source, isNew, storedRecommendationAdvice(candidate), candidate.AdviceSource, string(scenariosJSON), string(evidenceJSON), candidate.EvidenceStatus, candidate.ResourceHash)
 		if execErr != nil {
 			return nil, execErr
 		}
@@ -1157,7 +1189,7 @@ func (a *app) executeRecommendationRun(ctx context.Context, subscriptionID int64
 			// Refresh an existing match's explanation. Interest feedback and the
 			// original "new" marker belong to the user and remain untouched.
 			if _, execErr = tx.ExecContext(ctx, `update biz_recommendation_results set resource_name=?,score=?,reason=?,risks=?,source=?,advice=?,advice_source=?,scenarios=?,evidence=?,evidence_status=?,advice_resource_hash=? where subscription_id=? and resource_id=?`,
-				candidate.Name, candidate.Score, candidate.Reason, candidate.Risks, candidate.Source, candidate.Advice, candidate.AdviceSource, string(scenariosJSON), string(evidenceJSON), candidate.EvidenceStatus, candidate.ResourceHash, s.ID, candidate.ID); execErr != nil {
+				candidate.Name, candidate.Score, candidate.Reason, candidate.Risks, candidate.Source, storedRecommendationAdvice(candidate), candidate.AdviceSource, string(scenariosJSON), string(evidenceJSON), candidate.EvidenceStatus, candidate.ResourceHash, s.ID, candidate.ID); execErr != nil {
 				return nil, execErr
 			}
 			continue
@@ -1259,12 +1291,13 @@ func (a *app) recommendationResultsData(ctx context.Context, userID int, domain 
 			continue
 		}
 		visibleAdvice := ""
+		var visibleAssessment *ipRecommendationAssessment
 		visibleAdviceSource := ""
 		visibleScenarios := []string{}
 		visibleEvidence := []recommendationEvidence{}
 		visibleEvidenceStatus := "not_searched"
 		if resourceHash != "" && resourceHash == recommendationResourceHash(current.Resource) {
-			visibleAdvice = advice.String
+			visibleAdvice, visibleAssessment = decodedRecommendationAdvice(advice.String)
 			visibleAdviceSource = adviceSource
 			visibleEvidenceStatus = evidenceStatus
 			if scenariosJSON.Valid {
@@ -1285,7 +1318,8 @@ func (a *app) recommendationResultsData(ctx context.Context, userID int, domain 
 			"score": current.Score, "reason": current.Reason, "risks": current.Risks, "source": source,
 			"scoreSource": "rule", "advice": visibleAdvice, "adviceSource": visibleAdviceSource,
 			"scenarios": visibleScenarios, "evidence": visibleEvidence, "evidenceStatus": visibleEvidenceStatus,
-			"isNew": isNew == 1, "feedback": feedback, "createdAt": created.Format("2006-01-02 15:04"), "resource": resource,
+			"assessment": visibleAssessment,
+			"isNew":      isNew == 1, "feedback": feedback, "createdAt": created.Format("2006-01-02 15:04"), "resource": resource,
 		})
 	}
 	return list, rows.Err()

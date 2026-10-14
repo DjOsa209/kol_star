@@ -173,6 +173,7 @@ func prepareRecommendationAdvice(s recommendationSubscription, candidates []reco
 		candidates[i].Scenarios = recommendationDefaultScenarios(s, candidates[i])
 		candidates[i].ResourceHash = recommendationResourceHash(candidates[i].Resource)
 		if s.Domain == "ip" {
+			candidates[i].Assessment = defaultIPRecommendationAssessment(s, candidates[i])
 			candidates[i].EvidenceStatus = "not_searched"
 		} else {
 			candidates[i].EvidenceStatus = "none"
@@ -198,5 +199,6 @@ func recommendationAdviceSystemPrompt() string {
 只能从 candidates 中选择真实 id 排序，最多返回 20 条；不可创造资源、合作案例、报价、受众指标、授权范围或已获权结论。
 对每个资源给出中文 advice，必须直接包含「适用场景：」和「匹配原因：」，结合本次 goal、market、IP 类型和库内资料解释该资源适合在哪个营销触点使用，以及为什么与这次需求匹配。scenarios 提供 1–3 个可执行场景建议，措辞为「评估/可考虑」，不要假定版权方已同意具体使用方式。待评估、洽谈中须指出可执行性未确认。
 外部 publicEvidence 只用于 IP 身份或作品类型等一般背景，不能证明授权、价格、市场热度或历史合作。仅在确实使用某条外部资料时，在 evidenceIds 中列出该候选 publicEvidence 的 id，并在 externalInsight 中概括它实际支持的事实；没有外部依据时留空。不得输出 URL，不能引用未提供的外部资料。
-仅返回 JSON：{"recommendations":[{"id":1,"score":85,"reason":"排序理由","advice":"适用场景：…匹配原因：…","scenarios":["场景及动作"],"externalInsight":"外部资料支持的背景事实","evidenceIds":[1]}]}。`
+IP 推荐需额外返回 assessment，供「对话研究 + 候选对比」工作台直接展示。verdict 是可读的具体判断（最多60字）；fit 概括该资源与当前需求的契合点；basis 用2–4个 label/value 说明产品适配、合作延展、区域条件等，必须区分库内事实与建议；entryPoints 给出1–3个合作切入点；pending 列出报价、授权、档期或资料缺口。首句给出判断，后面给依据，不堆砌通用赞美或重复需求，不输出HTML、CSS或Markdown来控制布局。不同候选必须说明适配方向的差异，缺乏资料时明确待确认，不能把规则分数写成AI准确率。
+仅返回 JSON：{"recommendations":[{"id":1,"score":85,"reason":"排序理由","advice":"适用场景：…匹配原因：…","scenarios":["场景及动作"],"assessment":{"verdict":"可优先评估某资源的具体合作方向","fit":"与当前需求的契合点","basis":[{"label":"产品适配","value":"事实与建议"}],"entryPoints":["合作切入"],"pending":["待确认事项"]},"externalInsight":"外部资料支持的背景事实","evidenceIds":[1]}]}。`
 }

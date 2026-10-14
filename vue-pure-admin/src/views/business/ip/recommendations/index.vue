@@ -11,12 +11,18 @@ import {
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { formatBytes } from "@pureadmin/utils";
-import VuePdfEmbed from "vue-pdf-embed";
+import VuePdfEmbed, { useVuePdfEmbed } from "vue-pdf-embed";
+import { Icon } from "@iconify/vue";
+import * as XLSX from "xlsx";
+import { workspaceIcons as icons } from "./icons";
+import infinixWordmark from "@/assets/infinix-wordmark.svg";
 import {
+  converseIPRecommendations,
+  type IPRecommendationPresentation,
+  type IPRecommendationMessage,
   deleteRecommendationSubscription,
   listRecommendationResults,
   listRecommendationSubscriptions,
-  runRecommendationSubscription,
   saveRecommendationSubscription,
   sendRecommendationFeedback,
   type RecommendationResult,
@@ -36,7 +42,6 @@ const route = useRoute();
 const router = useRouter();
 const loading = ref(false);
 const saving = ref(false);
-const running = ref(false);
 const subscriptions = ref<RecommendationSubscription[]>([]);
 const results = ref<RecommendationResult[]>([]);
 const selectedId = ref<number | null>(null);
@@ -111,23 +116,8 @@ const requestId = computed(() => Number(route.query.requestId) || 0);
 const selectedSubscription = computed(() =>
   subscriptions.value.find(item => item.id === selectedId.value)
 );
-const activeCount = computed(
-  () => subscriptions.value.filter(item => item.active).length
-);
-const newCount = computed(
-  () => results.value.filter(item => item.isNew && !item.feedback).length
-);
 const visibleResults = computed(() =>
-  activeView.value === "new"
-    ? results.value.filter(
-        item => item.isNew && item.feedback !== "not_interested"
-      )
-    : results.value.filter(item => item.feedback !== "not_interested")
-);
-const resultCountText = computed(() =>
-  activeView.value === "new"
-    ? `${visibleResults.value.length} 条新推荐`
-    : `${visibleResults.value.length} 条推荐`
+  results.value.filter(item => item.feedback !== "not_interested")
 );
 
 function blankForm(): RecommendationSubscriptionInput {
@@ -138,6 +128,7 @@ function blankForm(): RecommendationSubscriptionInput {
     query: "",
     markets: [],
     ipTypes: [],
+    excludedIPTypes: [],
     audience: "",
     goal: "",
     budgetCurrency: "CNY",
@@ -232,25 +223,6 @@ function safeExternalUrl(value: unknown): string | undefined {
   }
 }
 
-function evidenceEmptyText(item: RecommendationResult): string {
-  if (!item.advice?.trim())
-    return "这条历史推荐尚未检索外部资料，可点击“立即刷新”更新。";
-  if (item.evidenceStatus === "unavailable")
-    return "外部资料检索暂不可用，本次建议仅参考库内档案。";
-  if (item.evidenceStatus === "none")
-    return "未找到相关的公开背景资料，请参考库内版权资料。";
-  if (item.evidenceStatus === "not_searched")
-    return "公开背景检索覆盖排序靠前的 3 条推荐；本条可查看库内版权资料。";
-  if (item.evidenceStatus === "available") return "暂无可展示的公开资料链接。";
-  return "暂未获取外部背景资料。";
-}
-
-function adviceHeading(item: RecommendationResult): string {
-  if (item.adviceSource === "ai") return "AI 合作建议";
-  if (item.adviceSource === "rule") return "规则合作建议";
-  return "合作建议";
-}
-
 function formatTime(value: string | undefined | null) {
   return value ? String(value).replace("T", " ").slice(0, 16) : "尚未运行";
 }
@@ -342,7 +314,10 @@ async function loadSubscriptions(selectId?: number) {
     selectedId.value = subscriptions.value[0]?.id || null;
 }
 
+let resultsRequestSequence = 0;
 async function loadResults() {
+  const sequence = ++resultsRequestSequence;
+  const subscriptionId = selectedId.value;
   if (!selectedId.value) {
     results.value = [];
     return;
@@ -351,9 +326,15 @@ async function loadResults() {
   try {
     const response = await listRecommendationResults(
       "ip",
-      selectedId.value,
+      subscriptionId,
       "all"
     );
+    if (
+      sequence !== resultsRequestSequence ||
+      selectedId.value !== subscriptionId ||
+      disposed
+    )
+      return;
     results.value = response.data.list || [];
     void loadImages(results.value);
     const focusId = Number(route.query.resultId);
@@ -364,8 +345,13 @@ async function loadResults() {
         .getElementById(`ip-recommendation-${focusId}`)
         ?.scrollIntoView({ block: "center" });
     }
+  } catch (error) {
+    if (sequence === resultsRequestSequence)
+      ElMessage.error(
+        error instanceof Error ? error.message : "候选暂时无法加载，请重试"
+      );
   } finally {
-    loading.value = false;
+    if (sequence === resultsRequestSequence) loading.value = false;
   }
 }
 
@@ -382,9 +368,20 @@ async function loadImages(items: RecommendationResult[]) {
 }
 
 function selectSubscription(id: number) {
+  if (conversationBusy.value || attachmentReading.value) return;
+  if (selectedId.value !== id)
+    chosenIds.value =
+      selectionKey.value || route.query.selected ? selectedFromRequest() : [];
   selectedId.value = id;
+  composerText.value = "";
+  conversationError.value = "";
+  attachment.value = null;
+  historyOpen.value = false;
   editing.value = false;
   activeView.value = "all";
+  compareIds.value = [];
+  workbenchTab.value = "candidates";
+  setForm(selectedSubscription.value || {});
   const query = { ...route.query };
   delete query.resultId;
   query.subscriptionId = String(id);
@@ -396,15 +393,27 @@ function selectSubscription(id: number) {
 }
 
 function startNew() {
+  if (conversationBusy.value || attachmentReading.value) return;
   setForm({ requestId: requestId.value || undefined });
-  editing.value = true;
-  activeView.value = "subscriptions";
+  ++resultsRequestSequence;
+  loading.value = false;
+  selectedId.value = null;
+  results.value = [];
+  compareIds.value = [];
+  chosenIds.value = [];
+  composerText.value = "";
+  conversationError.value = "";
+  attachment.value = null;
+  historyOpen.value = false;
+  workbenchTab.value = "candidates";
+  editing.value = false;
+  activeView.value = "all";
 }
 
 function editSubscription(item: RecommendationSubscription) {
   setForm({
     ...item,
-    budgetMin: item.budgetMin || null,
+    budgetMin: item.budgetMin ?? null,
     budgetMax: item.budgetMax || null
   });
   editing.value = true;
@@ -445,26 +454,6 @@ async function saveSubscription() {
     );
   } finally {
     saving.value = false;
-  }
-}
-
-async function runNow() {
-  if (!selectedId.value) return;
-  running.value = true;
-  try {
-    const response = await runRecommendationSubscription(
-      "ip",
-      selectedId.value
-    );
-    if (response.code !== 0) throw new Error(response.message);
-    await loadSubscriptions(selectedId.value);
-    await loadResults();
-    activeView.value = "all";
-    ElMessage.success("已完成本次推荐检查");
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "推荐检查失败");
-  } finally {
-    running.value = false;
   }
 }
 
@@ -536,52 +525,6 @@ function selectedFromRequest(): number[] {
   }
 }
 
-async function addToIntent(item: RecommendationResult) {
-  const id = Number(item.resourceId);
-  if (!id) return;
-  if (selectionKey.value) {
-    const selected = selectedFromRequest();
-    if (selected.includes(id)) {
-      ElMessage.info("该 IP 已在当前意向清单中");
-      return;
-    }
-    if (selected.length >= 5) {
-      ElMessage.warning("初步意向最多选择 5 个 IP");
-      return;
-    }
-    try {
-      await ElMessageBox.confirm(
-        `将「${item.resourceName}」加入当前需求的初步意向？`,
-        "加入意向",
-        { type: "info" }
-      );
-    } catch {
-      return;
-    }
-    chosenIds.value = [...selected, id];
-    localStorage.setItem(selectionKey.value, JSON.stringify(chosenIds.value));
-    ElMessage.success("已加入意向清单，请返回需求页确认并保存");
-    return;
-  }
-  try {
-    await ElMessageBox.confirm(
-      `将「${item.resourceName}」加入新 IP 需求的初步意向？`,
-      "新建需求",
-      { type: "info" }
-    );
-  } catch {
-    return;
-  }
-  router.push({
-    path: "/business/ip/requests",
-    query: {
-      mode: "new",
-      recommendedIp: String(id),
-      recommendationReason: item.advice?.trim() || item.reason
-    }
-  });
-}
-
 async function loadRequestContext() {
   if (selectionKey.value) {
     try {
@@ -595,7 +538,9 @@ async function loadRequestContext() {
           domain: "ip",
           requestId: requestId.value || undefined
         });
-        editing.value = true;
+        selectedId.value = null;
+        results.value = [];
+        editing.value = false;
         activeView.value = "subscriptions";
         return;
       }
@@ -620,8 +565,16 @@ async function loadRequestContext() {
         budgetMax: item.budgetMax == null ? null : Number(item.budgetMax),
         requestId: requestId.value
       });
-      editing.value = true;
-      activeView.value = "subscriptions";
+      const existing = subscriptions.value.find(
+        value => value.requestId === requestId.value
+      );
+      selectedId.value = existing?.id || null;
+      if (existing) {
+        setForm(existing);
+        await loadResults();
+      } else results.value = [];
+      editing.value = false;
+      expectedLaunch.value = String(item.expectedLaunch || "").slice(0, 10);
     } catch {
       ElMessage.warning("未能读取关联需求，请手动填写寻找条件");
     }
@@ -633,6 +586,8 @@ onMounted(async () => {
     await loadSubscriptions();
     await loadResults();
     await loadRequestContext();
+    if (selectedSubscription.value) setForm(selectedSubscription.value);
+    chosenIds.value = selectedFromRequest();
   } catch {
     ElMessage.error("IP 推荐暂时无法加载，请稍后重试");
   }
@@ -656,424 +611,1294 @@ onUnmounted(() => {
   if (drawerVisualUrl.value) URL.revokeObjectURL(drawerVisualUrl.value);
   closePreview();
 });
+
+const composerText = ref("");
+const conversationBusy = ref(false);
+const conversationError = ref("");
+let failedConversation: {
+  action: "clarify" | "recommend" | "compare" | "discuss";
+  text: string;
+} | null = null;
+const workbenchTab = ref<"candidates" | "compare" | "intent">("candidates");
+const compareIds = ref<number[]>([]);
+const activeCandidateId = ref<number | null>(null);
+const expectedLaunch = ref("");
+const historyOpen = ref(false);
+const conditionsOpen = ref(false);
+const attachmentReading = ref(false);
+const attachment = ref<{ name: string; text: string } | null>(null);
+const attachmentInput = ref<HTMLInputElement>();
+const pdfSource = ref<{ data: Uint8Array } | undefined>();
+const pdfReadError = ref("");
+const { doc: attachmentPdf } = useVuePdfEmbed({
+  source: pdfSource,
+  onError: () => {
+    pdfReadError.value = "PDF 无法读取，请上传文本资料或直接填写需求";
+  }
+});
+let conversationSequence = 0;
+const conversationMessages = computed<IPRecommendationMessage[]>(
+  () => selectedSubscription.value?.ipWorkspace?.messages || []
+);
+const latestUser = computed(() =>
+  [...conversationMessages.value]
+    .reverse()
+    .find(message => message.role === "user")
+);
+const assistantMessages = computed(() =>
+  conversationMessages.value.filter(message => message.role === "assistant")
+);
+const latestAssistant = computed(() => assistantMessages.value.at(-1));
+const currentCandidate = computed(
+  () =>
+    visibleResults.value.find(
+      item => item.resourceId === activeCandidateId.value
+    ) || visibleResults.value[0]
+);
+const comparison = computed(() =>
+  visibleResults.value.filter(item =>
+    compareIds.value.includes(item.resourceId)
+  )
+);
+const intentItems = computed(() =>
+  visibleResults.value.filter(item => chosenIds.value.includes(item.resourceId))
+);
+const currentStage = computed(() => {
+  if (!selectedSubscription.value) return 0;
+  if (
+    selectedSubscription.value.ipWorkspace?.stage === "confirm" ||
+    !visibleResults.value.length
+  )
+    return 1;
+  return selectedSubscription.value.ipWorkspace?.stage === "compare" ? 3 : 2;
+});
+const presentation = computed<IPRecommendationPresentation | null>(() => {
+  if (latestAssistant.value?.presentation)
+    return latestAssistant.value.presentation;
+  const item = currentCandidate.value;
+  if (!item) return null;
+  return {
+    headline:
+      item.assessment?.verdict ||
+      `进一步评估「${item.resourceName}」与当前需求的合作适配`,
+    explanation: item.assessment?.fit || item.advice || item.reason,
+    basis: item.assessment?.basis || [
+      { label: "筛选依据", value: item.reason },
+      { label: "区域条件", value: "具体授权地域须与版权方确认" }
+    ],
+    adjustments: [],
+    questions: [],
+    suggestedPrompts: ["为什么优先它？", "更看重产品设计与礼盒联名"],
+    primaryResourceId: item.resourceId,
+    source: item.adviceSource === "ai" ? "ai" : "rule"
+  };
+});
+const primaryCandidate = computed(
+  () =>
+    visibleResults.value.find(
+      item => item.resourceId === presentation.value?.primaryResourceId
+    ) || currentCandidate.value
+);
+const evidenceCandidates = computed(() => {
+  const ids = [
+    presentation.value?.primaryResourceId,
+    presentation.value?.alternativeResourceId
+  ];
+  return visibleResults.value
+    .filter(item => ids.includes(item.resourceId))
+    .slice(0, 2);
+});
+const criteria = computed(() => selectedSubscription.value || form);
+const criteriaText = computed(() =>
+  [
+    criteria.value.markets?.join(" / "),
+    criteria.value.ipTypes?.join(" / "),
+    criteria.value.excludedIPTypes?.length
+      ? `排除${criteria.value.excludedIPTypes.join(" / ")}`
+      : "",
+    criteria.value.budgetMax
+      ? `授权预算 ${criteria.value.budgetCurrency} ${criteria.value.budgetMax.toLocaleString()}`
+      : "预算待确认"
+  ]
+    .filter(Boolean)
+    .join(" · ")
+);
+const projectLabel = computed(
+  () =>
+    selectedSubscription.value?.name || currentRequestName.value || "新合作研究"
+);
+const comparisonFields = [
+  { key: "fit", label: "需求契合" },
+  { key: "entry", label: "合作切入" },
+  { key: "pending", label: "待确认" }
+];
+function comparisonValue(item: RecommendationResult, field: string) {
+  if (field === "fit")
+    return item.assessment?.fit || item.reason || "资料待完善";
+  if (field === "entry")
+    return (
+      (item.assessment?.entryPoints || scenarioItems(item.scenarios)).join(
+        " / "
+      ) || "需与版权方讨论合作方式"
+    );
+  const pending = [
+    ...new Set([...(item.assessment?.pending || []), ...riskItems(item.risks)])
+  ].filter(
+    value =>
+      ![
+        "授权范围、报价与档期待确认",
+        "授权范围、报价与档期须与版权方确认"
+      ].includes(value)
+  );
+  return pending.join("；") || "授权范围、报价与档期待确认";
+}
+function showConditions() {
+  if (selectedSubscription.value) editSubscription(selectedSubscription.value);
+  else editing.value = true;
+}
+function selectStage(index: number) {
+  if (index < 2) {
+    conditionsOpen.value = !conditionsOpen.value;
+    return;
+  }
+  workbenchTab.value = index === 3 ? "compare" : "candidates";
+}
+function toggleCompare(item: RecommendationResult) {
+  if (compareIds.value.includes(item.resourceId))
+    compareIds.value = compareIds.value.filter(id => id !== item.resourceId);
+  else if (compareIds.value.length >= 3) ElMessage.info("最多同时对比 3 个 IP");
+  else compareIds.value = [...compareIds.value, item.resourceId];
+}
+async function converse(
+  action: "clarify" | "recommend" | "compare" | "discuss",
+  text = composerText.value.trim()
+) {
+  if (conversationBusy.value || attachmentReading.value) return;
+  if (!text && !criteria.value.query && !attachment.value) {
+    ElMessage.info("请先描述项目需求");
+    return;
+  }
+  if (action === "compare" && comparison.value.length < 2) {
+    workbenchTab.value = "candidates";
+    ElMessage.info("请先选择 2 至 3 个候选 IP");
+    return;
+  }
+  const sequence = ++conversationSequence;
+  const sessionId = selectedId.value;
+  conversationBusy.value = true;
+  conversationError.value = "";
+  try {
+    const response = await converseIPRecommendations({
+      subscriptionId: sessionId || undefined,
+      criteria: sessionId
+        ? undefined
+        : {
+            ...form,
+            query: form.query || text,
+            name: form.name || text.slice(0, 30),
+            requestId: requestId.value || undefined
+          },
+      message: text,
+      action,
+      compareIds: action === "compare" ? compareIds.value : [],
+      documentText:
+        attachment.value && (action === "clarify" || action === "recommend")
+          ? `【${attachment.value.name.slice(0, 120)}】\n${attachment.value.text}`
+          : undefined
+    });
+    if (sequence !== conversationSequence || disposed) return;
+    const updated = response.data.subscription;
+    const index = subscriptions.value.findIndex(item => item.id === updated.id);
+    if (index >= 0) subscriptions.value[index] = updated;
+    else subscriptions.value.unshift(updated);
+    selectedId.value = updated.id;
+    setForm(updated);
+    // Comparisons return the selected subset; preserve the full candidate set.
+    if (action !== "compare") results.value = response.data.results || [];
+    compareIds.value = compareIds.value.filter(id =>
+      visibleResults.value.some(item => item.resourceId === id)
+    );
+    activeCandidateId.value =
+      response.data.presentation.primaryResourceId ||
+      visibleResults.value[0]?.resourceId ||
+      null;
+    if (action === "compare") workbenchTab.value = "compare";
+    else if (action === "recommend") workbenchTab.value = "candidates";
+    composerText.value = "";
+    if (action === "clarify" || action === "recommend") attachment.value = null;
+    void loadImages(results.value);
+  } catch (error) {
+    if (sequence === conversationSequence) {
+      failedConversation = { action, text };
+      conversationError.value =
+        error instanceof Error
+          ? error.message
+          : "对话生成失败，请保留需求并重试";
+    }
+  } finally {
+    if (sequence === conversationSequence) conversationBusy.value = false;
+  }
+}
+function retryConversation() {
+  if (failedConversation)
+    return converse(
+      failedConversation.action,
+      composerText.value.trim() || failedConversation.text
+    );
+  return sendMessage();
+}
+function sendMessage() {
+  const text = composerText.value.trim();
+  if (
+    !selectedSubscription.value ||
+    selectedSubscription.value.ipWorkspace?.stage === "confirm"
+  )
+    return converse("clarify", text);
+  if (attachment.value) return converse("recommend", text);
+  if (
+    visibleResults.value.length &&
+    /^(为什么|为何|解释|说明|说说)|推荐依据|判断依据|推荐理由|适配原因/.test(
+      text
+    )
+  )
+    return converse("discuss", text);
+  if (
+    comparison.value.length >= 2 &&
+    /(?:比较|对比).*(?:这|它们|两个|选中|候选)/.test(text)
+  )
+    return converse("compare", text);
+  return converse("recommend", text);
+}
+function composerKeydown(event: KeyboardEvent) {
+  if (
+    event.key === "Enter" &&
+    (event.ctrlKey || event.metaKey) &&
+    !event.isComposing
+  ) {
+    event.preventDefault();
+    void sendMessage();
+  }
+}
+function followUp(text: string) {
+  composerText.value = text;
+  void converse(text.startsWith("为什么") ? "discuss" : "recommend", text);
+}
+function queueIntent(item: RecommendationResult) {
+  if (chosenIds.value.includes(item.resourceId)) {
+    workbenchTab.value = "intent";
+    return;
+  }
+  if (chosenIds.value.length >= 5) {
+    ElMessage.info("初步意向最多选择 5 个 IP");
+    return;
+  }
+  chosenIds.value = [...chosenIds.value, item.resourceId];
+  workbenchTab.value = "intent";
+}
+function removeIntent(id: number) {
+  chosenIds.value = chosenIds.value.filter(value => value !== id);
+}
+function confirmIntent() {
+  if (!chosenIds.value.length && primaryCandidate.value)
+    queueIntent(primaryCandidate.value);
+  if (!chosenIds.value.length) return;
+  if (selectionKey.value) {
+    localStorage.setItem(selectionKey.value, JSON.stringify(chosenIds.value));
+    ElMessage.success("已同步到当前提需草稿，请返回需求页保存");
+    return;
+  }
+  router.push({
+    path: "/business/ip/requests",
+    query: {
+      mode: "new",
+      recommendedIps: chosenIds.value.join(","),
+      recommendationReason:
+        presentation.value?.explanation || primaryCandidate.value?.reason || ""
+    }
+  });
+}
+async function readAttachment(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  input.value = "";
+  if (file.size > 15 * 1024 * 1024) {
+    ElMessage.warning("需求资料请控制在 15MB 以内");
+    return;
+  }
+  attachmentReading.value = true;
+  try {
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    let text = "";
+    if (["txt", "md", "csv"].includes(extension || ""))
+      text = await file.text();
+    else if (["xlsx", "xls"].includes(extension || "")) {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      text = workbook.SheetNames.slice(0, 3)
+        .map(
+          name => `${name}\n${XLSX.utils.sheet_to_csv(workbook.Sheets[name])}`
+        )
+        .join("\n");
+    } else if (extension === "pdf") {
+      pdfReadError.value = "";
+      pdfSource.value = undefined;
+      await nextTick();
+      const ready = new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          stop();
+          reject(new Error("PDF 读取超时，请换用文本资料"));
+        }, 20000);
+        const stop = watch(
+          [attachmentPdf, pdfReadError],
+          ([document, error]) => {
+            if (!document && !error) return;
+            stop();
+            window.clearTimeout(timer);
+            if (error) reject(new Error(error));
+            else resolve();
+          }
+        );
+      });
+      pdfSource.value = { data: new Uint8Array(await file.arrayBuffer()) };
+      await ready;
+      const document = attachmentPdf.value;
+      if (!document) throw new Error("PDF 正文未能读取");
+      const pages = [];
+      for (let page = 1; page <= Math.min(document.numPages, 12); page++) {
+        const content = await (await document.getPage(page)).getTextContent();
+        pages.push(
+          content.items.map(item => ("str" in item ? item.str : "")).join(" ")
+        );
+      }
+      text = pages.join("\n");
+    } else throw new Error("请上传 PDF、TXT、Markdown 或表格资料");
+    if (!text.trim())
+      throw new Error("未能提取正文；扫描版 PDF 请先转为文本或直接粘贴需求");
+    attachment.value = { name: file.name, text: text.slice(0, 3800) };
+    if (text.length > 3800)
+      ElMessage.info("资料已读取，将使用前 3800 字作为需求补充");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "资料读取失败");
+  } finally {
+    attachmentReading.value = false;
+    pdfSource.value = undefined;
+  }
+}
+watch(selectedId, () => {
+  if (conversationBusy.value || attachmentReading.value) return;
+  ++conversationSequence;
+  conversationError.value = "";
+  compareIds.value = [];
+  activeCandidateId.value = null;
+});
+watch(visibleResults, () => {
+  if (!compareIds.value.length && visibleResults.value.length >= 2)
+    compareIds.value = visibleResults.value
+      .slice(0, 2)
+      .map(item => item.resourceId);
+});
+onUnmounted(() => {
+  ++conversationSequence;
+});
 </script>
 
 <template>
-  <div class="ip-recommend-page">
-    <section class="hero">
-      <div>
-        <p class="eyebrow">IP OPERATIONS / DISCOVERY</p>
-        <h1>找到更契合的 IP</h1>
-        <p class="hero-description">
-          描述合作方向，系统从现有 IP 资源库寻找匹配对象，每周为你检查新资源。
-        </p>
-        <p v-if="currentRequestName" class="context-pill">
-          来自需求：{{ currentRequestName }}
-        </p>
+  <div v-loading="loading" class="ip-recommend-page">
+    <aside class="research-sidebar" aria-label="IP运营导航">
+      <div class="research-brand">
+        <img :src="infinixWordmark" alt="Infinix" /><span>IP运营</span>
       </div>
-      <div class="hero-actions">
-        <div class="hero-stat">
-          <strong>{{ activeCount }}</strong
-          ><span>运行中的寻找条件</span>
-        </div>
-        <el-button class="primary-button" @click="startNew"
-          >＋ 新建寻找条件</el-button
+      <nav class="research-nav">
+        <router-link to="/business/ip/resources"
+          ><Icon :icon="icons.home" />IP资源库</router-link
         >
-      </div>
-    </section>
-
-    <div class="workspace">
-      <aside class="subscription-panel">
-        <div class="section-heading">
-          <h2>我的寻找条件</h2>
-          <span>{{ subscriptions.length }}</span>
-        </div>
-        <div v-if="!subscriptions.length" class="sidebar-empty">
-          尚未保存寻找条件。填写一次，后续每周自动检查新匹配。
-        </div>
+        <router-link to="/business/ip/requests"
+          ><Icon :icon="icons.file" />IP提需</router-link
+        >
+        <span class="nav-current" aria-current="page"
+          ><Icon :icon="icons.spark" />AI推荐</span
+        >
+      </nav>
+      <div class="session-heading">项目会话</div>
+      <div class="session-list">
         <button
           v-for="item in subscriptions"
           :key="item.id"
-          class="subscription-item"
-          :class="{ selected: selectedId === item.id && !editing }"
           type="button"
+          :class="{ 'session-current': selectedId === item.id }"
+          :disabled="conversationBusy"
           @click="selectSubscription(item.id)"
         >
-          <span class="subscription-title">{{ item.name }}</span>
-          <span class="subscription-query">{{ item.query }}</span>
-          <span class="subscription-foot"
-            ><i :class="{ paused: !item.active }" />{{
-              item.active ? "每周检查中" : "已暂停"
-            }}<small>{{ formatTime(item.lastRunAt) }}</small></span
-          >
+          <Icon :icon="icons.chat" /><span>{{ item.name }}</span>
         </button>
-      </aside>
-
-      <main class="main-panel">
-        <template v-if="editing">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">SEARCH BRIEF</p>
-              <h2>{{ form.id ? "编辑寻找条件" : "告诉我们你想找什么" }}</h2>
-            </div>
-          </div>
-          <div class="editor-card">
-            <div class="editor-grid">
-              <label
-                >条件名称 *<el-input
-                  v-model="form.name"
-                  maxlength="80"
-                  placeholder="例如：东南亚年轻用户向游戏 IP"
-              /></label>
-              <label
-                >合作目标<el-select
-                  v-model="form.goal"
-                  clearable
-                  placeholder="请选择合作目标"
-                  ><el-option
-                    v-for="item in goals"
-                    :key="item"
-                    :label="item"
-                    :value="item" /></el-select
-              ></label>
-              <label class="span-2"
-                >需求描述 *<el-input
-                  v-model="form.query"
-                  type="textarea"
-                  :rows="3"
-                  maxlength="2000"
-                  show-word-limit
-                  placeholder="描述产品、目标受众、联动方式和希望达到的效果"
-              /></label>
-              <label
-                >目标市场<el-select
-                  v-model="form.markets"
-                  multiple
-                  filterable
-                  placeholder="可选择多个市场"
-                  ><el-option
-                    v-for="item in markets"
-                    :key="item"
-                    :label="item"
-                    :value="item" /></el-select
-              ></label>
-              <label
-                >IP 类型<el-select
-                  v-model="form.ipTypes"
-                  multiple
-                  filterable
-                  placeholder="不限类型"
-                  ><el-option
-                    v-for="item in ipTypes"
-                    :key="item"
-                    :label="item"
-                    :value="item" /></el-select
-              ></label>
-              <label class="span-2"
-                >目标受众<el-input
-                  v-model="form.audience"
-                  placeholder="例如：18–30 岁，偏好电竞与手机游戏"
-              /></label>
-              <label class="span-2"
-                >授权费用预算
-                <div class="budget">
-                  <el-select v-model="form.budgetCurrency"
-                    ><el-option label="CNY ¥" value="CNY" /><el-option
-                      label="USD $"
-                      value="USD" /><el-option
-                      label="EUR €"
-                      value="EUR" /></el-select
-                  ><el-input-number
-                    v-model="form.budgetMin"
-                    :min="0"
-                    :controls="false"
-                    placeholder="最低"
-                  /><span>至</span
-                  ><el-input-number
-                    v-model="form.budgetMax"
-                    :min="0"
-                    :controls="false"
-                    placeholder="最高"
-                  /></div
-              ></label>
-            </div>
-            <div class="editor-footer">
-              <span
-                >保存后立即生成推荐；每周一 09:00 检查新匹配并在站内提醒。</span
-              >
-              <div>
-                <el-button
-                  v-if="subscriptions.length"
-                  @click="
-                    editing = false;
-                    activeView = 'all';
-                  "
-                  >取消</el-button
-                ><el-button
-                  class="primary-button"
-                  :loading="saving"
-                  @click="saveSubscription"
-                  >保存并获取推荐 →</el-button
-                >
-              </div>
-            </div>
-          </div>
-        </template>
-
-        <template v-else>
-          <div class="section-heading result-heading">
-            <div>
-              <p class="eyebrow">RECOMMENDATION FEED</p>
-              <h2>{{ selectedSubscription?.name || "IP 推荐" }}</h2>
-              <p v-if="selectedSubscription" class="heading-hint">
-                {{ selectedSubscription.query }}
+        <p v-if="!subscriptions.length" class="session-empty">
+          项目研究与对话将在这里保留。
+        </p>
+      </div>
+      <button
+        type="button"
+        class="new-session"
+        aria-label="新建会话"
+        :disabled="conversationBusy"
+        @click="startNew"
+      >
+        <Icon :icon="icons.plus" /><span>新建会话</span>
+      </button>
+      <div class="sidebar-bottom">
+        <router-link to="/business/ip/requests"
+          ><Icon :icon="icons.back" />返回工作台</router-link
+        >
+        <button
+          v-if="selectedSubscription"
+          type="button"
+          :disabled="conversationBusy"
+          @click="showConditions"
+        >
+          <Icon :icon="icons.settings" /><span>会话设置</span>
+        </button>
+      </div>
+    </aside>
+    <main class="research-main">
+      <div class="workspace-breadcrumb">IP运营 <span>/</span> AI推荐助手</div>
+      <el-select
+        class="mobile-sessions"
+        :model-value="selectedId || 0"
+        :disabled="conversationBusy"
+        aria-label="选择项目会话"
+        @change="value => (value ? selectSubscription(value) : startNew())"
+        ><el-option label="新建项目会话" :value="0" /><el-option
+          v-for="item in subscriptions"
+          :key="item.id"
+          :label="item.name"
+          :value="item.id"
+      /></el-select>
+      <header class="research-header">
+        <h1>AI 推荐助手</h1>
+        <div class="project-context">
+          <h2>{{ projectLabel }}</h2>
+          <p>
+            {{ criteria.goal || "合作目标待确认"
+            }}<template v-if="criteria.markets?.length">
+              · {{ criteria.markets.join(" / ") }}</template
+            ><template v-if="expectedLaunch">
+              · 预计上线 {{ expectedLaunch }}</template
+            >
+            <router-link
+              v-if="requestId"
+              :to="{ path: '/business/ip/requests', query: { id: requestId } }"
+              >查看原始提需 <Icon :icon="icons.arrow"
+            /></router-link>
+          </p>
+        </div>
+      </header>
+      <nav class="research-stages" aria-label="推荐研究阶段">
+        <button
+          v-for="(label, index) in [
+            '需求理解',
+            '条件确认',
+            '候选研究',
+            '比较决策'
+          ]"
+          :key="label"
+          type="button"
+          :class="{
+            complete: currentStage > index,
+            'stage-current': currentStage === index
+          }"
+          :aria-current="currentStage === index ? 'step' : undefined"
+          :disabled="conversationBusy || (index > 1 && !visibleResults.length)"
+          @click="selectStage(index)"
+        >
+          <span class="stage-dot"
+            ><Icon v-if="currentStage > index" :icon="icons.check" /></span
+          >{{ label }}
+        </button>
+      </nav>
+      <div class="research-context">
+        <button
+          type="button"
+          class="context-title"
+          :aria-expanded="conditionsOpen"
+          @click="conditionsOpen = !conditionsOpen"
+        >
+          <Icon :icon="icons.file" />需求与已确认条件
+        </button>
+        <span>{{ criteriaText }}</span>
+        <button
+          type="button"
+          class="quiet-button"
+          :disabled="conversationBusy"
+          @click="showConditions"
+        >
+          <Icon :icon="icons.edit" />编辑
+        </button>
+        <router-link
+          v-if="requestId"
+          :to="{ path: '/business/ip/requests', query: { id: requestId } }"
+          class="context-link"
+          ><Icon :icon="icons.external" />关联提需</router-link
+        >
+      </div>
+      <div v-if="conditionsOpen" class="expanded-criteria">
+        <p>{{ criteria.query || "尚未填写项目需求" }}</p>
+        <span v-if="criteria.audience">目标受众：{{ criteria.audience }}</span>
+        <span v-if="criteria.product">关联产品：{{ criteria.product }}</span>
+        <button
+          v-if="selectedSubscription"
+          type="button"
+          :disabled="conversationBusy"
+          @click="toggleSubscription(selectedSubscription)"
+        >
+          {{
+            selectedSubscription.active
+              ? "暂停每周检查新匹配"
+              : "开启每周检查新匹配"
+          }}
+        </button>
+      </div>
+      <div class="research-columns">
+        <section class="conversation-panel" aria-label="项目研究对话">
+          <template v-if="!presentation && !conversationBusy">
+            <div class="conversation-welcome">
+              <Icon :icon="icons.spark" />
+              <h2>这次想寻找怎样的合作 IP？</h2>
+              <p>
+                描述项目方向，或带入已有提需与资料。我们会一起确认偏好，再寻找值得进一步评估的候选。
               </p>
-            </div>
-            <div v-if="selectedSubscription" class="heading-actions">
-              <el-button @click="editSubscription(selectedSubscription)"
-                >编辑条件</el-button
-              ><el-button :loading="running" @click="runNow"
-                >立即刷新</el-button
-              >
-            </div>
-          </div>
-          <div v-if="selectedSubscription" class="result-toolbar">
-            <div class="view-tabs">
+              <div class="entry-actions">
+                <button type="button" @click="showConditions">
+                  <Icon :icon="icons.file" />填写 / 关联提需</button
+                ><button type="button" @click="attachmentInput?.click()">
+                  <Icon :icon="icons.attach" />上传需求资料
+                </button>
+              </div>
               <button
                 type="button"
-                :class="{ active: activeView === 'new' }"
-                @click="activeView = 'new'"
+                class="welcome-example"
+                @click="
+                  composerText =
+                    '为新品寻找合作IP，重点是沉浸体验和设计表达，优先东南亚市场。'
+                "
               >
-                本周新推荐 <b>{{ newCount }}</b></button
-              ><button
-                type="button"
-                :class="{ active: activeView === 'all' }"
-                @click="activeView = 'all'"
-              >
-                全部结果</button
-              ><button
-                type="button"
-                :class="{ active: activeView === 'subscriptions' }"
-                @click="activeView = 'subscriptions'"
-              >
-                条件管理
+                试试：为新品寻找设计与沉浸体验方向的 IP
+                <Icon :icon="icons.arrow" />
               </button>
             </div>
-            <span>{{
-              activeView === "subscriptions" ? "管理自动检查" : resultCountText
+          </template>
+          <button
+            v-if="conversationMessages.length > 2"
+            type="button"
+            class="history-toggle"
+            :aria-expanded="historyOpen"
+            @click="historyOpen = !historyOpen"
+          >
+            {{
+              historyOpen
+                ? "收起历史对话"
+                : `查看历史对话 · ${conversationMessages.length - 2} 条`
+            }}
+          </button>
+          <div v-if="historyOpen" class="conversation-history">
+            <div
+              v-for="(message, index) in conversationMessages.slice(0, -2)"
+              :key="index"
+              :class="message.role"
+            >
+              <small
+                >{{
+                  message.role === "user"
+                    ? "我"
+                    : message.presentation?.source === "ai"
+                      ? "AI推荐助手"
+                      : "规则建议"
+                }}
+                · {{ formatTime(message.createdAt) }}</small
+              >
+              <p>{{ message.content }}</p>
+            </div>
+          </div>
+          <div v-if="latestUser" class="user-message">
+            <small
+              >我
+              <time>{{
+                formatTime(latestUser.createdAt).slice(-5)
+              }}</time></small
+            >
+            <p>{{ latestUser.content }}</p>
+          </div>
+          <article
+            v-if="presentation"
+            class="assistant-message"
+            aria-live="polite"
+          >
+            <div class="assistant-identity">
+              <span>{{ presentation.source === "ai" ? "AI" : "规则" }}</span
+              ><strong>{{
+                presentation.source === "ai" ? "AI 推荐助手" : "规则合作建议"
+              }}</strong
+              ><time v-if="latestAssistant">{{
+                formatTime(latestAssistant.createdAt).slice(-5)
+              }}</time>
+            </div>
+            <div class="assistant-content">
+              <h2>{{ presentation.headline }}</h2>
+              <p class="recommendation-explanation">
+                {{ presentation.explanation }}
+              </p>
+              <div v-if="evidenceCandidates.length" class="judgment-sources">
+                <button
+                  v-for="item in evidenceCandidates"
+                  :key="item.resourceId"
+                  type="button"
+                  @click="openResourceDrawer(item.resourceId)"
+                >
+                  <Icon :icon="icons.file" />{{ item.resourceName }} · 库内资料
+                </button>
+              </div>
+              <div v-if="presentation.basis?.length" class="judgment-basis">
+                <h3>判断依据</h3>
+                <dl>
+                  <div v-for="row in presentation.basis" :key="row.label">
+                    <dt>{{ row.label }}</dt>
+                    <dd>{{ row.value }}</dd>
+                  </div>
+                </dl>
+              </div>
+              <div
+                v-if="presentation.questions?.length"
+                class="clarification-questions"
+              >
+                <h3>还需要确认</h3>
+                <p v-for="question in presentation.questions" :key="question">
+                  {{ question }}
+                </p>
+              </div>
+              <div
+                v-if="presentation.adjustments?.length"
+                class="round-adjustments"
+              >
+                <strong>本轮调整</strong>
+                <div>
+                  <p>{{ presentation.adjustments.join(" · ") }}</p>
+                  <small>具体授权范围、报价与档期仍需版权方确认。</small>
+                </div>
+              </div>
+              <div
+                v-if="
+                  evidenceCandidates.some(
+                    item => evidenceItems(item.evidence).length
+                  )
+                "
+                class="external-evidence"
+              >
+                <h3>公开背景资料</h3>
+                <template
+                  v-for="item in evidenceCandidates"
+                  :key="item.resourceId"
+                  ><a
+                    v-for="(source, index) in evidenceItems(item.evidence)"
+                    :key="`${item.id}-${index}`"
+                    :href="safeExternalUrl(source.url)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >{{ source.title || source.source }}
+                    <Icon :icon="icons.external" /></a></template
+                ><small>用于核对一般背景，授权与报价以版权方确认为准。</small>
+              </div>
+            </div>
+          </article>
+          <div
+            v-if="conversationBusy"
+            class="conversation-progress"
+            role="status"
+          >
+            <Icon :icon="icons.spark" /><span>{{
+              currentStage < 2
+                ? "正在理解项目需求与偏好…"
+                : "正在核对资料并整理推荐判断…"
             }}</span>
           </div>
-
-          <div v-if="!selectedSubscription" class="empty-state">
-            <strong>从一个寻找条件开始</strong>
-            <p>
-              告诉系统你需要的市场、受众和授权预算，推荐将基于真实 IP 档案生成。
-            </p>
-            <el-button class="primary-button" @click="startNew"
-              >创建寻找条件</el-button
+          <div
+            v-if="presentation?.suggestedPrompts?.length"
+            class="follow-up-actions"
+          >
+            <button
+              v-for="text in presentation.suggestedPrompts"
+              :key="text"
+              type="button"
+              :disabled="conversationBusy"
+              @click="followUp(text)"
             >
+              {{ text }}
+            </button>
+          </div>
+          <div v-if="conversationError" class="conversation-error" role="alert">
+            <p>{{ conversationError }}</p>
+            <button type="button" @click="retryConversation">重试</button>
+          </div>
+          <div class="conversation-composer">
+            <textarea
+              v-model="composerText"
+              :disabled="conversationBusy || attachmentReading"
+              maxlength="1200"
+              rows="2"
+              aria-label="继续描述或调整项目需求"
+              placeholder="继续追问，调整偏好，或补充项目资料…"
+              @keydown="composerKeydown"
+            />
+            <div v-if="attachment" class="attached-document">
+              <Icon :icon="icons.file" /><span>{{ attachment.name }}</span
+              ><button
+                type="button"
+                aria-label="移除资料"
+                @click="attachment = null"
+              >
+                <Icon :icon="icons.close" />
+              </button>
+            </div>
+            <div class="composer-actions">
+              <button
+                type="button"
+                :disabled="conversationBusy || attachmentReading"
+                @click="attachmentInput?.click()"
+              >
+                <Icon :icon="icons.attach" />{{
+                  attachmentReading ? "正在读取资料…" : "添加资料"
+                }}</button
+              ><span>Ctrl / ⌘ + Enter 发送</span
+              ><button
+                type="button"
+                class="send-message"
+                :disabled="
+                  conversationBusy ||
+                  attachmentReading ||
+                  (!composerText.trim() && !attachment && !criteria.query)
+                "
+                aria-label="发送需求或调整偏好"
+                @click="sendMessage"
+              >
+                <Icon :icon="icons.arrow" />
+              </button>
+            </div>
+            <input
+              ref="attachmentInput"
+              type="file"
+              class="attachment-input"
+              accept=".pdf,.txt,.md,.csv,.xlsx,.xls"
+              @change="readAttachment"
+            />
+          </div>
+          <p class="composer-note">
+            支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。
+          </p>
+        </section>
+        <section
+          class="cooperation-workbench"
+          aria-label="候选对比与意向工作区"
+        >
+          <div class="workbench-heading">
+            <h2>合作工作区</h2>
+            <button
+              v-if="selectedSubscription"
+              type="button"
+              class="quiet-button"
+              :disabled="conversationBusy"
+              aria-label="重新推荐"
+              @click="converse('recommend', '按当前条件重新推荐')"
+            >
+              <Icon :icon="icons.refresh" />
+            </button>
+          </div>
+          <div class="workbench-toolbar">
+            <div
+              class="workbench-tabs"
+              role="tablist"
+              aria-label="合作工作区视图"
+            >
+              <button
+                id="candidate-tab"
+                type="button"
+                role="tab"
+                :aria-selected="workbenchTab === 'candidates'"
+                aria-controls="candidate-workspace"
+                :class="{ active: workbenchTab === 'candidates' }"
+                @click="workbenchTab = 'candidates'"
+              >
+                候选 <b>{{ visibleResults.length }}</b>
+              </button>
+              <button
+                id="compare-tab"
+                type="button"
+                role="tab"
+                :aria-selected="workbenchTab === 'compare'"
+                aria-controls="compare-workspace"
+                :class="{ active: workbenchTab === 'compare' }"
+                @click="workbenchTab = 'compare'"
+              >
+                对比 <b>{{ comparison.length }}</b>
+              </button>
+              <button
+                id="intent-tab"
+                type="button"
+                role="tab"
+                :aria-selected="workbenchTab === 'intent'"
+                aria-controls="intent-workspace"
+                :class="{ active: workbenchTab === 'intent' }"
+                @click="workbenchTab = 'intent'"
+              >
+                意向 <b>{{ chosenIds.length }}</b>
+              </button>
+            </div>
+            <button
+              v-if="workbenchTab === 'compare' && comparison.length >= 2"
+              type="button"
+              class="compare-research"
+              :disabled="conversationBusy"
+              @click="
+                converse(
+                  'compare',
+                  `比较${comparison.map(item => item.resourceName).join('和')}，哪个更适合这次需求？`
+                )
+              "
+            >
+              AI 对比判断 <Icon :icon="icons.arrow" />
+            </button>
+          </div>
+          <div v-if="!visibleResults.length" class="workbench-empty">
+            <Icon :icon="icons.library" />
+            <h3>
+              {{
+                selectedSubscription
+                  ? "确认条件，开始寻找候选"
+                  : "候选将在这里呈现"
+              }}
+            </h3>
+            <p>
+              对话用于理解与调整需求，工作区用于查看资料、比较候选和形成意向。
+            </p>
+            <button
+              v-if="selectedSubscription"
+              type="button"
+              class="workspace-primary"
+              :disabled="conversationBusy"
+              @click="converse('recommend', '确认当前需求并开始推荐')"
+            >
+              确认并开始推荐 <Icon :icon="icons.arrow" />
+            </button>
           </div>
           <div
-            v-else-if="activeView === 'subscriptions'"
-            class="management-card"
+            v-else-if="workbenchTab === 'candidates'"
+            id="candidate-workspace"
+            role="tabpanel"
+            aria-labelledby="candidate-tab"
+            class="candidate-workspace"
           >
-            <div>
-              <h3>{{ selectedSubscription.name }}</h3>
-              <p>{{ selectedSubscription.query }}</p>
-              <small
-                >最近检查：{{ formatTime(selectedSubscription.lastRunAt) }} ·
-                {{
-                  selectedSubscription.active ? "每周检查中" : "已暂停"
-                }}</small
-              >
-            </div>
-            <div class="management-actions">
-              <el-button @click="toggleSubscription(selectedSubscription)">{{
-                selectedSubscription.active ? "暂停提醒" : "恢复提醒"
-              }}</el-button
-              ><el-button
-                type="danger"
-                plain
-                @click="removeSubscription(selectedSubscription)"
-                >删除条件</el-button
-              >
-            </div>
-          </div>
-          <div v-else v-loading="loading" class="results">
-            <div v-if="!visibleResults.length" class="empty-state">
-              <strong>{{
-                activeView === "new" ? "本周暂无新推荐" : "暂无符合条件的 IP"
-              }}</strong>
-              <p>可调整市场、类型或预算，也可以立即刷新再检查资源库。</p>
-              <el-button @click="editSubscription(selectedSubscription)"
-                >调整寻找条件</el-button
-              >
-            </div>
+            <p class="workspace-hint">
+              选择候选查看资料，可同时对比 2 至 3 个 IP。
+            </p>
             <article
               v-for="item in visibleResults"
               :id="`ip-recommendation-${item.id}`"
               :key="item.id"
-              class="result-card"
-              :class="{ focused: Number(route.query.resultId) === item.id }"
+              class="candidate-row"
+              :class="{
+                selected: currentCandidate?.resourceId === item.resourceId
+              }"
             >
-              <div class="result-visual">
+              <button
+                type="button"
+                class="candidate-select"
+                :aria-label="`查看${item.resourceName}推荐依据`"
+                @click="activeCandidateId = item.resourceId"
+              >
                 <img
                   v-if="imageUrls[Number(item.resource?.visualFileId)]"
                   :src="imageUrls[Number(item.resource.visualFileId)]"
                   :alt="item.resourceName"
-                /><span v-else>{{
-                  item.resourceName?.slice(0, 2) || "IP"
-                }}</span>
-              </div>
-              <div class="result-main">
-                <div class="result-topline">
-                  <div>
-                    <span v-if="item.isNew" class="new-pill">NEW</span
-                    ><span class="score-pill">规则匹配 {{ item.score }}%</span
-                    ><span class="source-pill">{{
-                      item.source === "ai" ? "AI 排序" : "规则推荐"
-                    }}</span>
-                  </div>
-                  <time>{{ formatTime(item.createdAt) }}</time>
-                </div>
-                <h3>{{ item.resourceName }}</h3>
-                <p class="resource-meta">
-                  {{ item.resource?.ipType || "类型待完善" }} ·
-                  {{
-                    parseTextArray(item.resource?.markets).join(" / ") ||
-                    "市场待完善"
-                  }}
-                  · {{ item.resource?.cooperationStatus || "合作状态待确认" }}
-                </p>
-                <p class="reason">
-                  <b>规则匹配依据</b>{{ item.reason || "符合当前寻找条件" }}
-                </p>
-                <section
-                  v-if="
-                    item.advice?.trim() || scenarioItems(item.scenarios).length
-                  "
-                  class="ai-advice"
-                  :aria-label="adviceHeading(item)"
+                /><span v-else class="visual-empty"
+                  ><Icon :icon="icons.image" /><small>暂无视觉资料</small></span
+                ><span class="candidate-copy"
+                  ><strong>{{ item.resourceName }}</strong
+                  ><small>{{ item.resource?.ipType || "类型待完善" }}</small
+                  ><span>{{ item.assessment?.fit || item.reason }}</span></span
                 >
-                  <div class="ai-advice-heading">
-                    <b>{{ adviceHeading(item) }}</b>
-                    <span>结合寻找条件与可用资料</span>
-                  </div>
-                  <p v-if="item.advice?.trim()">{{ item.advice }}</p>
-                  <div
-                    v-if="scenarioItems(item.scenarios).length"
-                    class="scenario-list"
-                  >
-                    <span class="scenario-label">适用场景</span>
-                    <ul>
-                      <li
-                        v-for="(scenario, index) in scenarioItems(
-                          item.scenarios
-                        )"
-                        :key="`${item.id}-${index}`"
-                      >
-                        {{ scenario }}
-                      </li>
-                    </ul>
-                  </div>
-                </section>
-                <div v-else class="advice-empty">
-                  <span>{{
-                    item.source === "ai"
-                      ? "该历史结果仅由 AI 排序，尚无合作建议。"
-                      : "该历史结果尚无合作建议。"
-                  }}</span>
-                  <button type="button" :disabled="running" @click="runNow">
-                    立即刷新建议 →
-                  </button>
-                </div>
-                <section class="evidence-section" aria-label="外部背景资料">
-                  <b>外部背景资料（供核对）</b>
-                  <ul v-if="evidenceItems(item.evidence).length">
-                    <li
-                      v-for="(evidence, index) in evidenceItems(item.evidence)"
-                      :key="`${item.id}-evidence-${index}`"
-                    >
-                      <a
-                        v-if="safeExternalUrl(evidence.url)"
-                        :href="safeExternalUrl(evidence.url)"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        >{{ evidence.title || evidence.source }} ↗</a
-                      >
-                      <span v-else>{{
-                        evidence.title || evidence.source
-                      }}</span>
-                      <small>
-                        {{ evidence.source || "来源未注明" }}
-                        <template v-if="evidence.publishedAt">
-                          ·
-                          {{
-                            String(evidence.publishedAt).slice(0, 10)
-                          }}</template
-                        >
-                      </small>
-                      <p v-if="evidence.summary">{{ evidence.summary }}</p>
-                    </li>
-                  </ul>
-                  <p
-                    v-if="evidenceItems(item.evidence).length"
-                    class="evidence-context"
-                  >
-                    公开资料仅供背景参考，授权范围与报价以版权方确认为准。
-                  </p>
-                  <p v-else class="evidence-empty">
-                    {{ evidenceEmptyText(item) }}
-                  </p>
-                </section>
-                <div v-if="riskItems(item.risks).length" class="risk">
-                  <b>待关注</b>{{ riskItems(item.risks).join("；") }}
-                </div>
-                <div class="resource-footer">
-                  <span
-                    >基础权益参考价
-                    <strong>{{ priceText(item.resource || {}) }}</strong></span
-                  ><span
-                    v-if="
-                      item.resource?.currency &&
-                      selectedSubscription?.budgetCurrency &&
-                      item.resource.currency !==
-                        selectedSubscription.budgetCurrency
-                    "
-                    class="currency-note"
-                    >币种不同，价格需另行确认</span
-                  >
-                </div>
-                <div class="card-actions">
-                  <button
-                    type="button"
-                    class="detail-link"
-                    @click="openResourceDrawer(item.resourceId)"
-                  >
-                    查看档案与版权资料 ↗
-                  </button>
-                  <div>
-                    <el-button
-                      v-if="item.feedback !== 'interested'"
-                      link
-                      @click="feedback(item, 'interested')"
-                      >感兴趣</el-button
-                    ><el-button link @click="feedback(item, 'not_interested')"
-                      >不感兴趣</el-button
-                    ><el-button
-                      class="primary-button"
-                      size="small"
-                      @click="addToIntent(item)"
-                      >加入初步意向 →</el-button
-                    >
-                  </div>
-                </div>
+              </button>
+              <div class="candidate-row-actions">
+                <label
+                  ><input
+                    type="checkbox"
+                    :checked="compareIds.includes(item.resourceId)"
+                    @change="toggleCompare(item)"
+                  />加入对比</label
+                ><button
+                  type="button"
+                  @click="openResourceDrawer(item.resourceId)"
+                >
+                  资料 <Icon :icon="icons.arrow" /></button
+                ><button
+                  type="button"
+                  :disabled="conversationBusy"
+                  @click="feedback(item, 'not_interested')"
+                >
+                  不感兴趣</button
+                ><button type="button" @click="queueIntent(item)">
+                  {{
+                    chosenIds.includes(item.resourceId)
+                      ? "已加入意向"
+                      : "加入意向"
+                  }}
+                </button>
               </div>
             </article>
+            <div v-if="currentCandidate" class="candidate-details">
+              <h3>{{ currentCandidate.resourceName }} · 合作方向</h3>
+              <p>
+                {{
+                  currentCandidate.assessment?.verdict ||
+                  currentCandidate.advice ||
+                  currentCandidate.reason
+                }}
+              </p>
+              <dl>
+                <div>
+                  <dt>合作切入</dt>
+                  <dd>{{ comparisonValue(currentCandidate, "entry") }}</dd>
+                </div>
+                <div>
+                  <dt>待确认</dt>
+                  <dd>{{ comparisonValue(currentCandidate, "pending") }}</dd>
+                </div>
+                <div>
+                  <dt>权益参考价</dt>
+                  <dd>{{ priceText(currentCandidate.resource || {}) }}</dd>
+                </div>
+              </dl>
+            </div>
+            <button
+              type="button"
+              class="workspace-primary"
+              :disabled="comparison.length < 2 || conversationBusy"
+              @click="
+                converse(
+                  'compare',
+                  `比较${comparison.map(item => item.resourceName).join('和')}，哪个更适合这次需求？`
+                )
+              "
+            >
+              对比已选 {{ comparison.length }} 个 <Icon :icon="icons.arrow" />
+            </button>
           </div>
-        </template>
-      </main>
-    </div>
+          <div
+            v-else-if="workbenchTab === 'compare'"
+            id="compare-workspace"
+            role="tabpanel"
+            aria-labelledby="compare-tab"
+            class="compare-workspace"
+          >
+            <template v-if="comparison.length >= 2">
+              <div
+                class="comparison-media"
+                :style="{ '--compare-count': comparison.length }"
+              >
+                <div v-for="item in comparison" :key="item.resourceId">
+                  <button
+                    type="button"
+                    @click="openResourceDrawer(item.resourceId)"
+                  >
+                    <img
+                      v-if="imageUrls[Number(item.resource?.visualFileId)]"
+                      :src="imageUrls[Number(item.resource.visualFileId)]"
+                      :alt="item.resourceName"
+                    /><span v-else class="visual-empty"
+                      ><Icon :icon="icons.image" /><small
+                        >暂无视觉资料</small
+                      ></span
+                    ><strong>{{ item.resourceName }}</strong
+                    ><small>{{ item.resource?.ipType || "类型待完善" }}</small>
+                  </button>
+                </div>
+              </div>
+              <div class="comparison-table-wrap">
+                <table class="comparison-table">
+                  <caption class="sr-only">
+                    按当前需求比较候选 IP
+                  </caption>
+                  <thead class="sr-only">
+                    <tr>
+                      <th>对比维度</th>
+                      <th v-for="item in comparison" :key="item.resourceId">
+                        {{ item.resourceName }}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="field in comparisonFields" :key="field.key">
+                      <th scope="row">{{ field.label }}</th>
+                      <td v-for="item in comparison" :key="item.resourceId">
+                        {{ comparisonValue(item, field.key) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+            <div v-else class="comparison-empty">
+              <p>请先选择至少 2 个候选进行对比。</p>
+              <button type="button" @click="workbenchTab = 'candidates'">
+                选择候选 <Icon :icon="icons.arrow" />
+              </button>
+            </div>
+            <div
+              v-if="
+                visibleResults.some(
+                  item => !compareIds.includes(item.resourceId)
+                )
+              "
+              class="other-candidates"
+            >
+              <h3>其他候选</h3>
+              <button
+                v-for="item in visibleResults
+                  .filter(item => !compareIds.includes(item.resourceId))
+                  .slice(0, 2)"
+                :key="item.resourceId"
+                type="button"
+                @click="
+                  activeCandidateId = item.resourceId;
+                  workbenchTab = 'candidates';
+                "
+              >
+                <img
+                  v-if="imageUrls[Number(item.resource?.visualFileId)]"
+                  :src="imageUrls[Number(item.resource.visualFileId)]"
+                  :alt="item.resourceName"
+                /><span
+                  ><strong>{{ item.resourceName }}</strong
+                  ><small>{{
+                    item.assessment?.fit || item.reason
+                  }}</small></span
+                ><Icon :icon="icons.arrow" />
+              </button>
+            </div>
+          </div>
+          <div
+            v-else
+            id="intent-workspace"
+            role="tabpanel"
+            aria-labelledby="intent-tab"
+            class="intent-workspace"
+          >
+            <p v-if="!chosenIds.length">还未加入初步意向，请从候选中选择。</p>
+            <div
+              v-for="item in intentItems"
+              :key="item.resourceId"
+              class="intent-row"
+            >
+              <Icon :icon="icons.check" /><img
+                v-if="imageUrls[Number(item.resource?.visualFileId)]"
+                :src="imageUrls[Number(item.resource.visualFileId)]"
+                :alt="item.resourceName"
+              />
+              <div>
+                <strong>{{ item.resourceName }}</strong
+                ><small>{{ item.assessment?.fit || item.reason }}</small>
+              </div>
+              <button type="button" @click="removeIntent(item.resourceId)">
+                移除
+              </button>
+            </div>
+            <p
+              v-if="chosenIds.length > intentItems.length"
+              class="workspace-hint"
+            >
+              包含
+              {{ chosenIds.length - intentItems.length }} 个当前推荐之外的已选
+              IP，返回提需可查看完整清单。
+            </p>
+          </div>
+          <div v-if="visibleResults.length" class="workbench-footer">
+            <div v-if="workbenchTab !== 'intent'" class="intent-preview">
+              <h3>初步意向 · {{ chosenIds.length }}</h3>
+              <div v-if="intentItems.length" class="intent-row">
+                <Icon :icon="icons.check" /><img
+                  v-if="
+                    imageUrls[Number(intentItems[0].resource?.visualFileId)]
+                  "
+                  :src="imageUrls[Number(intentItems[0].resource.visualFileId)]"
+                  :alt="intentItems[0].resourceName"
+                />
+                <div>
+                  <strong>{{ intentItems[0].resourceName }}</strong
+                  ><small>{{
+                    intentItems[0].assessment?.fit || intentItems[0].reason
+                  }}</small>
+                </div>
+                <button type="button" @click="workbenchTab = 'intent'">
+                  查看
+                </button>
+              </div>
+              <p v-else>选择候选，形成待评估的合作方向。</p>
+            </div>
+            <div class="handoff-actions">
+              <div>
+                <p class="handoff-note">下一步由 IP 组核对授权与合作条件</p>
+                <router-link to="/business/ip/requests">返回提需</router-link>
+              </div>
+              <button
+                type="button"
+                class="workspace-primary"
+                @click="confirmIntent"
+              >
+                {{ chosenIds.length ? "确认初步意向" : "加入初步意向" }}
+                <Icon :icon="icons.arrow" />
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+    <el-dialog
+      v-model="editing"
+      class="ip-workspace-dialog"
+      title="需求与推荐条件"
+      width="680px"
+      :close-on-click-modal="false"
+      ><div class="condition-editor">
+        <div class="editor-card">
+          <div class="editor-grid">
+            <label
+              >条件名称 *<el-input
+                v-model="form.name"
+                maxlength="80"
+                placeholder="例如：东南亚年轻用户向游戏 IP"
+            /></label>
+            <label
+              >合作目标<el-select
+                v-model="form.goal"
+                clearable
+                placeholder="请选择合作目标"
+                ><el-option
+                  v-for="item in goals"
+                  :key="item"
+                  :label="item"
+                  :value="item" /></el-select
+            ></label>
+            <label class="span-2"
+              >需求描述 *<el-input
+                v-model="form.query"
+                type="textarea"
+                :rows="3"
+                maxlength="2000"
+                show-word-limit
+                placeholder="描述产品、目标受众、联动方式和希望达到的效果"
+            /></label>
+            <label
+              >目标市场<el-select
+                v-model="form.markets"
+                multiple
+                filterable
+                placeholder="可选择多个市场"
+                ><el-option
+                  v-for="item in markets"
+                  :key="item"
+                  :label="item"
+                  :value="item" /></el-select
+            ></label>
+            <label
+              >IP 类型<el-select
+                v-model="form.ipTypes"
+                multiple
+                filterable
+                placeholder="不限类型"
+                ><el-option
+                  v-for="item in ipTypes"
+                  :key="item"
+                  :label="item"
+                  :value="item" /></el-select
+            ></label>
+            <label class="span-2"
+              >目标受众<el-input
+                v-model="form.audience"
+                placeholder="例如：18–30 岁，偏好电竞与手机游戏"
+            /></label>
+            <label class="span-2"
+              >授权费用预算
+              <div class="budget">
+                <el-select v-model="form.budgetCurrency"
+                  ><el-option label="CNY ¥" value="CNY" /><el-option
+                    label="USD $"
+                    value="USD" /><el-option
+                    label="EUR €"
+                    value="EUR" /></el-select
+                ><el-input-number
+                  v-model="form.budgetMin"
+                  :min="0"
+                  :controls="false"
+                  placeholder="最低"
+                /><span>至</span
+                ><el-input-number
+                  v-model="form.budgetMax"
+                  :min="0"
+                  :controls="false"
+                  placeholder="最高"
+                /></div
+            ></label>
+          </div>
+          <label class="excluded-types"
+            >排除的IP类型<el-select
+              v-model="form.excludedIPTypes"
+              multiple
+              clearable
+              placeholder="选择明确不考虑的类型"
+              ><el-option
+                v-for="kind in ipTypes"
+                :key="kind"
+                :label="kind"
+                :value="kind" /></el-select
+          ></label>
+          <div class="editor-footer">
+            <span
+              >保存后立即生成推荐；开启每周检查时，每周一 09:00
+              检查新匹配。</span
+            >
+            <div>
+              <el-button
+                v-if="subscriptions.length"
+                @click="
+                  editing = false;
+                  activeView = 'all';
+                "
+                >取消</el-button
+              ><el-button
+                class="primary-button"
+                :loading="saving"
+                @click="saveSubscription"
+                >保存并获取推荐 →</el-button
+              >
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="selectedSubscription" class="conversation-management">
+        <span>{{
+          selectedSubscription.active
+            ? "每周检查新匹配已开启"
+            : "每周检查新匹配已暂停"
+        }}</span
+        ><el-button link @click="toggleSubscription(selectedSubscription)">{{
+          selectedSubscription.active ? "暂停" : "开启"
+        }}</el-button
+        ><el-button
+          link
+          type="danger"
+          @click="
+            removeSubscription(selectedSubscription);
+            editing = false;
+          "
+          >删除会话</el-button
+        >
+      </div></el-dialog
+    >
     <el-drawer v-model="drawerVisible" title="IP 档案与授权资料" size="500px">
       <div v-loading="drawerLoading" class="resource-drawer">
         <template v-if="drawerDetail">
@@ -1160,6 +1985,7 @@ onUnmounted(() => {
     </el-drawer>
     <el-dialog
       v-model="previewVisible"
+      class="ip-workspace-dialog"
       :title="previewFileName"
       width="80%"
       top="5vh"
@@ -1208,581 +2034,36 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.ip-recommend-page {
-  min-height: calc(100vh - 150px);
-  padding: 22px 28px 40px;
-  color: #17191d;
-  background: #f8f8f6;
-}
-.hero {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 28px 32px;
-  margin-bottom: 18px;
-  background: linear-gradient(115deg, #fff 36%, #f0f6e4 100%);
-  border: 1px solid #dedfdb;
-  border-radius: 12px;
-}
-.eyebrow {
-  margin: 0 0 8px;
-  font-family: monospace;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-  color: #697352;
-}
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: 32px;
-  letter-spacing: -0.03em;
-}
-.hero-description,
-.heading-hint {
-  margin: 0;
-  color: #717981;
-}
-.context-pill {
-  display: inline-block;
-  padding: 5px 11px;
-  margin: 12px 0 0;
-  font-size: 12px;
-  background: #e8efdc;
-  border-radius: 20px;
-}
-.hero-actions {
-  display: flex;
-  align-items: flex-end;
-  gap: 20px;
-}
-.hero-stat {
-  display: flex;
-  flex-direction: column;
-  text-align: right;
-}
-.hero-stat strong {
-  font-size: 31px;
-  line-height: 1;
-}
-.hero-stat span {
-  font-size: 12px;
-  color: #717981;
-}
-.primary-button {
-  font-weight: 700;
-  color: #111 !important;
-  background: #caff00 !important;
-  border-color: #caff00 !important;
-}
-.primary-button:hover {
-  background: #b7eb00 !important;
-}
-.workspace {
-  display: grid;
-  grid-template-columns: 270px minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
-}
-.subscription-panel,
-.main-panel {
-  min-width: 0;
-  padding: 18px;
-  background: #fff;
-  border: 1px solid #dedfdb;
-  border-radius: 10px;
-  box-shadow: 0 2px 10px #20240b06;
-}
-.subscription-panel {
-  position: sticky;
-  top: 14px;
-}
-.section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.section-heading h2 {
-  margin: 0;
-  font-size: 19px;
-}
-.section-heading > span {
-  color: #91999d;
-}
-.sidebar-empty {
-  padding: 20px 8px;
-  font-size: 13px;
-  line-height: 1.7;
-  color: #8a9294;
-}
-.subscription-item {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  padding: 13px;
-  margin: 0 0 8px;
-  text-align: left;
-  cursor: pointer;
-  background: #f8f9f6;
-  border: 1px solid transparent;
-  border-radius: 8px;
-}
-.subscription-item:hover,
-.subscription-item.selected {
-  background: #f6fbdc;
-  border-color: #d2e782;
-}
-.subscription-title {
-  font-weight: 700;
-}
-.subscription-query {
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 6px 0 10px;
-  font-size: 12px;
-  color: #777e86;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-.subscription-foot {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: #58633f;
-}
-.subscription-foot i {
-  width: 7px;
-  height: 7px;
-  background: #7daf00;
-  border-radius: 50%;
-}
-.subscription-foot i.paused {
-  background: #aaa;
-}
-.subscription-foot small {
-  margin-left: auto;
-  color: #a4aaac;
-}
-.main-panel {
-  min-height: 450px;
-}
-.editor-card {
-  padding: 4px;
-}
-.editor-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-.editor-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  font-size: 13px;
-  font-weight: 650;
-}
-.editor-grid label :deep(.el-select),
-.editor-grid label :deep(.el-input),
-.editor-grid label :deep(.el-textarea) {
-  width: 100%;
-}
-.span-2 {
-  grid-column: span 2;
-}
-.budget {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.budget :deep(.el-select) {
-  max-width: 125px;
-}
-.budget :deep(.el-input-number) {
-  flex: 1;
-  width: 0;
-}
-.budget > span {
-  color: #858c90;
-}
-.editor-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding-top: 20px;
-  margin-top: 20px;
-  border-top: 1px solid #e6e7e2;
-}
-.editor-footer > span {
-  font-size: 12px;
-  color: #80878a;
-}
-.editor-footer > div {
-  display: flex;
-  gap: 8px;
-}
-.result-heading {
-  align-items: flex-start;
-}
-.heading-hint {
-  max-width: 700px;
-  margin-top: 8px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-.heading-actions {
-  display: flex;
-  gap: 8px;
-}
-.result-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-  border-bottom: 1px solid #eaebe5;
-}
-.result-toolbar > span {
-  font-size: 12px;
-  color: #838a8d;
-}
-.view-tabs {
-  display: flex;
-  gap: 18px;
-}
-.view-tabs button {
-  padding: 0 2px 12px;
-  color: #7d8588;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-}
-.view-tabs button.active {
-  font-weight: 700;
-  color: #161a1d;
-  border-color: #b0e700;
-}
-.view-tabs b {
-  padding: 2px 5px;
-  margin-left: 4px;
-  font-size: 10px;
-  background: #caff00;
-  border-radius: 10px;
-}
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 260px;
-  text-align: center;
-}
-.empty-state strong {
-  font-size: 17px;
-}
-.empty-state p {
-  max-width: 430px;
-  color: #858d90;
-}
-.management-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 20px;
-  background: #f9faf5;
-  border: 1px solid #e8e9e3;
-  border-radius: 9px;
-}
-.management-card h3 {
-  margin: 0 0 8px;
-}
-.management-card p {
-  margin: 0 0 8px;
-  color: #6b7375;
-}
-.management-card small {
-  color: #8f9798;
-}
-.management-actions {
-  display: flex;
-  gap: 8px;
-}
-.results {
-  display: grid;
-  gap: 14px;
-}
-.result-card {
-  display: grid;
-  grid-template-columns: 158px minmax(0, 1fr);
-  gap: 18px;
-  padding: 14px;
-  border: 1px solid #e2e4de;
-  border-radius: 10px;
-  box-shadow: 0 2px 9px #20240b05;
-}
-.result-card.focused {
-  border-color: #a8d900;
-  box-shadow: 0 0 0 2px #caff0066;
-}
-.result-visual {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 180px;
-  overflow: hidden;
-  font-size: 28px;
-  font-weight: 800;
-  color: #4b6121;
-  background: linear-gradient(135deg, #e9f5cc, #f5f7ed);
-  border-radius: 7px;
-}
-.result-visual img {
-  width: 100%;
-  height: 100%;
-  max-height: 250px;
-  object-fit: cover;
-}
-.result-main {
-  min-width: 0;
-}
-.result-topline,
-.card-actions,
-.resource-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.result-topline > div {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.result-topline time {
-  font-size: 11px;
-  color: #9ba1a2;
-}
-.new-pill,
-.score-pill,
-.source-pill {
-  padding: 3px 7px;
-  font-size: 10px;
-  font-weight: 700;
-  border-radius: 3px;
-}
-.new-pill {
-  color: #1e2608;
-  background: #caff00;
-}
-.score-pill {
-  color: #477000;
-  background: #edf7d6;
-}
-.source-pill {
-  color: #727a7a;
-  background: #f0f1ef;
-}
-.result-card h3 {
-  margin: 10px 0 4px;
-  font-size: 19px;
-}
-.resource-meta {
-  margin: 0 0 11px;
-  font-size: 12px;
-  color: #858d90;
-}
-.reason,
-.risk {
-  display: flex;
-  gap: 8px;
-  margin: 7px 0;
-  font-size: 13px;
-  line-height: 1.6;
-}
-.reason b,
-.risk b {
-  flex: none;
-  color: #5f722b;
-}
-.ai-advice {
-  padding: 12px 14px;
-  margin-top: 12px;
-  background: #f7faed;
-  border-left: 3px solid #b4e600;
-  border-radius: 6px;
-}
-.ai-advice-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-}
-.ai-advice-heading b {
-  font-size: 13px;
-  color: #3e5f0d;
-}
-.ai-advice-heading span,
-.scenario-label {
-  font-size: 11px;
-  color: #7b8374;
-}
-.ai-advice p {
-  margin: 7px 0 0;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-line;
-}
-.scenario-list {
-  display: flex;
-  gap: 10px;
-  margin-top: 9px;
-}
-.scenario-label {
-  flex: none;
-  padding-top: 2px;
-  font-weight: 700;
-}
-.scenario-list ul {
-  display: grid;
-  gap: 4px;
-  padding-left: 16px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.advice-empty {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: #879084;
-}
-.advice-empty button {
-  padding: 0;
-  font-weight: 700;
-  color: #557513;
-  cursor: pointer;
-  background: none;
-  border: 0;
-}
-.advice-empty button:disabled {
-  cursor: wait;
-  opacity: 0.5;
-}
-.evidence-section {
-  padding: 10px 12px;
-  margin-top: 10px;
-  border: 1px solid #e9ebe3;
-  border-radius: 6px;
-}
-.evidence-section > b {
-  font-size: 12px;
-  color: #444e3b;
-}
-.evidence-section ul {
-  display: grid;
-  gap: 9px;
-  padding: 0;
-  margin: 7px 0 0;
-  list-style: none;
-}
-.evidence-section li {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  font-size: 12px;
-}
-.evidence-section a {
-  font-weight: 650;
-  color: #557513;
-  overflow-wrap: anywhere;
-}
-.evidence-section small,
-.evidence-empty {
-  color: #8b9390;
-}
-.evidence-section li p {
-  margin: 2px 0 0;
-  line-height: 1.5;
-  color: #68716c;
-}
-.evidence-context {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: #8b9390;
-}
-.evidence-empty {
-  margin: 6px 0 0;
-  font-size: 12px;
-}
-.risk {
-  color: #c16c35;
-}
-.risk b {
-  color: #c16c35;
-}
-.resource-footer {
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  margin-top: 10px;
-  font-size: 12px;
-  color: #787f80;
-}
-.resource-footer strong {
-  color: #17191d;
-}
-.currency-note {
-  color: #bf742d;
-}
-.card-actions {
-  padding-top: 12px;
-  margin-top: 12px;
-  border-top: 1px solid #eff0eb;
-}
-.detail-link {
-  padding: 0;
-  font-size: 12px;
-  font-weight: 700;
-  color: #557513;
-  cursor: pointer;
-  background: none;
-  border: 0;
-}
-.card-actions > div {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 .resource-drawer {
   min-height: 160px;
   padding: 0 4px 18px;
 }
+
 .drawer-intro {
   display: flex;
   gap: 14px;
   align-items: center;
 }
+
 .drawer-intro img {
   width: 88px;
   height: 88px;
   object-fit: cover;
   border-radius: 8px;
 }
+
 .drawer-intro h2 {
   margin: 0 0 7px;
   font-size: 22px;
 }
+
 .drawer-intro p,
 .drawer-summary,
 .case-row p {
-  color: #777f81;
   line-height: 1.6;
+  color: #777f81;
 }
+
 .drawer-facts {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
@@ -1793,151 +2074,1971 @@ onUnmounted(() => {
   border: 1px solid #e9ebe3;
   border-radius: 8px;
 }
+
 .drawer-facts dt {
   color: #8a9292;
 }
+
 .drawer-facts dd {
   margin: 0;
 }
+
 .drawer-facts small {
   display: block;
   margin-top: 4px;
   color: #999;
 }
+
 .drawer-section {
   padding: 14px 0;
   border-top: 1px solid #e9ebe4;
 }
+
 .drawer-section h3 {
   margin: 0 0 12px;
   font-size: 15px;
 }
+
 .drawer-muted {
   margin: 0;
   font-size: 13px;
   color: #999;
 }
+
 .document-row {
   display: flex;
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
   padding: 9px 10px;
   margin: 7px 0;
   font-size: 12px;
   background: #f6f8f0;
   border-radius: 6px;
 }
+
 .document-row span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .case-row {
   padding: 12px;
   margin-bottom: 10px;
   border: 1px solid #e6e8e0;
   border-radius: 7px;
 }
+
 .case-row p {
   margin: 6px 0;
   font-size: 13px;
 }
+
 .pdf-preview {
   min-height: 240px;
 }
+
 .pdf-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 14px;
 }
+
 .pdf-toolbar a {
   font-size: 13px;
   font-weight: 700;
   color: #567811;
 }
+
 .pdf-canvas {
   min-height: 240px;
   max-height: 72vh;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 12px;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
   background: #f3f4f0;
 }
+
 .pdf-loading {
   margin: 0 0 12px;
   color: #737373;
 }
+
 .pdf-transfer {
   min-height: 100px;
   padding: 24px 16px;
 }
+
 .pdf-transfer p {
   margin: 0 0 14px;
   color: #535a47;
 }
+
 .pdf-canvas :deep(.vue-pdf-embed > div + div) {
   margin-top: 12px;
 }
+
 .pdf-canvas :deep(canvas) {
   display: block;
   max-width: 100%;
   height: auto !important;
   margin: 0 auto;
 }
+
 .pdf-error {
   color: #c3483f;
 }
-@media (max-width: 1000px) {
-  .workspace {
-    grid-template-columns: 1fr;
-  }
-  .subscription-panel {
-    position: static;
-  }
-  .hero,
-  .hero-actions,
-  .editor-footer,
-  .management-card {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .hero-stat {
-    text-align: left;
-  }
-  .result-card {
-    grid-template-columns: 120px minmax(0, 1fr);
-  }
+
+.ip-recommend-page {
+  --workspace-ink: #18201c;
+  --workspace-muted: #687068;
+  --workspace-line: #e3e6df;
+  --workspace-accent: #caff00;
+
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--workspace-ink);
+  background: #fafaf7;
 }
-@media (max-width: 680px) {
-  .ip-recommend-page {
-    padding: 12px;
+
+.ip-recommend-page * {
+  box-sizing: border-box;
+}
+
+.ip-recommend-page :where(button, textarea) {
+  font: inherit;
+}
+
+.ip-recommend-page button {
+  color: inherit;
+  cursor: pointer;
+}
+
+.ip-recommend-page button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ip-recommend-page a {
+  color: #345d75;
+  text-decoration: none;
+  text-underline-offset: 4px;
+}
+
+.ip-recommend-page a:hover {
+  text-decoration: underline;
+}
+
+.ip-recommend-page button:focus-visible,
+.ip-recommend-page a:focus-visible {
+  outline: 2px solid #779500;
+  outline-offset: 4px;
+}
+
+.ip-recommend-page ::selection {
+  color: #18201c;
+  background: #e4f7a0;
+}
+
+.research-sidebar {
+  display: flex;
+  flex: 0 0 207px;
+  flex-direction: column;
+  gap: 0;
+  padding: 24px 14px;
+  overflow-y: auto;
+  color: #e2e8e1;
+  background: #18201c;
+}
+
+.research-brand {
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px 32px;
+  line-height: 1.4;
+}
+
+.research-brand img {
+  width: 114px;
+  height: auto;
+  margin: 8px 0 4px;
+  filter: invert(1);
+}
+
+.research-brand span {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #bec8bd;
+}
+
+.research-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid #374039;
+}
+
+.research-nav a,
+.nav-current {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  color: #dce4da;
+  border-radius: 8px;
+}
+
+.research-nav svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.research-nav a:hover {
+  color: white;
+  text-decoration: none;
+  background: #263029;
+}
+
+.nav-current {
+  position: relative;
+  font-weight: 600;
+  color: white;
+  background: #2b342e;
+}
+
+.nav-current::before {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 0;
+  width: 2px;
+  content: "";
+  background: var(--workspace-accent);
+}
+
+.session-heading {
+  padding: 24px 12px 12px;
+  font-size: 12px;
+  color: #b3bfb1;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 44vh;
+  overflow-y: auto;
+}
+
+.session-list button,
+.new-session {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  color: #dbe5d8;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 7px;
+}
+
+.session-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.session-list svg,
+.new-session svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+}
+
+.session-list button:hover,
+.session-list .session-current {
+  color: white;
+  background: #2b342e;
+}
+
+.session-empty {
+  padding: 0 12px;
+  font-size: 12px;
+  color: #b3bfb1;
+}
+
+.new-session {
+  margin-top: 12px;
+}
+
+.new-session:hover {
+  background: #2b342e;
+}
+
+.sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px 8px 4px;
+  margin-top: auto;
+}
+
+.sidebar-bottom a,
+.sidebar-bottom button {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  color: #c7d2c3;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+.sidebar-bottom svg {
+  width: 17px;
+  height: 17px;
+}
+
+.research-main {
+  flex: 1;
+  min-width: 0;
+  padding: 18px 28px 32px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #b6c1b0 #fafaf7;
+  scrollbar-width: thin;
+}
+
+.workspace-breadcrumb {
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: #59685c;
+}
+
+.workspace-breadcrumb span {
+  margin: 0 12px;
+  color: #8b958a;
+}
+
+.mobile-sessions {
+  display: none;
+}
+
+.research-header {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.research-header h1 {
+  flex: none;
+  margin: 0;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #111914;
+  letter-spacing: -0.025em;
+}
+
+.project-context {
+  min-width: 0;
+  max-width: 58%;
+  text-align: right;
+}
+
+.project-context h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.project-context p {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: var(--workspace-muted);
+}
+
+.project-context a {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-left: 16px;
+  font-size: 12px;
+}
+
+.research-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+  padding: 4px 16px 14px;
+}
+
+.research-stages button {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0;
+  font-size: 13px;
+  background: none;
+  border: 0;
+}
+
+.research-stages button::after {
+  flex: 1;
+  height: 1px;
+  margin-left: 8px;
+  content: "";
+  background: var(--workspace-line);
+}
+
+.research-stages button:last-child::after {
+  display: none;
+}
+
+.stage-dot {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: #18201c;
+  border: 1px solid #919b8c;
+  border-radius: 50%;
+}
+
+.stage-dot svg {
+  width: 14px;
+  height: 14px;
+}
+
+.complete .stage-dot {
+  width: 20px;
+  height: 20px;
+  background: #e9f8bb;
+  border: 0;
+}
+
+.stage-current {
+  font-weight: 600;
+}
+
+.stage-current .stage-dot {
+  background: var(--workspace-accent);
+  border: 2px solid #18201c;
+}
+
+.stage-current::before {
+  position: absolute;
+  bottom: -6px;
+  left: 0;
+  width: 110px;
+  max-width: 100%;
+  height: 2px;
+  content: "";
+  background: var(--workspace-accent);
+}
+
+.research-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: center;
+  padding: 12px 8px;
+  margin-bottom: 8px;
+  border-top: 1px solid var(--workspace-line);
+  border-bottom: 1px solid var(--workspace-line);
+}
+
+.context-title {
+  display: inline-flex;
+  flex: none;
+  gap: 12px;
+  align-items: center;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  background: none;
+  border: 0;
+}
+
+.context-title svg {
+  width: 20px;
+  height: 20px;
+}
+
+.research-context > span {
+  flex: 1;
+  min-width: 180px;
+  font-size: 12px;
+  color: #4d5b50;
+  overflow-wrap: anywhere;
+}
+
+.quiet-button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 4px;
+  color: #526350;
+  background: none;
+  border: 0;
+}
+
+.quiet-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.context-link {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.context-link svg {
+  width: 18px;
+  height: 18px;
+}
+
+.expanded-criteria {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 0 12px 24px;
+  font-size: 13px;
+}
+
+.expanded-criteria p {
+  flex: 0 0 100%;
+  margin: 0;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.expanded-criteria button {
+  padding: 0;
+  color: #526b30;
+  background: none;
+  border: 0;
+}
+
+.research-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(360px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.conversation-panel {
+  min-width: 0;
+  padding: 12px 0 0;
+}
+
+.conversation-welcome {
+  padding: 24px 12px 36px;
+}
+
+.conversation-welcome > svg {
+  width: 32px;
+  height: 32px;
+  color: #62772a;
+}
+
+.conversation-welcome h2 {
+  max-width: 20ch;
+  margin: 20px 0 12px;
+  font-size: 30px;
+  line-height: 1.5;
+  letter-spacing: -0.02em;
+}
+
+.conversation-welcome p {
+  max-width: 52ch;
+  margin: 0;
+  line-height: 1.8;
+  color: var(--workspace-muted);
+}
+
+.entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.entry-actions button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid var(--workspace-line);
+  border-radius: 8px;
+}
+
+.entry-actions svg {
+  width: 18px;
+  height: 18px;
+}
+
+.welcome-example {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 0;
+  margin-top: 28px;
+  color: #526b30 !important;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+.welcome-example svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.history-toggle {
+  display: block;
+  padding: 0;
+  margin: 0 0 16px;
+  font-size: 12px !important;
+  color: #687962 !important;
+  background: none;
+  border: 0;
+}
+
+.conversation-history {
+  max-height: 320px;
+  padding-right: 12px;
+  margin-bottom: 24px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.conversation-history > div {
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  background: #f0f2ed;
+  border-radius: 8px;
+}
+
+.conversation-history > .user {
+  margin-left: 32px;
+}
+
+.conversation-history small {
+  font-size: 11px;
+  color: var(--workspace-muted);
+}
+
+.conversation-history p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.user-message {
+  width: fit-content;
+  max-width: 88%;
+  margin: 0 12px 20px auto;
+}
+
+.user-message small {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  text-align: right;
+}
+
+.user-message time {
+  margin-left: 8px;
+  color: var(--workspace-muted);
+}
+
+.user-message p {
+  padding: 14px 18px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: #edf0ed;
+  border-radius: 10px;
+}
+
+.assistant-identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding-left: 0;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.assistant-identity > span {
+  display: grid;
+  flex: none;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: white;
+  background: #18201c;
+  border: 1px solid #b5d54c;
+  border-radius: 50%;
+}
+
+.assistant-identity time {
+  font-size: 12px;
+  color: var(--workspace-muted);
+}
+
+.assistant-content {
+  padding: 0 12px 0 46px;
+}
+
+.assistant-content > h2 {
+  margin: 0 0 8px;
+  font-size: clamp(24px, 2.4vw, 36px);
+  font-weight: 650;
+  line-height: 1.3;
+  color: #101713;
+  letter-spacing: -0.025em;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.recommendation-explanation {
+  max-width: 52ch;
+  margin: 0;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.judgment-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 12px 0 10px;
+}
+
+.judgment-sources button {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #345d75;
+  background: transparent;
+  border: 1px solid #e5e9e2;
+  border-radius: 6px;
+}
+
+.judgment-sources svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.judgment-basis,
+.clarification-questions,
+.external-evidence {
+  padding-top: 10px;
+  margin-top: 12px;
+  border-top: 1px solid var(--workspace-line);
+}
+
+.assistant-content h3,
+.cooperation-workbench h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.judgment-basis dl {
+  margin: 0;
+}
+
+.judgment-basis dl > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  border-bottom: 1px solid var(--workspace-line);
+}
+
+.judgment-basis dt {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #334431;
+  background: #f1f3ef;
+}
+
+.judgment-basis dd {
+  padding: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.round-adjustments {
+  display: flex;
+  gap: 20px;
+  padding: 12px 0;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.round-adjustments strong {
+  flex: none;
+  font-weight: 500;
+}
+
+.round-adjustments p {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.round-adjustments small {
+  font-size: 12px;
+  color: var(--workspace-muted);
+}
+
+.clarification-questions p {
+  margin: 8px 0;
+  line-height: 1.8;
+}
+
+.external-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.external-evidence svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+}
+
+.external-evidence small {
+  color: var(--workspace-muted);
+}
+
+.follow-up-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 0 46px;
+  margin-top: 12px;
+}
+
+.follow-up-actions button {
+  min-height: 34px;
+  padding: 5px 12px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid #dce1d7;
+  border-radius: 8px;
+}
+
+.follow-up-actions button:hover {
+  background: #eef3e8;
+}
+
+.conversation-progress {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 20px 12px;
+  color: #55653a;
+}
+
+.conversation-progress svg {
+  width: 20px;
+  height: 20px;
+}
+
+.conversation-error {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 12px;
+  font-size: 13px;
+  color: #8c3d2c;
+  background: #fff2ec;
+  border-radius: 8px;
+}
+
+.conversation-error p {
+  flex: 1;
+  margin: 0;
+}
+
+.conversation-error button {
+  padding: 4px 10px;
+  background: white;
+  border: 1px solid #dfb8a7;
+  border-radius: 4px;
+}
+
+.conversation-composer {
+  padding: 16px 16px 12px;
+  margin-top: 18px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 5px 22px #26351b0d;
+}
+
+.conversation-composer:focus-within {
+  outline: 1px solid #879e62;
+}
+
+.conversation-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 50px;
+  max-height: 200px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #18201c;
+  caret-color: #688800;
+  resize: vertical;
+  outline: none;
+  background: transparent;
+  border: 0;
+}
+
+.conversation-composer textarea::placeholder {
+  color: #747c72;
+}
+
+.composer-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.composer-actions button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
+  padding: 0;
+  font-size: 12px;
+  background: none;
+  border: 0;
+}
+
+.composer-actions svg {
+  width: 18px;
+  height: 18px;
+}
+
+.composer-actions > span {
+  margin-left: auto;
+  font-size: 10px;
+  color: #767e72;
+}
+
+.composer-actions .send-message {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 42px;
+  height: 40px;
+  margin-left: auto;
+  color: var(--workspace-accent);
+  background: #18201c;
+  border-radius: 8px;
+}
+
+.send-message svg {
+  width: 24px;
+  height: 24px;
+}
+
+.composer-note {
+  padding: 0 8px;
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: #737c70;
+}
+
+.attachment-input {
+  display: none;
+}
+
+.attached-document {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  background: #f1f4ee;
+  border-radius: 6px;
+}
+
+.attached-document > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.attached-document svg {
+  width: 17px;
+  height: 17px;
+}
+
+.attached-document button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.cooperation-workbench {
+  min-width: 0;
+  padding: 24px 28px;
+  background: #f0f2ec;
+  border-radius: 12px;
+}
+
+.workbench-heading {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.workbench-heading h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
+
+.workbench-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.workbench-tabs {
+  display: flex;
+  gap: 24px;
+  margin: 8px 0 14px;
+}
+
+.workbench-tabs button {
+  min-height: 36px;
+  padding: 0 4px 8px;
+  font-size: 13px;
+  color: #657063;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+}
+
+.workbench-tabs b {
+  margin-left: 8px;
+  font-weight: 400;
+}
+
+.workbench-tabs .active {
+  font-weight: 600;
+  color: #17221a;
+  border-bottom-color: #18201c;
+}
+
+.workbench-tabs .active b {
+  font-weight: 600;
+}
+
+.workbench-empty {
+  padding: 42px 0;
+  text-align: center;
+}
+
+.workbench-empty > svg {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 20px;
+  color: #849177;
+}
+
+.workbench-empty h3 {
+  font-size: 18px;
+}
+
+.workbench-empty p {
+  max-width: 40ch;
+  margin: 10px auto 28px;
+  line-height: 1.8;
+  color: #61715a;
+}
+
+.workspace-hint {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: #64705e;
+}
+
+.candidate-row {
+  padding: 16px 0;
+  border-bottom: 1px solid #dbe1d3;
+}
+
+.candidate-row:first-of-type {
+  padding-top: 0;
+}
+
+.candidate-select {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+.candidate-select img,
+.candidate-select .visual-empty {
+  flex: none;
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.candidate-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.candidate-copy strong {
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.candidate-copy small {
+  font-size: 12px;
+  color: #64705e;
+}
+
+.candidate-copy > span {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.candidate-row.selected .candidate-copy strong {
+  color: #4c681e;
+}
+
+.visual-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  color: #76866b;
+  background: #e6ebe0;
+}
+
+.visual-empty svg {
+  width: 24px;
+  height: 24px;
+}
+
+.visual-empty small {
+  font-size: 10px;
+}
+
+.candidate-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  font-size: 11px;
+}
+
+.candidate-row-actions label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.candidate-row-actions input {
+  accent-color: #6b851c;
+}
+
+.candidate-row-actions button {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0;
+  color: #47633a;
+  background: none;
+  border: 0;
+}
+
+.candidate-row-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.candidate-details {
+  padding: 18px 0;
+}
+
+.candidate-details p {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.candidate-details dl {
+  margin: 0;
+  font-size: 12px;
+}
+
+.candidate-details dl > div {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #dbe1d3;
+}
+
+.candidate-details dt {
+  color: #64705e;
+}
+
+.candidate-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-primary {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #172000 !important;
+  background: var(--workspace-accent);
+  border: 0;
+  border-radius: 8px;
+}
+
+.workspace-primary svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.workspace-primary:hover {
+  background: #bdec00;
+}
+
+.comparison-media {
+  display: grid;
+  grid-template-columns: repeat(var(--compare-count, 2), minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.comparison-media > div {
+  min-width: 0;
+}
+
+.comparison-media button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+.comparison-media img,
+.comparison-media .visual-empty {
+  display: flex;
+  width: 100%;
+  height: clamp(130px, 11.5vw, 190px);
+  margin-bottom: 8px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.comparison-media strong {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.comparison-media small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6c7864;
+}
+
+.comparison-table-wrap {
+  overflow-x: auto;
+}
+
+.comparison-table {
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.7;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.comparison-table th {
+  width: 80px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.comparison-table td,
+.comparison-table th {
+  padding: 8px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  border-top: 1px solid #dbe1d3;
+}
+
+.comparison-table td {
+  border-left: 1px solid #e1e6da;
+}
+
+.compare-research {
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
+  padding: 0;
+  margin: 0 0 6px;
+  font-size: 12px !important;
+  color: #466135 !important;
+  background: none;
+  border: 0;
+}
+
+.compare-research svg {
+  width: 16px;
+  height: 16px;
+}
+
+.comparison-empty {
+  padding: 24px 0;
+  font-size: 13px;
+}
+
+.comparison-empty button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+  color: #466135;
+  background: none;
+  border: 0;
+}
+
+.comparison-empty svg {
+  width: 16px;
+  height: 16px;
+}
+
+.other-candidates {
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid #dbe1d3;
+}
+
+.other-candidates > button {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 0;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+.other-candidates img {
+  flex: none;
+  width: 68px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.other-candidates > button > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.other-candidates strong {
+  display: block;
+  font-size: 13px;
+}
+
+.other-candidates small {
+  display: -webkit-box;
+  margin-top: 4px;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  font-size: 11px;
+  color: #687660;
+  -webkit-box-orient: vertical;
+}
+
+.other-candidates > button > svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.workbench-footer {
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid #dbe1d3;
+}
+
+.intent-preview p {
+  margin: 0;
+  font-size: 12px;
+  color: #687660;
+}
+
+.intent-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.intent-row > svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 2px;
+  color: #172000;
+  background: var(--workspace-accent);
+  border-radius: 4px;
+}
+
+.intent-row img {
+  flex: none;
+  width: 66px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.intent-row > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.intent-row strong {
+  display: block;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.intent-row small {
+  display: -webkit-box;
+  margin-top: 4px;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  font-size: 11px;
+  color: #687660;
+  -webkit-box-orient: vertical;
+}
+
+.intent-row button {
+  flex: none;
+  padding: 0;
+  font-size: 11px;
+  color: #47633a;
+  background: none;
+  border: 0;
+}
+
+.handoff-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #344a30;
+}
+
+.handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.handoff-actions a {
+  font-size: 12px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  border: 0;
+  clip-path: inset(50%);
+}
+
+.condition-editor .editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.condition-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.condition-editor .span-2 {
+  grid-column: 1 / -1;
+}
+
+.condition-editor .budget {
+  display: flex;
+  gap: 8px;
+}
+
+.condition-editor .budget .el-select {
+  width: 100px;
+}
+
+.condition-editor .budget .el-input-number {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.condition-editor .excluded-types {
+  margin-top: 20px;
+}
+
+.condition-editor .editor-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 24px;
+  margin-top: 24px;
+  border-top: 1px solid #e3e6df;
+}
+
+.condition-editor .editor-footer > span {
+  max-width: 340px;
+  font-size: 12px;
+  color: #687068;
+}
+
+.condition-editor .primary-button {
+  color: #172000;
+  background: #caff00;
+  border-color: #caff00;
+}
+
+.conversation-management {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  padding-top: 20px;
+  font-size: 12px;
+  color: #687068;
+}
+
+:global(.ip-workspace-dialog) {
+  max-width: calc(100vw - 32px);
+}
+
+@media (width <= 1150px) {
+  .research-sidebar {
+    flex-basis: 160px;
+    padding: 20px 10px;
   }
-  .hero {
+
+  .research-main {
+    padding: 16px 20px 28px;
+  }
+
+  .research-columns {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.95fr);
+    gap: 20px;
+  }
+
+  .cooperation-workbench {
     padding: 20px;
   }
-  .editor-grid {
+
+  .assistant-content,
+  .follow-up-actions {
+    padding-left: 12px;
+  }
+
+  .research-header h1 {
+    font-size: 32px;
+  }
+
+  .project-context h2 {
+    font-size: 17px;
+  }
+
+  .composer-actions > span {
+    display: none;
+  }
+}
+
+@media (width <= 900px) {
+  .mobile-sessions {
+    display: block;
+    max-width: 280px;
+    margin-bottom: 16px;
+  }
+
+  .research-sidebar {
+    flex-basis: 68px;
+    padding: 24px 10px;
+  }
+
+  .research-brand {
+    padding: 0 0 28px;
+  }
+
+  .research-brand img {
+    width: 46px;
+  }
+
+  .research-brand span,
+  .session-heading,
+  .session-list {
+    display: none;
+  }
+
+  .research-nav a,
+  .nav-current,
+  .new-session,
+  .sidebar-bottom a,
+  .sidebar-bottom button {
+    gap: 0;
+    justify-content: center;
+    padding: 12px;
+    font-size: 0;
+  }
+
+  .sidebar-bottom span,
+  .new-session span {
+    display: none;
+  }
+
+  .research-columns {
     grid-template-columns: 1fr;
+    gap: 28px;
   }
-  .span-2 {
-    grid-column: auto;
+
+  .assistant-content > h2 {
+    font-size: 28px;
   }
-  .result-card {
-    grid-template-columns: 1fr;
+
+  .cooperation-workbench {
+    padding: 24px;
   }
-  .result-visual {
-    height: 150px;
+
+  .comparison-media img,
+  .comparison-media .visual-empty {
+    height: clamp(160px, 26vw, 240px);
   }
-  .card-actions,
-  .card-actions > div,
-  .result-toolbar {
-    align-items: flex-start;
+
+  .research-stages {
+    gap: 16px;
+    padding-inline: 0;
+  }
+
+  .research-stages button {
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .research-stages button::after {
+    display: none;
+  }
+}
+
+@media (width <= 600px) {
+  .research-sidebar {
+    flex-basis: 52px;
+    padding: 20px 6px;
+  }
+
+  .research-brand img {
+    width: 34px;
+  }
+
+  .research-nav a,
+  .nav-current,
+  .new-session,
+  .sidebar-bottom a,
+  .sidebar-bottom button {
+    padding: 10px 6px;
+  }
+
+  .research-main {
+    padding: 20px 14px 28px;
+  }
+
+  .workspace-breadcrumb {
+    margin-bottom: 16px;
+    font-size: 10px;
+  }
+
+  .research-header {
     flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
   }
-  .view-tabs {
+
+  .research-header h1 {
+    font-size: 30px;
+  }
+
+  .project-context {
+    max-width: 100%;
+    text-align: left;
+  }
+
+  .project-context h2 {
+    font-size: 15px;
+  }
+
+  .project-context a {
+    display: flex;
+    margin-top: 6px;
+    margin-left: 0;
+  }
+
+  .project-context p {
+    font-size: 11px;
+  }
+
+  .research-stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding-bottom: 22px;
+  }
+
+  .research-context {
+    gap: 10px;
+    padding: 16px 0;
+    margin-bottom: 16px;
+  }
+
+  .research-context > span {
+    flex-basis: 100%;
+    font-size: 11px;
+  }
+
+  .context-title {
+    font-size: 12px;
+  }
+
+  .context-title svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .conversation-welcome {
+    padding: 12px 0 24px;
+  }
+
+  .conversation-welcome h2 {
+    font-size: 24px;
+  }
+
+  .assistant-content {
+    padding: 0;
+  }
+
+  .assistant-content > h2 {
+    font-size: 24px;
+  }
+
+  .recommendation-explanation {
+    font-size: 13px;
+  }
+
+  .user-message {
+    max-width: 96%;
+    margin-right: 0;
+  }
+
+  .user-message p {
+    padding: 12px;
+  }
+
+  .judgment-basis dl > div {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .judgment-basis dt,
+  .judgment-basis dd {
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .round-adjustments {
+    gap: 12px;
+  }
+
+  .follow-up-actions {
+    padding: 0;
+  }
+
+  .cooperation-workbench {
+    padding: 20px 16px;
+  }
+
+  .workbench-heading h2 {
+    font-size: 22px;
+  }
+
+  .workbench-toolbar {
     flex-wrap: wrap;
+    gap: 0;
+  }
+
+  .workbench-tabs {
+    gap: 16px;
+  }
+
+  .comparison-media {
+    gap: 12px;
+  }
+
+  .comparison-media img,
+  .comparison-media .visual-empty {
+    height: 116px;
+  }
+
+  .comparison-media strong {
+    font-size: 13px;
+  }
+
+  .comparison-media small {
+    font-size: 10px;
+  }
+
+  .comparison-table th {
+    width: 60px;
+  }
+
+  .comparison-table th,
+  .comparison-table td {
+    padding: 8px 5px;
+    font-size: 11px;
+  }
+
+  .candidate-select {
+    gap: 10px;
+  }
+
+  .candidate-select img,
+  .candidate-select .visual-empty {
+    width: 68px;
+    height: 68px;
+  }
+
+  .candidate-copy strong {
+    font-size: 14px;
+  }
+
+  .condition-editor .editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .condition-editor .editor-footer > span {
+    max-width: none;
   }
 }
 </style>
