@@ -62,6 +62,12 @@ export interface IPRecommendationPresentation {
   primaryResourceId?: number;
   alternativeResourceId?: number;
   source: "ai" | "rule";
+  webSearch?: {
+    query: string;
+    provider: string;
+    searchedAt: string;
+    results: RecommendationEvidence[];
+  };
 }
 
 export interface IPRecommendationMessage {
@@ -118,7 +124,7 @@ export interface IPRecommendationConversationInput {
   subscriptionId?: number;
   criteria?: RecommendationSubscriptionInput;
   message: string;
-  action: "clarify" | "recommend" | "compare" | "discuss";
+  action: "clarify" | "recommend" | "compare" | "discuss" | "search";
   compareIds?: number[];
   documentText?: string;
 }

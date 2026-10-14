@@ -313,4 +313,60 @@ func TestRecommendationDBSmoke(t *testing.T) {
 			t.Fatalf("global %s resource missing for %q search: %+v", tc.domain, tc.market, candidates)
 		}
 	}
+	t.Run("external search stays in owned conversation without altering library results", func(t *testing.T) {
+		id := subscriptionIDs[1]
+		before, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeResults, err := a.recommendationResultsData(ctx, adminID, "ip", id, "all")
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalTransport := http.DefaultTransport
+		t.Cleanup(func() { http.DefaultTransport = originalTransport })
+		t.Setenv("IP_WEB_SEARCH_PROVIDER", "tavily")
+		t.Setenv("TAVILY_API_KEY", "test-only-secret")
+		calls := 0
+		http.DefaultTransport = recommendationEvidenceTransportFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			var body map[string]any
+			if json.NewDecoder(req.Body).Decode(&body) != nil || body["query"] != "public art licensing" || req.URL.Host != "api.tavily.com" {
+				t.Fatal("unexpected external request")
+			}
+			for _, field := range []string{"criteria", "history", "budgetMax", "documentText"} {
+				if _, exists := body[field]; exists {
+					t.Fatal("private project data sent to search provider")
+				}
+			}
+			return recommendationEvidenceTestResponse(200, `{"results":[{"title":"Official artist","url":"https://artist.com/licensing","content":"Public artist and licensing information"}]}`), nil
+		})
+		for run := 0; run < 2; run++ {
+			status, data := post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "public art licensing", "documentText": "PRIVATE attachment, never search this"}, token)
+			if status != 200 {
+				t.Fatalf("search failed: %d %+v", status, data)
+			}
+			p := data["presentation"].(map[string]any)
+			search := p["webSearch"].(map[string]any)
+			if len(search["results"].([]any)) != 1 || len(data["results"].([]any)) != len(beforeResults) {
+				t.Fatal("external sources entered library candidate set")
+			}
+		}
+		if calls != 1 {
+			t.Fatal("same-user repeated search consumed another request")
+		}
+		after, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
+		if err != nil || after.Query != before.Query || after.BudgetMax != before.BudgetMax || after.IPWorkspace == nil || len(after.IPWorkspace.Messages) != 4 || len(after.IPWorkspace.Messages[3].Presentation.WebSearch.Results) != 1 {
+			t.Fatalf("search memory or criteria failed: %+v %v", after, err)
+		}
+		t.Setenv("TAVILY_API_KEY", "")
+		status, _ := post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "different public keywords"}, token)
+		if status != 500 {
+			t.Fatal("unconfigured search appeared successful")
+		}
+		unchanged, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
+		if err != nil || len(unchanged.IPWorkspace.Messages) != 4 {
+			t.Fatal("failed search persisted a fake response")
+		}
+	})
 }

@@ -39,6 +39,20 @@ Apply `migrations/049_recommendation_advice.sql` before deploying IP recommendat
 
 External context for IP advice defaults to Wikidata's CC0 entity data. The backend searches by the IP's **public name only**, accepts an exact name match after type disambiguation, and stores the source URL, label, and description. It never sends a saved search, product brief, budget, or other internal request data to the external provider. Up to three attributed references may appear with each result. `evidenceStatus` is `available` when a usable source was found, `none` when the search succeeded without a usable match, `unavailable` when an attempted provider request failed, and `not_searched` when this result was not searched (including legacy or stale advice). Only the top three eligible IPs are searched per run, within an eight-second budget. A reference is background context, not proof of licensing availability or an agreed price; the recommendation remains usable from internal resource data when no external source is available.
 
+The IP conversation also supports explicit external discovery with `action: "search"`. Users enter up to 200 characters of public keywords in the web-search mode; only those keywords are sent to a provider. Configure **one** provider in the backend process environment and restart:
+
+```bash
+# Tavily: provide the key through the deployment secret store.
+IP_WEB_SEARCH_PROVIDER=tavily
+TAVILY_API_KEY="<server-side-key>"
+
+# Or a self-hosted SearXNG instance with search.formats including json:
+IP_WEB_SEARCH_PROVIDER=searxng
+SEARXNG_BASE_URL=http://127.0.0.1:8888
+```
+
+These are environment-variable names, not YAML config keys. For a local shell, export the selected variables before `go run ./cmd/server`; for a container, pass them into its environment. Brave discovery uses `IP_WEB_SEARCH_PROVIDER=brave` plus the existing Brave key and storage entitlement flag described below. No provider configured means an explicit error, not simulated results. No subscription, paid plan or external account is created by the app. Tavily uses basic search only; repeated same-user queries are cached for 15 minutes. Sources remain external leads until reviewed and entered in the IP resource library; discovery does not modify existing candidate IDs or matching criteria. See `docs/ip-ai-recommendation-workspace.md` for the complete interaction and verification scope.
+
 Brave Web Search is optional. Enable it only if the deployment's Brave plan explicitly grants the right to store search-result titles, snippets, and URLs, then set **both** `BRAVE_SEARCH_API_KEY` and `BRAVE_SEARCH_STORAGE_ALLOWED=1` in the backend environment. A key alone does not trigger a Brave request. The backend calls only the fixed Wikidata and Brave HTTPS APIs; it does not fetch linked search-result pages. Do not enable snippet storage without the required entitlement.
 
 Results saved before migration 049 have no collaboration advice until their saved search is run again. **IP 运营 → IP AI 推荐 → 立即刷新** regenerates advice and external references for existing matches in place. It preserves interest feedback and the original new-result flag, and does not create duplicate notifications for those matches.

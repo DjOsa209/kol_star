@@ -641,6 +641,7 @@ onUnmounted(() => {
 });
 
 const composerText = ref("");
+const webSearchMode = ref(false);
 const conversationBusy = ref(false);
 const conversationError = ref("");
 const streamingPresentation = ref<IPRecommendationPresentation | null>(null);
@@ -649,10 +650,12 @@ const pendingUserMessage = ref<IPRecommendationMessage | null>(null);
 const resumableSessionId = ref<number | null>(null);
 let conversationController: AbortController | null = null;
 let failedConversation: {
-  action: "clarify" | "recommend" | "compare" | "discuss";
+  action: "clarify" | "recommend" | "compare" | "discuss" | "search";
   text: string;
 } | null = null;
-const workbenchTab = ref<"candidates" | "compare" | "intent">("candidates");
+const workbenchTab = ref<"candidates" | "compare" | "intent" | "external">(
+  "candidates"
+);
 const compareIds = ref<number[]>([]);
 const activeCandidateId = ref<number | null>(null);
 const expectedLaunch = ref("");
@@ -682,6 +685,13 @@ const latestUser = computed(
 );
 const assistantMessages = computed(() =>
   conversationMessages.value.filter(message => message.role === "assistant")
+);
+const latestWebSearch = computed(
+  () =>
+    streamingPresentation.value?.webSearch ||
+    [...assistantMessages.value]
+      .reverse()
+      .find(message => message.presentation?.webSearch)?.presentation?.webSearch
 );
 const latestAssistant = computed(() =>
   conversationBusy.value ? undefined : assistantMessages.value.at(-1)
@@ -809,10 +819,14 @@ function toggleCompare(item: RecommendationResult) {
   else compareIds.value = [...compareIds.value, item.resourceId];
 }
 async function converse(
-  action: "clarify" | "recommend" | "compare" | "discuss",
+  action: "clarify" | "recommend" | "compare" | "discuss" | "search",
   text = composerText.value.trim()
 ) {
   if (conversationBusy.value || attachmentReading.value) return;
+  if (action === "search" && (!text || [...text].length > 200)) {
+    ElMessage.info("请填写 200 字以内的公开搜索关键词");
+    return;
+  }
   if (!text && !criteria.value.query && !attachment.value) {
     ElMessage.info("请先描述项目需求");
     return;
@@ -890,6 +904,7 @@ async function converse(
       visibleResults.value[0]?.resourceId ||
       null;
     if (action === "compare") workbenchTab.value = "compare";
+    else if (action === "search") workbenchTab.value = "external";
     else if (action === "recommend") workbenchTab.value = "candidates";
     composerText.value = "";
     streamingPresentation.value = null;
@@ -927,6 +942,7 @@ function retryConversation() {
 }
 function sendMessage() {
   const text = composerText.value.trim();
+  if (webSearchMode.value) return converse("search", text);
   if (
     !selectedSubscription.value ||
     selectedSubscription.value.ipWorkspace?.stage === "confirm"
@@ -1070,6 +1086,7 @@ watch(selectedId, () => {
   pendingUserMessage.value = null;
   resumableSessionId.value = null;
   compareIds.value = [];
+  webSearchMode.value = false;
   activeCandidateId.value = null;
 });
 watch(visibleResults, () => {
@@ -1303,9 +1320,19 @@ watch(
               aria-live="polite"
             >
               <div class="assistant-identity">
-                <span>{{ presentation.source === "ai" ? "AI" : "规则" }}</span
+                <span>{{
+                  presentation.source === "ai"
+                    ? "AI"
+                    : presentation.webSearch
+                      ? "检索"
+                      : "规则"
+                }}</span
                 ><strong>{{
-                  presentation.source === "ai" ? "AI 推荐助手" : "规则合作建议"
+                  presentation.source === "ai"
+                    ? "AI 推荐助手"
+                    : presentation.webSearch
+                      ? "联网检索结果"
+                      : "规则合作建议"
                 }}</strong
                 ><time v-if="latestAssistant && !streamingPresentation">{{
                   formatTime(latestAssistant.createdAt).slice(-5)
@@ -1316,6 +1343,21 @@ watch(
                 <p class="recommendation-explanation">
                   {{ presentation.explanation }}
                 </p>
+                <div v-if="presentation.webSearch" class="external-evidence">
+                  <h3>
+                    联网来源 · {{ presentation.webSearch.results.length }}
+                  </h3>
+                  <a
+                    v-for="source in presentation.webSearch.results"
+                    :key="source.url"
+                    :href="safeExternalUrl(source.url)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {{ source.title }} <Icon :icon="icons.external" />
+                  </a>
+                  <small>库外线索尚未入库，授权与报价待核实。</small>
+                </div>
                 <div v-if="evidenceCandidates.length" class="judgment-sources">
                   <button
                     v-for="item in evidenceCandidates"
@@ -1418,16 +1460,24 @@ watch(
           </div>
           <div class="conversation-dock">
             <p class="composer-note">
-              支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。
+              {{
+                webSearchMode
+                  ? "联网模式：仅发送输入框中的公开关键词，项目资料不用于搜索。"
+                  : "支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。"
+              }}
             </p>
             <div class="conversation-composer">
               <textarea
                 v-model="composerText"
                 :disabled="conversationBusy || attachmentReading"
-                maxlength="1200"
+                :maxlength="webSearchMode ? 200 : 1200"
                 rows="2"
                 aria-label="继续描述或调整项目需求"
-                placeholder="继续追问，调整偏好，或补充项目资料…"
+                :placeholder="
+                  webSearchMode
+                    ? '输入公开搜索关键词，例如：东南亚艺术 IP 联名…'
+                    : '继续追问，调整偏好，或补充项目资料…'
+                "
                 @keydown="composerKeydown"
               />
               <div v-if="attachment" class="attached-document">
@@ -1443,22 +1493,38 @@ watch(
               <div class="composer-actions">
                 <button
                   type="button"
-                  :disabled="conversationBusy || attachmentReading"
+                  :disabled="
+                    conversationBusy || attachmentReading || webSearchMode
+                  "
                   @click="attachmentInput?.click()"
                 >
                   <Icon :icon="icons.attach" />{{
                     attachmentReading ? "正在读取资料…" : "添加资料"
-                  }}</button
-                ><span>Ctrl / ⌘ + Enter 发送</span
+                  }}
+                </button>
+                <button
+                  type="button"
+                  :aria-pressed="webSearchMode"
+                  :disabled="conversationBusy || attachmentReading"
+                  class="web-search-toggle"
+                  @click="webSearchMode = !webSearchMode"
+                >
+                  <Icon :icon="icons.external" />联网搜索
+                </button>
+                <span>Ctrl / ⌘ + Enter 发送</span
                 ><button
                   type="button"
                   class="send-message"
                   :disabled="
                     conversationBusy ||
                     attachmentReading ||
-                    (!composerText.trim() && !attachment && !criteria.query)
+                    (webSearchMode
+                      ? !composerText.trim()
+                      : !composerText.trim() && !attachment && !criteria.query)
                   "
-                  aria-label="发送需求或调整偏好"
+                  :aria-label="
+                    webSearchMode ? '搜索库外资源' : '发送需求或调整偏好'
+                  "
                   @click="sendMessage"
                 >
                   <Icon :icon="icons.arrow" />
@@ -1530,6 +1596,17 @@ watch(
               >
                 意向 <b>{{ chosenIds.length }}</b>
               </button>
+              <button
+                id="external-tab"
+                type="button"
+                role="tab"
+                :aria-selected="workbenchTab === 'external'"
+                aria-controls="external-workspace"
+                :class="{ active: workbenchTab === 'external' }"
+                @click="workbenchTab = 'external'"
+              >
+                库外 <b>{{ latestWebSearch?.results.length || 0 }}</b>
+              </button>
             </div>
             <button
               v-if="workbenchTab === 'compare' && comparison.length >= 2"
@@ -1546,7 +1623,47 @@ watch(
               AI 对比判断 <Icon :icon="icons.arrow" />
             </button>
           </div>
-          <div v-if="!visibleResults.length" class="workbench-empty">
+          <div
+            v-if="workbenchTab === 'external'"
+            id="external-workspace"
+            class="external-workspace"
+            role="tabpanel"
+            aria-labelledby="external-tab"
+          >
+            <template v-if="latestWebSearch">
+              <p>公开线索 · {{ latestWebSearch.query }}</p>
+              <small
+                >搜索时间 {{ formatTime(latestWebSearch.searchedAt) }} ·
+                授权、报价与合作地域待核实</small
+              >
+              <article
+                v-for="source in latestWebSearch.results"
+                :key="source.url"
+                class="external-resource"
+              >
+                <a
+                  :href="safeExternalUrl(source.url)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {{ source.title }} <Icon :icon="icons.external" />
+                </a>
+                <small>{{ source.source }} · 库外资料</small>
+                <p>{{ source.summary }}</p>
+              </article>
+              <p v-if="!latestWebSearch.results.length">
+                暂无可用线索，换个具体名称或公开合作关键词试试。
+              </p>
+            </template>
+            <template v-else>
+              <h3>寻找资源库之外的合作线索</h3>
+              <p>
+                开启输入框下方的“联网搜索”，输入 IP
+                名称、艺术家或公开合作关键词。
+              </p>
+            </template>
+          </div>
+          <div v-else-if="!visibleResults.length" class="workbench-empty">
             <Icon :icon="icons.library" />
             <h3>
               {{
@@ -1798,7 +1915,15 @@ watch(
               IP，返回提需可查看完整清单。
             </p>
           </div>
-          <div v-if="visibleResults.length" class="workbench-footer">
+          <div v-if="workbenchTab === 'external'" class="workbench-footer">
+            <p class="workspace-hint">
+              库外线索核实后可录入 IP 资源库，再参与对比与意向选择。
+            </p>
+            <router-link to="/business/ip/resources"
+              >前往 IP 资源库 <Icon :icon="icons.arrow"
+            /></router-link>
+          </div>
+          <div v-else-if="visibleResults.length" class="workbench-footer">
             <div v-if="workbenchTab !== 'intent'" class="intent-preview">
               <h3>初步意向 · {{ chosenIds.length }}</h3>
               <div v-if="intentItems.length" class="intent-row">
@@ -3035,6 +3160,55 @@ watch(
   margin-left: auto;
   font-size: 10px;
   color: #767e72;
+}
+
+.composer-actions .web-search-toggle[aria-pressed="true"] {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+
+.external-workspace {
+  padding-top: 20px;
+}
+
+.external-workspace > p {
+  margin: 0 0 8px;
+  line-height: 1.7;
+}
+
+.external-workspace small {
+  display: block;
+  font-size: 12px;
+  color: var(--workspace-muted);
+}
+
+.external-resource {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--workspace-line);
+}
+
+.external-resource a {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.external-resource a svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.external-resource p {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
 }
 
 .composer-actions .send-message {
