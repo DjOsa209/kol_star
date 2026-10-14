@@ -60,9 +60,13 @@ onMounted(() => {
     v-loading="usePermissionStoreHook().wholeMenus.length === 0"
     class="horizontal-header"
   >
-    <div v-if="showLogo" class="horizontal-header-left" @click="backTopMenu">
-      <img :src="getLogo()" alt="logo" />
-      <span>{{ title }}</span>
+    <div
+      v-if="showLogo"
+      class="horizontal-header-left"
+      :title="title"
+      @click="backTopMenu"
+    >
+      <img :src="getLogo()" alt="Infinix" />
     </div>
     <el-menu
       ref="menuRef"

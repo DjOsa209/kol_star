@@ -16,21 +16,21 @@ const { title, getLogo } = useNav();
         v-if="collapse"
         key="collapse"
         :title="title"
+        :aria-label="title"
         class="sidebar-logo-link"
         :to="getTopMenu()?.path ?? '/'"
       >
-        <img :src="getLogo()" alt="logo" />
-        <span class="sidebar-title">{{ title }}</span>
+        <img :src="getLogo()" alt="Infinix" />
       </router-link>
       <router-link
         v-else
         key="expand"
         :title="title"
+        :aria-label="title"
         class="sidebar-logo-link"
         :to="getTopMenu()?.path ?? '/'"
       >
-        <img :src="getLogo()" alt="logo" />
-        <span class="sidebar-title">{{ title }}</span>
+        <img :src="getLogo()" alt="Infinix" />
       </router-link>
     </transition>
   </div>
@@ -48,24 +48,24 @@ const { title, getLogo } = useNav();
     flex-wrap: nowrap;
     align-items: center;
     height: 100%;
-    padding-left: 10px;
+    padding: 0 20px;
 
     img {
-      display: inline-block;
-      height: 28px;
+      display: block;
+      flex: none;
+      width: 114px;
+      height: auto;
+      object-fit: contain;
+      filter: invert(1);
     }
+  }
 
-    .sidebar-title {
-      display: inline-block;
-      height: 28px;
-      margin: 2px 0 0 12px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      font-size: 17px;
-      font-weight: 600;
-      line-height: 28px;
-      color: var(--pure-theme-sub-menu-active-text);
-      white-space: nowrap;
+  &.collapses .sidebar-logo-link {
+    justify-content: center;
+    padding: 0 6px;
+
+    img {
+      width: 42px;
     }
   }
 }
