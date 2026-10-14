@@ -1309,6 +1309,9 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="conversation-dock">
+            <p class="composer-note">
+              支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。
+            </p>
             <div class="conversation-composer">
               <textarea
                 v-model="composerText"
@@ -1361,9 +1364,6 @@ onUnmounted(() => {
                 @change="readAttachment"
               />
             </div>
-            <p class="composer-note">
-              支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。
-            </p>
           </div>
         </section>
         <section
@@ -2481,15 +2481,18 @@ onUnmounted(() => {
 .research-columns {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(360px, 1fr);
-  gap: 24px;
+  gap: 0;
   align-items: stretch;
+  background: #fff;
+  border: 1px solid var(--workspace-line);
+  border-radius: 12px;
 }
 
 .conversation-panel {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 12px 0 0;
+  padding: 24px 28px;
 }
 
 .conversation-body {
@@ -2859,8 +2862,8 @@ onUnmounted(() => {
 .conversation-composer {
   padding: 16px 16px 12px;
   background: white;
+  border: 1px solid var(--workspace-line);
   border-radius: 12px;
-  box-shadow: 0 5px 22px #26351b0d;
 }
 
 .conversation-composer:focus-within {
@@ -2935,7 +2938,7 @@ onUnmounted(() => {
 
 .composer-note {
   padding: 0 8px;
-  margin: 10px 0 0;
+  margin: 0 0 10px;
   font-size: 11px;
   color: #737c70;
 }
@@ -2982,8 +2985,7 @@ onUnmounted(() => {
   flex-direction: column;
   min-width: 0;
   padding: 24px 28px;
-  background: #f0f2ec;
-  border-radius: 12px;
+  border-left: 1px solid var(--workspace-line);
 }
 
 .workbench-heading {
@@ -3585,9 +3587,9 @@ onUnmounted(() => {
 @container ip-recommendation (width <= 1050px) {
   .research-columns {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 0.95fr);
-    gap: 20px;
   }
 
+  .conversation-panel,
   .cooperation-workbench {
     padding: 20px;
   }
@@ -3605,7 +3607,11 @@ onUnmounted(() => {
 @container ip-recommendation (width <= 780px) {
   .research-columns {
     grid-template-columns: 1fr;
-    gap: 24px;
+  }
+
+  .cooperation-workbench {
+    border-top: 1px solid var(--workspace-line);
+    border-left: 0;
   }
 
   .research-session-bar {
@@ -3755,6 +3761,7 @@ onUnmounted(() => {
     padding: 0;
   }
 
+  .conversation-panel,
   .cooperation-workbench {
     padding: 20px 16px;
   }
