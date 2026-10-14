@@ -126,6 +126,7 @@ const emptyForm = (): IPResourceInput => ({
   rightsOwner: "",
   contact: "",
   markets: [],
+  marketPenetrations: {},
   audience: "",
   summary: "",
   cooperationStatus: "待评估",
@@ -164,6 +165,7 @@ function restoreManualDraft() {
       ...saved.form,
       id: undefined,
       markets: Array.isArray(saved.form.markets) ? saved.form.markets : [],
+      marketPenetrations: penetrationValues(saved.form.marketPenetrations),
       profile: objectValue(saved.form.profile)
     };
     caseTitle.value = String(saved.caseTitle || "");
@@ -221,6 +223,7 @@ const importKeys = ref<string[]>([]);
 const importExcelRows = ref<number[]>([]);
 const importCaseTitles = ref<string[]>([]);
 const importCaseSummaries = ref<string[]>([]);
+const importLocalIssues = ref<string[]>([]);
 const batchFiles = ref<File[]>([]);
 
 const readyCount = computed(
@@ -240,6 +243,46 @@ function arrayValue(value: unknown): string[] {
   } catch {
     return [];
   }
+}
+function penetrationValues(value: unknown): Record<string, number> {
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const result: Record<string, number> = {};
+  for (const [market, amount] of Object.entries(parsed)) {
+    if (amount === null || amount === "") continue;
+    const numeric = Number(amount);
+    if (Number.isFinite(numeric)) result[market] = numeric;
+  }
+  return result;
+}
+function marketCoverageText(item: any) {
+  const penetrations = penetrationValues(item.marketPenetrations);
+  return arrayValue(item.markets)
+    .map(market =>
+      penetrations[market] === undefined
+        ? market
+        : `${market} ${penetrations[market]}%`
+    )
+    .join(" / ");
+}
+function setMarketPenetration(market: string, value: number | undefined) {
+  const penetrations = (form.value.marketPenetrations ||= {});
+  if (value == null || !Number.isFinite(value)) delete penetrations[market];
+  else penetrations[market] = value;
+}
+function syncMarketPenetrations() {
+  form.value.marketPenetrations = Object.fromEntries(
+    Object.entries(form.value.marketPenetrations || {}).filter(([market]) =>
+      form.value.markets.includes(market)
+    )
+  );
 }
 function priceText(item: any) {
   if (item?.priceMin == null && item?.priceMax == null) return "待询价";
@@ -398,6 +441,7 @@ function editDetail() {
     rightsOwner: item.rightsOwner || "",
     contact: item.contact || "",
     markets: arrayValue(item.markets),
+    marketPenetrations: penetrationValues(item.marketPenetrations),
     audience: item.audience || "",
     summary: item.summary || "",
     cooperationStatus: item.cooperationStatus || "待评估",
@@ -556,6 +600,19 @@ async function saveManual() {
     ElMessage.warning("请填写IP名称、类型和覆盖市场");
     return;
   }
+  const marketPenetrations = Object.fromEntries(
+    Object.entries(item.marketPenetrations || {}).filter(([market]) =>
+      item.markets.includes(market)
+    )
+  );
+  if (
+    Object.values(marketPenetrations).some(
+      value => !Number.isFinite(value) || value < 0 || value > 100
+    )
+  ) {
+    ElMessage.warning("市场渗透率请输入0至100之间的数值");
+    return;
+  }
   if (
     item.priceMin != null &&
     item.priceMax != null &&
@@ -570,7 +627,7 @@ async function saveManual() {
   }
   saving.value = true;
   try {
-    const result = await saveIPResource(item);
+    const result = await saveIPResource({ ...item, marketPenetrations });
     const id = Number(result.data.id);
     for (const file of copyrightFiles.value)
       await uploadIPFile(id, "copyright", file);
@@ -727,26 +784,58 @@ function downloadTemplate() {
   anchor.click();
   anchor.remove();
 }
-function marketValuesFromImport(row: Record<string, any>) {
-  const choices = Array.from(
-    { length: markets.length },
-    (_, index) => row[`覆盖市场${index + 1}${index === 0 ? "*" : ""}`]
-  );
-  const legacy = row["覆盖市场*"] || row["覆盖市场"];
-  return [
-    ...new Set(
-      [...choices, legacy]
-        .flatMap(value => String(value || "").split(/[,，、;/]+/))
-        .map(value => value.trim())
-        .filter(Boolean)
-    )
-  ];
+function splitImportMarkets(value: unknown) {
+  return String(value || "")
+    .split(/[,，、;；/]+/)
+    .map(market => market.trim())
+    .filter(Boolean);
+}
+function parseImportMarkets(row: Record<string, any>) {
+  const selected: string[] = [];
+  const marketPenetrations: Record<string, number> = {};
+  let issue = "";
+  for (let index = 1; index <= 9; index++) {
+    const choice =
+      row[`覆盖市场${index}${index === 1 ? "*" : ""}`] ||
+      row[`覆盖市场${index}`];
+    const names = splitImportMarkets(choice);
+    selected.push(...names);
+    const rate = [
+      row[`渗透率${index}（%）`],
+      row[`渗透率${index}(%)`],
+      row[`渗透率${index}%`]
+    ].find(value => value != null && String(value).trim() !== "");
+    if (rate === undefined) continue;
+    if (names.length !== 1) {
+      issue ||= names.length
+        ? `覆盖市场${index}有多个市场，请拆分后填写渗透率`
+        : `渗透率${index}已填写，请先选择覆盖市场${index}`;
+      continue;
+    }
+    const text = String(rate)
+      .trim()
+      .replace(/[%％]$/, "")
+      .trim();
+    const amount = Number(text);
+    if (!text || !Number.isFinite(amount) || amount < 0 || amount > 100) {
+      issue ||= `渗透率${index}应为0至100的数字`;
+      marketPenetrations[names[0]] = -1;
+      continue;
+    }
+    marketPenetrations[names[0]] = amount;
+  }
+  selected.push(...splitImportMarkets(row["覆盖市场*"] || row["覆盖市场"]));
+  return { markets: selected, marketPenetrations, issue };
 }
 function excelRow(backendRow: number) {
   return importExcelRows.value[Number(backendRow) - 2] || backendRow;
 }
 function importKeyForRow(backendRow: number) {
   return importKeys.value[Number(backendRow) - 2] || "—";
+}
+function importCoverageText(backendRow: number) {
+  const item = importRows.value[Number(backendRow) - 2];
+  return item ? marketCoverageText(item) : "—";
 }
 function parseMoney(value: unknown): number | null {
   if (value == null || String(value).trim() === "") return null;
@@ -761,12 +850,34 @@ async function readImport(event: Event) {
   importPreview.value = [];
   importExcelRows.value = [];
   importKeys.value = [];
+  importLocalIssues.value = [];
   importFileName.value = "";
   try {
     const book = XLSX.read(await file.arrayBuffer());
     const sheet = book.Sheets[book.SheetNames[0]];
     const records = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, {
       defval: ""
+    });
+    const headers =
+      XLSX.utils.sheet_to_json<string[]>(sheet, {
+        header: 1,
+        range: 0,
+        blankrows: false
+      })[0] || [];
+    const rateColumns = headers.flatMap((header, column) =>
+      /^渗透率[1-9](（%）|\(%\)|%)$/.test(String(header))
+        ? [{ header, column }]
+        : []
+    );
+    records.forEach((row, index) => {
+      const excelRow =
+        typeof row.__rowNum__ === "number" ? row.__rowNum__ : index + 1;
+      for (const { header, column } of rateColumns) {
+        const displayed =
+          sheet[XLSX.utils.encode_cell({ r: excelRow, c: column })]?.w;
+        if (typeof displayed === "string" && /[%％]\s*$/.test(displayed))
+          row[header] = displayed;
+      }
     });
     if (!records.length || records.length > 500) {
       ElMessage.warning("每次请选择1至500条IP");
@@ -782,29 +893,44 @@ async function readImport(event: Event) {
     importCaseSummaries.value = records.map(row =>
       String(row["历史合作概述"] || "").trim()
     );
-    importRows.value = records.map(row => ({
-      name: String(row["IP名称*"] || row["IP名称"] || "").trim(),
-      ipType: String(row["IP类型*"] || row["IP类型"] || "").trim(),
-      markets: marketValuesFromImport(row),
-      rightsOwner: String(row["版权方"] || "").trim(),
-      contact: String(row["联系人"] || "").trim(),
-      audience: String(row["目标受众"] || "").trim(),
-      summary: String(row["IP简介"] || "").trim(),
-      cooperationStatus: String(row["合作状态"] || "待评估").trim(),
-      currency: String(row["币种"] || "CNY").trim(),
-      priceMin: parseMoney(row["基础权益价格下限"]),
-      priceMax: parseMoney(row["基础权益价格上限"]),
-      licenseNotes: String(row["授权范围与限制"] || "").trim(),
-      profile: Object.fromEntries(
-        profileFields.map(field => [
-          field.key,
-          String(row[field.label] || "").trim()
-        ])
-      )
-    }));
+    importRows.value = records.map(row => {
+      const marketInput = parseImportMarkets(row);
+      importLocalIssues.value.push(marketInput.issue);
+      return {
+        name: String(row["IP名称*"] || row["IP名称"] || "").trim(),
+        ipType: String(row["IP类型*"] || row["IP类型"] || "").trim(),
+        markets: marketInput.markets,
+        marketPenetrations: marketInput.marketPenetrations,
+        rightsOwner: String(row["版权方"] || "").trim(),
+        contact: String(row["联系人"] || "").trim(),
+        audience: String(row["目标受众"] || "").trim(),
+        summary: String(row["IP简介"] || "").trim(),
+        cooperationStatus: String(row["合作状态"] || "待评估").trim(),
+        currency: String(row["币种"] || "CNY").trim(),
+        priceMin: parseMoney(row["基础权益价格下限"]),
+        priceMax: parseMoney(row["基础权益价格上限"]),
+        licenseNotes: String(row["授权范围与限制"] || "").trim(),
+        profile: Object.fromEntries(
+          profileFields.map(field => [
+            field.key,
+            String(row[field.label] || "").trim()
+          ])
+        )
+      };
+    });
     importFileName.value = file.name;
     importLoading.value = true;
-    importPreview.value = (await previewIPImport(importRows.value)).data || [];
+    importPreview.value = (
+      (await previewIPImport(importRows.value)).data || []
+    ).map((result, index) =>
+      importLocalIssues.value[index]
+        ? {
+            ...result,
+            status: "error",
+            message: importLocalIssues.value[index]
+          }
+        : result
+    );
   } catch {
     ElMessage.error("文件解析失败，请使用下载的模板");
   } finally {
@@ -842,6 +968,9 @@ function batchFileKind(
 }
 async function runImport() {
   if (!readyCount.value) return;
+  const readyIndexes = importPreview.value
+    .filter(row => row.status === "ready")
+    .map(row => Number(row.row) - 2);
   if (batchFiles.value.length) {
     const keys = importPreview.value
       .filter(row => row.status === "ready")
@@ -861,11 +990,13 @@ async function runImport() {
   }
   importLoading.value = true;
   try {
-    const result = await importIPResources(importRows.value);
+    const result = await importIPResources(
+      readyIndexes.map(index => importRows.value[index])
+    );
     let uploaded = 0;
     let failed = 0;
     for (const created of result.data.created || []) {
-      const index = Number(created.row) - 2;
+      const index = readyIndexes[Number(created.row) - 2];
       const key = importKeys.value[index];
       if (!key) continue;
       const matched = batchFiles.value.filter(file =>
@@ -1134,9 +1265,9 @@ onUnmounted(() => {
               ><el-tag effect="light">{{ scope.row.ipType }}</el-tag></template
             ></el-table-column
           >
-          <el-table-column label="覆盖市场" min-width="150"
+          <el-table-column label="覆盖市场及渗透率" min-width="220"
             ><template #default="scope">{{
-              arrayValue(scope.row.markets).join(" / ")
+              marketCoverageText(scope.row)
             }}</template></el-table-column
           >
           <el-table-column
@@ -1216,10 +1347,8 @@ onUnmounted(() => {
               <dl class="ip-dl">
                 <dt>版权方</dt>
                 <dd>{{ drawerDetail.resource.rightsOwner || "待补充" }}</dd>
-                <dt>覆盖市场</dt>
-                <dd>
-                  {{ arrayValue(drawerDetail.resource.markets).join(" / ") }}
-                </dd>
+                <dt>覆盖市场及渗透率</dt>
+                <dd>{{ marketCoverageText(drawerDetail.resource) }}</dd>
                 <dt>合作状态</dt>
                 <dd>{{ drawerDetail.resource.cooperationStatus }}</dd>
               </dl>
@@ -1422,8 +1551,8 @@ onUnmounted(() => {
               <dd>{{ detail.resource.rightsOwner || "待补充" }}</dd>
               <dt>联系人</dt>
               <dd>{{ detail.resource.contact || "待补充" }}</dd>
-              <dt>覆盖市场</dt>
-              <dd>{{ arrayValue(detail.resource.markets).join(" / ") }}</dd>
+              <dt>覆盖市场及渗透率</dt>
+              <dd>{{ marketCoverageText(detail.resource) }}</dd>
               <dt>目标受众</dt>
               <dd>{{ detail.resource.audience || "待补充" }}</dd>
               <dt>合作状态</dt>
@@ -1501,20 +1630,54 @@ onUnmounted(() => {
                     v-model="form.contact"
                     placeholder="联系人或联系方式"
                 /></label>
-                <label
-                  >覆盖市场 *<el-select
+                <div class="ip-market-field ip-span">
+                  <strong>覆盖市场 *</strong>
+                  <el-select
                     v-model="form.markets"
                     multiple
                     filterable
                     allow-create
                     default-first-option
+                    aria-label="覆盖市场"
                     placeholder="请选择市场"
-                    ><el-option
+                    @change="syncMarketPenetrations"
+                  >
+                    <el-option
                       v-for="market in markets"
                       :key="market"
                       :label="market"
-                      :value="market" /></el-select
-                ></label>
+                      :value="market"
+                    />
+                  </el-select>
+                  <div
+                    v-if="form.markets.length"
+                    class="ip-market-penetrations"
+                  >
+                    <div
+                      v-for="market in form.markets"
+                      :key="market"
+                      class="ip-market-penetration-row"
+                    >
+                      <span>{{ market }}</span>
+                      <el-input-number
+                        :model-value="form.marketPenetrations?.[market]"
+                        :min="0"
+                        :max="100"
+                        :precision="2"
+                        :controls="false"
+                        :aria-label="`${market}市场渗透率（%）`"
+                        placeholder="输入渗透率"
+                        @update:model-value="
+                          value => setMarketPenetration(market, value)
+                        "
+                      />
+                      <span>%</span>
+                    </div>
+                  </div>
+                  <small
+                    >每个市场可填写渗透率（0–100），例如25表示25%。各市场独立填写，暂无数据可留空。</small
+                  >
+                </div>
                 <label
                   >合作状态<el-select v-model="form.cooperationStatus"
                     ><el-option
@@ -1682,7 +1845,7 @@ onUnmounted(() => {
           <div class="ip-stack">
             <div class="ip-card">
               <h2>录入提示</h2>
-              <p>填写名称、类型和覆盖市场后即可创建。</p>
+              <p>填写名称、类型和覆盖市场后即可创建；渗透率暂无数据可留空。</p>
               <p>价格仅作参考，以最终授权报价为准。</p>
               <p>上传的PDF会显示在IP详情页。</p>
             </div>
@@ -1730,12 +1893,13 @@ onUnmounted(() => {
                 <strong>模板主要字段</strong>
                 <div>
                   <span>IP名称 *</span><span>IP类型 *</span>
-                  <span>覆盖市场 *</span><span>版权方</span>
+                  <span>覆盖市场 *</span><span>市场渗透率</span>
+                  <span>版权方</span>
                   <span>合作状态</span><span>参考价格范围</span>
                   <span>目标受众</span><span>联系人</span>
                 </div>
                 <small
-                  >一行一个IP；多个覆盖市场分别在“覆盖市场1”至“覆盖市场9”列选择。</small
+                  >一行一个IP；“渗透率1”至“渗透率9”逐列对应“覆盖市场1”至“覆盖市场9”，填写0至100的数字，例如25表示25%。可留空。</small
                 >
               </div>
             </div>
@@ -1743,7 +1907,7 @@ onUnmounted(() => {
           <div class="ip-card ip-import-rules">
             <h2>导入规则</h2>
             <p>1. 按名称与版权方检查重复</p>
-            <p>2. 错误行修正后可重新校验</p>
+            <p>2. 重复市场及无效渗透率需修正后重新校验</p>
             <p>3. 已有IP不会被覆盖</p>
           </div>
         </div>
@@ -1811,7 +1975,13 @@ onUnmounted(() => {
               ><el-table-column
                 prop="name"
                 label="IP名称"
-                min-width="180" /><el-table-column label="校验结果" width="120"
+                min-width="180" /><el-table-column
+                label="覆盖市场及渗透率"
+                min-width="220"
+                ><template #default="scope">{{
+                  importCoverageText(scope.row.row)
+                }}</template></el-table-column
+              ><el-table-column label="校验结果" width="120"
                 ><template #default="scope"
                   ><el-tag
                     :type="
@@ -2447,6 +2617,54 @@ onUnmounted(() => {
   width: 100%;
 }
 
+.ip-market-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ip-market-field > strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ip-market-field > .el-select {
+  width: 100%;
+}
+
+.ip-market-field > small {
+  color: #626b56;
+}
+
+.ip-market-penetrations {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  padding: 12px;
+  background: #f8faf2;
+  border: 1px solid #e6edda;
+  border-radius: 7px;
+}
+
+.ip-market-penetration-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.ip-market-penetration-row > span:first-child {
+  min-width: 56px;
+  max-width: 40%;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ip-market-penetration-row > .el-input-number {
+  width: 100%;
+  min-width: 0;
+}
+
 .ip-form-grid label small {
   font-weight: 400;
   color: #969b9e;
@@ -2647,6 +2865,10 @@ onUnmounted(() => {
 }
 
 @media (width <= 700px) {
+  .ip-market-penetrations {
+    grid-template-columns: 1fr;
+  }
+
   .ip-page {
     padding: 16px;
   }

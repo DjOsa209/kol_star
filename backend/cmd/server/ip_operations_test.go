@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,6 +110,110 @@ func TestIPImportOptionsAndDisplayFilename(t *testing.T) {
 		if validIPDisplayFilename(name, ".pdf") {
 			t.Fatalf("unsafe or type-changing filename accepted: %q", name)
 		}
+	}
+}
+
+func TestIPMarketPenetrationsAcceptOnlySelectedMarketsAndPercentages(t *testing.T) {
+	markets := []string{"美国", "南亚"}
+	for _, values := range []map[string]float64{
+		nil,
+		{"美国": 0, "南亚": 100},
+		{"南亚": 12.75},
+	} {
+		if issue := ipMarketPenetrationIssue(markets, values); issue != "" {
+			t.Fatalf("valid values %v rejected: %s", values, issue)
+		}
+	}
+	if issue := ipMarketPenetrationIssue([]string{"南亚", " 南亚 "}, nil); !strings.Contains(issue, "重复") {
+		t.Fatalf("duplicate market issue = %q", issue)
+	}
+	for _, values := range []map[string]float64{
+		{"欧洲": 15},
+		{"美国": -0.1},
+		{"南亚": 100.01},
+		{"美国": math.NaN()},
+		{"南亚": math.Inf(1)},
+	} {
+		if issue := ipMarketPenetrationIssue(markets, values); issue == "" {
+			t.Fatalf("invalid values %v accepted", values)
+		}
+	}
+	if got := ipMarketPenetrationsResponse(nil); len(got) != 0 {
+		t.Fatalf("legacy NULL should return empty map, got %v", got)
+	}
+	if got := ipMarketPenetrationsResponse(`{"南亚":12.75}`); got["南亚"] != 12.75 {
+		t.Fatalf("stored JSON response = %v", got)
+	}
+	if !ipSameMarketSet([]string{"南亚", "美国"}, []string{"美国", "南亚"}) {
+		t.Fatal("reordering markets should preserve percentages")
+	}
+	if ipSameMarketSet([]string{"南亚", "美国"}, []string{"美国", "欧洲"}) {
+		t.Fatal("different market set should clear orphaned percentages")
+	}
+}
+
+func TestIPImportPreviewReportsInvalidMarketPenetration(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	a := newApp(db, Config{})
+	status, response := ipTestPost(t, a, a.ipImportPreview, map[string]any{"rows": []any{
+		map[string]any{"name": "测试IP", "ipType": "动画", "markets": []string{"南亚"}, "marketPenetrations": map[string]float64{"南亚": 101}},
+		map[string]any{"name": "测试IP2", "ipType": "动画", "markets": []string{"南亚"}, "marketPenetrations": map[string]float64{"美国": 20}},
+	}})
+	if status != http.StatusOK {
+		t.Fatalf("preview status=%d response=%v", status, response)
+	}
+	rows := response["data"].([]any)
+	for index, row := range rows {
+		result := row.(map[string]any)
+		if result["row"] != float64(index+2) || result["status"] != "error" || !strings.Contains(result["message"].(string), "渗透率") {
+			t.Fatalf("row %d validation=%v", index+2, result)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIPResourceUpdatePreservesOmittedPenetrationsAndCanClearExplicitly(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		values          map[string]float64
+		previousMarkets string
+		want            any
+	}{
+		{name: "older client omits field", values: nil, previousMarkets: `["南亚"]`, want: nil},
+		{name: "new client clears field", values: map[string]float64{}, previousMarkets: `["南亚"]`, want: "{}"},
+		{name: "older client changes markets", values: nil, previousMarkets: `["美国"]`, want: "{}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			a := newApp(db, Config{})
+			expectIPTestSession(mock)
+			mock.ExpectQuery(`select markets from biz_ip_resources where id=\?`).
+				WithArgs(int64(9)).WillReturnRows(sqlmock.NewRows([]string{"markets"}).AddRow(tc.previousMarkets))
+			mock.ExpectExec(`update biz_ip_resources set .*market_penetrations=coalesce`).
+				WithArgs("测试IP", "动画", "", "", `["南亚"]`, tc.want, "", "", "待评估", "CNY", nil, nil, "", "null", int64(9)).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			payload := map[string]any{"id": 9, "name": "测试IP", "ipType": "动画", "markets": []string{"南亚"}}
+			if tc.values != nil {
+				payload["marketPenetrations"] = tc.values
+			}
+			status, response := ipTestPost(t, a, a.ipResourceSave, payload)
+			if status != http.StatusOK || response["code"] != float64(0) {
+				t.Fatalf("status=%d response=%v", status, response)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

@@ -49,6 +49,8 @@ Apply `migrations/051_monitor_live_sessions.sql` before deploying live online us
 
 Apply `migrations/052_log_list_performance.sql` before deploying the log list performance update. System logs now query one page at a time instead of loading the full table, and the new `(audit_version, id)` index supports the operation log's newest-first list. Existing log rows remain intact.
 
+Apply `migrations/053_ip_market_penetrations.sql` before deploying IP market penetration entry. It adds optional per-market percentages (0–100) to IP resources while retaining the existing market list for filters and recommendations. Earlier IP records remain editable with no percentages.
+
 You can also load another config file:
 
 ```bash

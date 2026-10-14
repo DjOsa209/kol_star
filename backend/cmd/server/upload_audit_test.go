@@ -123,10 +123,10 @@ func TestIPResourceCreateRecordsAuthenticatedUploader(t *testing.T) {
 	a := newApp(db, Config{})
 	token := auditToken(mock, 27)
 	mock.ExpectExec(`insert into biz_ip_resources\s*\([^)]*created_by`).
-		WithArgs("Sonic", "游戏", "Rights Owner", "", `["美国"]`, "", "", "待评估", "CNY", nil, nil, "", "null", 27).
+		WithArgs("Sonic", "游戏", "Rights Owner", "", `["美国"]`, `{"美国":25.5}`, "", "", "待评估", "CNY", nil, nil, "", "null", 27).
 		WillReturnResult(sqlmock.NewResult(45, 1))
 	rec := auditPost(t, a.ipResourceSave, token, map[string]any{
-		"name": "Sonic", "ipType": "游戏", "rightsOwner": "Rights Owner", "markets": []string{"美国"},
+		"name": "Sonic", "ipType": "游戏", "rightsOwner": "Rights Owner", "markets": []string{"美国"}, "marketPenetrations": map[string]float64{"美国": 25.5},
 		"createdBy": 999, "uploadedBy": 999,
 	})
 	if rec.Code != http.StatusOK {
@@ -149,12 +149,12 @@ func TestIPResourceImportRecordsAuthenticatedUploader(t *testing.T) {
 		WithArgs("Sonic", "Rights Owner").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectBegin()
 	mock.ExpectExec(`insert ignore into biz_ip_resources\s*\([^)]*created_by`).
-		WithArgs("Sonic", "游戏", "Rights Owner", "", `["美国"]`, "", "", "待评估", "CNY", nil, nil, "", "null", 27).
+		WithArgs("Sonic", "游戏", "Rights Owner", "", `["美国"]`, `{"美国":0}`, "", "", "待评估", "CNY", nil, nil, "", "null", 27).
 		WillReturnResult(sqlmock.NewResult(45, 1))
 	mock.ExpectCommit()
 	rec := auditPost(t, a.ipImport, token, map[string]any{
 		"rows": []map[string]any{{
-			"name": "Sonic", "ipType": "游戏", "rightsOwner": "Rights Owner", "markets": []string{"美国"},
+			"name": "Sonic", "ipType": "游戏", "rightsOwner": "Rights Owner", "markets": []string{"美国"}, "marketPenetrations": map[string]float64{"美国": 0},
 			"createdBy": 999, "uploadedBy": 999,
 		}},
 	})

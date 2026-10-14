@@ -22,20 +22,21 @@ import (
 )
 
 type ipResourceInput struct {
-	ID                int64          `json:"id"`
-	Name              string         `json:"name"`
-	IPType            string         `json:"ipType"`
-	RightsOwner       string         `json:"rightsOwner"`
-	Contact           string         `json:"contact"`
-	Markets           []string       `json:"markets"`
-	Audience          string         `json:"audience"`
-	Summary           string         `json:"summary"`
-	CooperationStatus string         `json:"cooperationStatus"`
-	Currency          string         `json:"currency"`
-	PriceMin          *float64       `json:"priceMin"`
-	PriceMax          *float64       `json:"priceMax"`
-	LicenseNotes      string         `json:"licenseNotes"`
-	Profile           map[string]any `json:"profile"`
+	ID                 int64              `json:"id"`
+	Name               string             `json:"name"`
+	IPType             string             `json:"ipType"`
+	RightsOwner        string             `json:"rightsOwner"`
+	Contact            string             `json:"contact"`
+	Markets            []string           `json:"markets"`
+	MarketPenetrations map[string]float64 `json:"marketPenetrations"`
+	Audience           string             `json:"audience"`
+	Summary            string             `json:"summary"`
+	CooperationStatus  string             `json:"cooperationStatus"`
+	Currency           string             `json:"currency"`
+	PriceMin           *float64           `json:"priceMin"`
+	PriceMax           *float64           `json:"priceMax"`
+	LicenseNotes       string             `json:"licenseNotes"`
+	Profile            map[string]any     `json:"profile"`
 }
 
 type ipRequestInput struct {
@@ -72,6 +73,77 @@ func ipJSON(value any) string {
 func ipValidRange(min, max *float64) bool {
 	return (min == nil || *min >= 0) && (max == nil || *max >= 0) &&
 		(min == nil || max == nil || *min <= *max)
+}
+
+func ipMarketPenetrationIssue(markets []string, percentages map[string]float64) string {
+	selected := make(map[string]bool, len(markets))
+	for _, market := range markets {
+		market = strings.TrimSpace(market)
+		if market == "" {
+			return "覆盖市场不能留空"
+		}
+		if selected[market] {
+			return "覆盖市场不能重复"
+		}
+		selected[market] = true
+	}
+	for market, percentage := range percentages {
+		if market == "" || market != strings.TrimSpace(market) || !selected[market] {
+			return "渗透率的市场必须已选择为覆盖市场"
+		}
+		if math.IsNaN(percentage) || math.IsInf(percentage, 0) || percentage < 0 || percentage > 100 {
+			return "市场渗透率必须在0至100之间"
+		}
+	}
+	return ""
+}
+
+func ipMarketPenetrationsJSON(percentages map[string]float64) string {
+	if percentages == nil {
+		percentages = map[string]float64{}
+	}
+	return ipJSON(percentages)
+}
+
+func ipSameMarketSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, market := range left {
+		counts[market]++
+	}
+	for _, market := range right {
+		if counts[market] == 0 {
+			return false
+		}
+		counts[market]--
+	}
+	return true
+}
+
+func ipMarketPenetrationsUpdateValue(percentages map[string]float64, markets []string, previousMarkets string) any {
+	if percentages != nil {
+		return ipMarketPenetrationsJSON(percentages)
+	}
+	// Older clients do not send the field. Keep percentages only when their
+	// associated market list is unchanged; otherwise clear orphaned values.
+	var previous []string
+	if json.Unmarshal([]byte(previousMarkets), &previous) == nil && ipSameMarketSet(previous, markets) {
+		return nil
+	}
+	return "{}"
+}
+
+func ipMarketPenetrationsResponse(value any) map[string]float64 {
+	result := map[string]float64{}
+	if raw, ok := value.(string); ok && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &result)
+	}
+	if result == nil {
+		return map[string]float64{}
+	}
+	return result
 }
 
 func ipExternalCount(brief map[string]any) int {
@@ -232,7 +304,7 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 	}
 	listArgs := append(append([]any{}, args...), filter.PageSize, (filter.Page-1)*filter.PageSize)
 	rows, err := a.queryMaps(r.Context(), `select id, name, ip_type as ipType, rights_owner as rightsOwner,
-		markets, audience, summary, cooperation_status as cooperationStatus, currency,
+		markets, market_penetrations as marketPenetrations, audience, summary, cooperation_status as cooperationStatus, currency,
 		price_min as priceMin, price_max as priceMax,
 		created_by as uploadedBy,
 		coalesce((select coalesce(nullif(u.nickname,''), u.username) from sys_users u where u.id=biz_ip_resources.created_by), '') as uploaderName,
@@ -246,6 +318,9 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 	}
 	if rows == nil {
 		rows = []map[string]any{}
+	}
+	for _, row := range rows {
+		row["marketPenetrations"] = ipMarketPenetrationsResponse(row["marketPenetrations"])
 	}
 	var allResources, cooperable, pendingFiles, recent int
 	if err := a.DB().QueryRowContext(r.Context(), `select
@@ -278,6 +353,10 @@ func (a *app) ipResourceSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, 400, "请填写IP名称、类型、覆盖市场和有效价格范围")
 		return
 	}
+	if issue := ipMarketPenetrationIssue(item.Markets, item.MarketPenetrations); issue != "" {
+		writeError(w, http.StatusBadRequest, 400, issue)
+		return
+	}
 	if item.Currency == "" {
 		item.Currency = "CNY"
 	}
@@ -286,17 +365,18 @@ func (a *app) ipResourceSave(w http.ResponseWriter, r *http.Request) {
 	}
 	var id int64
 	if item.ID > 0 {
-		var exists int
-		if err := a.DB().QueryRowContext(r.Context(), "select count(*) from biz_ip_resources where id=?", item.ID).Scan(&exists); err != nil {
-			writeDBError(w, err)
-			return
-		}
-		if exists == 0 {
+		var previousMarkets sql.NullString
+		err := a.DB().QueryRowContext(r.Context(), "select markets from biz_ip_resources where id=?", item.ID).Scan(&previousMarkets)
+		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, 404, "IP不存在")
 			return
 		}
-		result, err := a.DB().ExecContext(r.Context(), `update biz_ip_resources set name=?, ip_type=?, rights_owner=?, contact=?, markets=?, audience=?, summary=?, cooperation_status=?, currency=?, price_min=?, price_max=?, license_notes=?, profile=? where id=?`,
-			item.Name, item.IPType, item.RightsOwner, item.Contact, ipJSON(item.Markets), item.Audience, item.Summary, item.CooperationStatus, item.Currency, item.PriceMin, item.PriceMax, item.LicenseNotes, ipJSON(item.Profile), item.ID)
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
+		result, err := a.DB().ExecContext(r.Context(), `update biz_ip_resources set name=?, ip_type=?, rights_owner=?, contact=?, markets=?, market_penetrations=coalesce(?,market_penetrations), audience=?, summary=?, cooperation_status=?, currency=?, price_min=?, price_max=?, license_notes=?, profile=? where id=?`,
+			item.Name, item.IPType, item.RightsOwner, item.Contact, ipJSON(item.Markets), ipMarketPenetrationsUpdateValue(item.MarketPenetrations, item.Markets, previousMarkets.String), item.Audience, item.Summary, item.CooperationStatus, item.Currency, item.PriceMin, item.PriceMax, item.LicenseNotes, ipJSON(item.Profile), item.ID)
 		if err != nil {
 			writeIPSaveError(w, err)
 			return
@@ -304,8 +384,8 @@ func (a *app) ipResourceSave(w http.ResponseWriter, r *http.Request) {
 		_ = result
 		id = item.ID
 	} else {
-		result, err := a.DB().ExecContext(r.Context(), `insert into biz_ip_resources (name,ip_type,rights_owner,contact,markets,audience,summary,cooperation_status,currency,price_min,price_max,license_notes,profile,created_by) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			item.Name, item.IPType, item.RightsOwner, item.Contact, ipJSON(item.Markets), item.Audience, item.Summary, item.CooperationStatus, item.Currency, item.PriceMin, item.PriceMax, item.LicenseNotes, ipJSON(item.Profile), userID)
+		result, err := a.DB().ExecContext(r.Context(), `insert into biz_ip_resources (name,ip_type,rights_owner,contact,markets,market_penetrations,audience,summary,cooperation_status,currency,price_min,price_max,license_notes,profile,created_by) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			item.Name, item.IPType, item.RightsOwner, item.Contact, ipJSON(item.Markets), ipMarketPenetrationsJSON(item.MarketPenetrations), item.Audience, item.Summary, item.CooperationStatus, item.Currency, item.PriceMin, item.PriceMax, item.LicenseNotes, ipJSON(item.Profile), userID)
 		if err != nil {
 			writeIPSaveError(w, err)
 			return
@@ -330,7 +410,7 @@ func (a *app) ipResourceDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.queryMaps(r.Context(), `select id, name, ip_type as ipType, rights_owner as rightsOwner, contact,
-		markets, audience, summary, cooperation_status as cooperationStatus, currency,
+		markets, market_penetrations as marketPenetrations, audience, summary, cooperation_status as cooperationStatus, currency,
 		price_min as priceMin, price_max as priceMax, license_notes as licenseNotes, profile,
 		created_by as uploadedBy,
 		coalesce((select coalesce(nullif(u.nickname,''), u.username) from sys_users u where u.id=biz_ip_resources.created_by), '') as uploaderName,
@@ -345,6 +425,7 @@ func (a *app) ipResourceDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, 404, "IP不存在")
 		return
 	}
+	rows[0]["marketPenetrations"] = ipMarketPenetrationsResponse(rows[0]["marketPenetrations"])
 	cases, err := a.queryMaps(r.Context(), `select id, ip_id as ipId, title, summary,
 		date_format(created_at, '%Y-%m-%d') as createdAt from biz_ip_cases where ip_id=? order by id desc`, id)
 	if err != nil {
@@ -692,6 +773,9 @@ func ipImportOptionIssue(row ipResourceInput) string {
 			return "覆盖市场包含无效字符"
 		}
 	}
+	if issue := ipMarketPenetrationIssue(row.Markets, row.MarketPenetrations); issue != "" {
+		return issue
+	}
 	status := strings.TrimSpace(row.CooperationStatus)
 	if status != "" && status != "可合作" && status != "洽谈中" && status != "待评估" && status != "暂不可合作" {
 		return "合作状态不在可选范围内"
@@ -787,8 +871,8 @@ func (a *app) ipImport(w http.ResponseWriter, r *http.Request) {
 		if row.CooperationStatus == "" {
 			row.CooperationStatus = "待评估"
 		}
-		inserted, err := tx.ExecContext(r.Context(), `insert ignore into biz_ip_resources (name,ip_type,rights_owner,contact,markets,audience,summary,cooperation_status,currency,price_min,price_max,license_notes,profile,created_by) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			strings.TrimSpace(row.Name), strings.TrimSpace(row.IPType), strings.TrimSpace(row.RightsOwner), row.Contact, ipJSON(row.Markets), row.Audience, row.Summary, row.CooperationStatus, row.Currency, row.PriceMin, row.PriceMax, row.LicenseNotes, ipJSON(row.Profile), userID)
+		inserted, err := tx.ExecContext(r.Context(), `insert ignore into biz_ip_resources (name,ip_type,rights_owner,contact,markets,market_penetrations,audience,summary,cooperation_status,currency,price_min,price_max,license_notes,profile,created_by) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			strings.TrimSpace(row.Name), strings.TrimSpace(row.IPType), strings.TrimSpace(row.RightsOwner), row.Contact, ipJSON(row.Markets), ipMarketPenetrationsJSON(row.MarketPenetrations), row.Audience, row.Summary, row.CooperationStatus, row.Currency, row.PriceMin, row.PriceMax, row.LicenseNotes, ipJSON(row.Profile), userID)
 		if err != nil {
 			writeDBError(w, err)
 			return

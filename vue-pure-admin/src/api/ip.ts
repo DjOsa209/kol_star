@@ -8,6 +8,7 @@ export interface IPResourceInput {
   rightsOwner: string;
   contact: string;
   markets: string[];
+  marketPenetrations?: Record<string, number>;
   audience: string;
   summary: string;
   cooperationStatus: string;
