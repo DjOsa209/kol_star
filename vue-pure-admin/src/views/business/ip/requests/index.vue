@@ -2,7 +2,9 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import dayjs from "dayjs";
 import * as XLSX from "xlsx";
+import RequestText from "./components/RequestText.vue";
 import {
   getIPResource,
   getIPRequest,
@@ -117,6 +119,32 @@ const contactStages = [
   { key: "media", label: "媒介投放" },
   { key: "pr", label: "PR" }
 ];
+const projectFields = briefFields.filter(field => field.key !== "projectNotes");
+const requestBrief = computed(() => objectValue(detail.value?.request.brief));
+const requestContacts = computed(() =>
+  normalizedContactsByStage(requestBrief.value.contactsByStage)
+);
+const externalIPs = computed(() =>
+  Array.isArray(requestBrief.value.externalIPs)
+    ? requestBrief.value.externalIPs
+    : []
+);
+
+function detailText(value: unknown, fallback = "待补充") {
+  return value == null || String(value).trim() === ""
+    ? fallback
+    : String(value);
+}
+
+function requestDate(value: string, withTime = false) {
+  if (!value) return "待确定";
+  const date = dayjs(value);
+  if (!withTime && date.isValid() && /^\d{4}-\d{2}-\d{2}/.test(value))
+    return value.slice(0, 10);
+  return date.isValid()
+    ? date.format(withTime ? "YYYY-MM-DD HH:mm" : "YYYY-MM-DD")
+    : value;
+}
 type Colleague = {
   id?: string | number;
   name: string;
@@ -1244,10 +1272,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-loading="loading" class="ip-request-page">
+  <div
+    v-loading="loading"
+    class="ip-request-page"
+    :class="{ 'ip-detail-page': mode === 'detail' }"
+  >
     <div class="ip-header">
       <div>
-        <div v-if="mode !== 'list'" class="ip-kicker">
+        <div v-if="mode === 'new'" class="ip-kicker">
           需求管理 / {{ mode === "new" ? "提起IP需求" : pageTitle }}
         </div>
         <h1>
@@ -1257,7 +1289,7 @@ onUnmounted(() => {
               : mode === "new"
                 ? "提起IP需求"
                 : menuKind === "requests"
-                  ? detail?.request.projectName || "需求详情"
+                  ? "IP需求详情"
                   : pageTitle
           }}
         </h1>
@@ -1806,14 +1838,14 @@ onUnmounted(() => {
     >
 
     <template v-else-if="mode === 'detail' && detail"
-      ><div class="ip-card">
+      ><div class="ip-card ip-request-detail">
         <div class="ip-detail-title">
           <div>
             <h2>{{ detail.request.projectName }}</h2>
             <p>
               {{ detail.request.department }} ·
               {{ arrayValue(detail.request.markets).join(" / ") }} ·
-              {{ detail.request.createdAt }}
+              {{ requestDate(detail.request.createdAt, true) }}
             </p>
           </div>
           <el-tag
@@ -1825,7 +1857,7 @@ onUnmounted(() => {
             >{{ statusText[detail.request.status] }}</el-tag
           >
         </div>
-        <div class="ip-timeline">
+        <div class="ip-timeline ip-detail-timeline" aria-label="需求协作流程">
           <span :class="{ done: detail.request.status !== 'draft' }"
             ><b>1</b>需求已提交</span
           ><span
@@ -1840,68 +1872,109 @@ onUnmounted(() => {
             ><b>3</b>营销意见补充</span
           ><span><b>4</b>意向IP确认</span>
         </div>
-        <div class="ip-summary">
-          <span
-            >合作目标：<strong>{{ detail.request.goal }}</strong></span
-          ><span
-            >授权预算：<strong>{{ priceText(detail.request) }}</strong></span
-          ><span
-            >预计上线：<strong>{{
-              detail.request.expectedLaunch || "待确定"
-            }}</strong></span
-          >
+        <div class="ip-detail-summary">
+          <div>
+            <span>合作目标</span>
+            <strong>{{ detailText(detail.request.goal, "待确定") }}</strong>
+          </div>
+          <div>
+            <span>授权预算</span>
+            <strong>{{ priceText(detail.request) }}</strong>
+          </div>
+          <div>
+            <span>预计上线</span>
+            <strong>{{ requestDate(detail.request.expectedLaunch) }}</strong>
+          </div>
         </div>
-        <p>{{ detail.request.description }}</p>
-        <p v-if="detail.request.externalRecommendation">
-          <strong>库外IP推荐：</strong
-          >{{ detail.request.externalRecommendation }}
-        </p>
-        <div
-          v-if="Object.keys(objectValue(detail.request.brief)).length"
-          class="ip-form-grid"
-        >
-          <div v-for="field in briefFields" :key="field.key">
-            <strong>{{ field.label }}：</strong
-            >{{ objectValue(detail.request.brief)[field.key] || "待补充" }}
-          </div>
-          <div v-for="stage in contactStages" :key="stage.key">
-            <strong>{{ stage.label }}对接人：</strong>
-            {{
-              objectValue(objectValue(detail.request.brief).contactsByStage)[
-                stage.key
-              ]?.name || "待补充"
-            }}
-          </div>
-          <div
-            v-if="
-              !Object.keys(
-                objectValue(objectValue(detail.request.brief).contactsByStage)
-              ).length && objectValue(detail.request.brief).contacts
-            "
-            class="ip-span"
-          >
-            <strong>原对接人：</strong
-            >{{ objectValue(detail.request.brief).contacts }}
-          </div>
-          <div
-            v-for="(item, index) in objectValue(detail.request.brief)
-              .externalIPs || []"
-            :key="index"
-            class="ip-span"
-          >
-            <strong>库外IP {{ Number(index) + 1 }}：</strong>{{ item.name }} ·
-            {{ item.rightsOwner }} · {{ item.reason }}
-            <el-button link @click="openExternalIP(item)"
-              >补充并入库 ↗</el-button
+        <div class="ip-detail-body">
+          <div class="ip-detail-main">
+            <section
+              class="ip-detail-section"
+              aria-labelledby="ip-project-info"
             >
+              <h3 id="ip-project-info">项目资料</h3>
+              <dl class="ip-detail-facts">
+                <div
+                  v-for="field in projectFields"
+                  :key="field.key"
+                  :class="{ 'ip-detail-wide': field.key === 'cooperationMode' }"
+                >
+                  <dt>{{ field.label }}</dt>
+                  <dd>{{ detailText(requestBrief[field.key]) }}</dd>
+                </div>
+              </dl>
+            </section>
+            <section
+              class="ip-detail-section"
+              aria-labelledby="ip-request-description"
+            >
+              <h3 id="ip-request-description">项目背景与需求说明</h3>
+              <RequestText :text="detail.request.description" />
+            </section>
+            <section
+              class="ip-detail-section"
+              aria-labelledby="ip-project-notes"
+            >
+              <h3 id="ip-project-notes">项目补充说明</h3>
+              <RequestText :text="detailText(requestBrief.projectNotes)" />
+            </section>
+            <section
+              v-if="detail.request.externalRecommendation || externalIPs.length"
+              class="ip-detail-section"
+              aria-labelledby="ip-external-recommendations"
+            >
+              <h3 id="ip-external-recommendations">库外IP推荐</h3>
+              <RequestText
+                v-if="detail.request.externalRecommendation"
+                :text="detail.request.externalRecommendation"
+              />
+              <div
+                v-for="(item, index) in externalIPs"
+                :key="index"
+                class="ip-detail-external"
+              >
+                <div class="ip-detail-external-head">
+                  <strong>{{ detailText(item.name) }}</strong>
+                  <el-button link @click="openExternalIP(item)"
+                    >补充并入库 ↗</el-button
+                  >
+                </div>
+                <p>版权方：{{ detailText(item.rightsOwner) }}</p>
+                <RequestText :text="item.reason" />
+              </div>
+            </section>
           </div>
+          <section
+            class="ip-detail-contacts"
+            aria-labelledby="ip-project-contacts"
+          >
+            <h3 id="ip-project-contacts">协作对接人</h3>
+            <dl class="ip-detail-contact-list">
+              <div v-for="stage in contactStages" :key="stage.key">
+                <dt>{{ stage.label }}</dt>
+                <dd>{{ detailText(requestContacts[stage.key]?.name) }}</dd>
+              </div>
+              <div
+                v-if="
+                  !Object.keys(objectValue(requestBrief.contactsByStage))
+                    .length && requestBrief.contacts
+                "
+                class="ip-detail-wide"
+              >
+                <dt>原对接人</dt>
+                <dd>{{ requestBrief.contacts }}</dd>
+              </div>
+            </dl>
+          </section>
         </div>
-        <el-button v-if="detail.request.status === 'draft'" @click="editDraft"
-          >继续编辑草稿</el-button
-        >
-        <el-button @click="openRecommendationsFromDetail"
-          >根据此需求寻找匹配IP ↗</el-button
-        >
+        <div class="ip-detail-actions">
+          <el-button v-if="detail.request.status === 'draft'" @click="editDraft"
+            >继续编辑草稿</el-button
+          >
+          <el-button @click="openRecommendationsFromDetail"
+            >根据此需求寻找匹配IP ↗</el-button
+          >
+        </div>
       </div>
       <div class="ip-grid">
         <div class="ip-stack">
@@ -2220,7 +2293,9 @@ onUnmounted(() => {
             <div class="ip-record">
               <b>1</b
               ><span
-                >需求已提交<small>{{ detail.request.createdAt }}</small></span
+                >需求已提交<small>{{
+                  requestDate(detail.request.createdAt, true)
+                }}</small></span
               >
             </div>
             <div class="ip-record">
@@ -2760,17 +2835,216 @@ onUnmounted(() => {
   font-size: 22px;
 }
 
-.ip-summary {
+.ip-detail-page .ip-header,
+.ip-request-detail .ip-detail-title {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.ip-detail-page .ip-header > div:first-child,
+.ip-request-detail .ip-detail-title > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ip-detail-page .ip-header h1 {
+  line-height: 1.35;
+}
+
+.ip-request-detail {
+  padding: 24px;
+}
+
+.ip-request-detail .ip-detail-title {
+  margin-bottom: 20px;
+}
+
+.ip-request-detail .ip-detail-title p {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #687078;
+}
+
+.ip-detail-title .el-tag {
+  flex: none;
+}
+
+.ip-detail-timeline {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.ip-detail-timeline span {
+  min-width: 0;
+  font-size: 13px;
+  color: #687078;
+}
+
+.ip-detail-timeline b {
+  flex: none;
+}
+
+.ip-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 24px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  background: #f7f8f4;
+  border-radius: 6px;
+}
+
+.ip-detail-summary > div {
   display: flex;
-  gap: 30px;
-  padding: 16px 0;
-  margin-bottom: 15px;
-  color: #858b91;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ip-detail-summary span {
+  font-size: 12px;
+  color: #687078;
+}
+
+.ip-detail-summary strong {
+  font-size: 16px;
+  line-height: 1.5;
+  color: #15191c;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.ip-detail-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 32px;
+}
+
+.ip-detail-main {
+  min-width: 0;
+}
+
+.ip-request-detail h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.ip-detail-section + .ip-detail-section {
+  padding-top: 24px;
+  margin-top: 24px;
+  border-top: 1px solid #eceee9;
+}
+
+dl.ip-detail-facts,
+dl.ip-detail-contact-list {
+  margin: 0;
+}
+
+dl.ip-detail-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.ip-detail-facts > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.ip-detail-wide {
+  grid-column: 1 / -1;
+}
+
+.ip-request-detail dt {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #687078;
+}
+
+.ip-request-detail dl dd {
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.7;
+  color: #30363b;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  border: 0;
+}
+
+.ip-detail-contacts {
+  min-width: 0;
+  padding-left: 24px;
+  border-left: 1px solid #eceee9;
+}
+
+dl.ip-detail-contact-list {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.ip-detail-contact-list > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 0;
   border-bottom: 1px solid #eceee9;
 }
 
-.ip-summary strong {
-  color: #15191c;
+.ip-detail-contact-list > div:first-child {
+  padding-top: 0;
+}
+
+.ip-detail-contact-list > div:last-child {
+  border-bottom: 0;
+}
+
+.ip-detail-external {
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid #eceee9;
+}
+
+.ip-detail-external-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  overflow-wrap: anywhere;
+}
+
+.ip-detail-external > p {
+  margin: 8px 0;
+  font-size: 13px;
+  color: #687078;
+  overflow-wrap: anywhere;
+}
+
+.ip-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 20px;
+  margin-top: 24px;
+  border-top: 1px solid #eceee9;
+}
+
+.ip-detail-actions .el-button {
+  min-height: 36px;
+  margin: 0;
+}
+
+.ip-request-detail ::selection {
+  color: #172000;
+  background: #e2f5a0;
 }
 
 .ip-candidate {
@@ -2950,6 +3224,30 @@ onUnmounted(() => {
   .ip-score-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .ip-detail-body {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .ip-detail-contacts {
+    padding: 24px 0 0;
+    border-top: 1px solid #eceee9;
+    border-left: 0;
+  }
+
+  dl.ip-detail-contact-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 24px;
+  }
+
+  .ip-detail-contact-list > div:first-child {
+    padding-top: 12px;
+  }
+
+  .ip-detail-timeline {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (width <= 700px) {
@@ -2959,7 +3257,6 @@ onUnmounted(() => {
 
   .ip-header,
   .ip-search,
-  .ip-summary,
   .ip-add-candidate {
     flex-wrap: wrap;
   }
@@ -2976,6 +3273,46 @@ onUnmounted(() => {
   .ip-timeline {
     font-size: 12px;
     flex-wrap: wrap;
+  }
+
+  .ip-request-detail {
+    padding: 16px;
+  }
+
+  .ip-detail-summary {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .ip-detail-summary > div {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 12px;
+    align-items: baseline;
+  }
+
+  .ip-detail-summary strong {
+    font-size: 14px;
+  }
+
+  dl.ip-detail-facts,
+  dl.ip-detail-contact-list {
+    grid-template-columns: 1fr;
+  }
+
+  .ip-detail-facts > div {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+
+  .ip-detail-timeline {
+    gap: 16px 8px;
+    padding: 12px;
+  }
+
+  .ip-detail-timeline span {
+    gap: 6px;
+    font-size: 12px;
   }
 }
 </style>
