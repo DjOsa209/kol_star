@@ -10,11 +10,6 @@ defineProps<{ collapsed: boolean }>();
 const route = useRoute();
 const sessions = useIPRecommendationSessionsStore();
 const visible = computed(() => route.path === "/business/ip/recommendations");
-const stageLabels = {
-  confirm: "需求确认",
-  research: "候选研究",
-  compare: "比较决策"
-};
 
 function openSession(id: number | null) {
   if (sessions.busy) return;
@@ -76,12 +71,7 @@ function openSession(id: number | null) {
         >
           <IconifyIconOffline :icon="Chat" />
           <span
-            ><strong>{{ item.name }}</strong
-            ><small>{{
-              item.ipWorkspace?.stage
-                ? stageLabels[item.ipWorkspace.stage]
-                : "项目研究"
-            }}</small></span
+            ><strong>{{ item.name }}</strong></span
           >
         </button>
       </nav>
@@ -132,7 +122,7 @@ function openSession(id: number | null) {
 .session-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
   max-height: min(36vh, 360px);
   overflow-y: auto;
   scrollbar-color: var(--pure-theme-menu-text) transparent;
@@ -156,7 +146,6 @@ function openSession(id: number | null) {
   min-height: 44px;
   padding: 10px 12px;
   text-align: left;
-  border-radius: 8px;
 }
 
 .ip-menu-sessions svg {
@@ -171,34 +160,23 @@ function openSession(id: number | null) {
 }
 
 .session-item strong {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 2;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-}
-
-.session-item small {
   display: block;
-  margin-top: 4px;
-  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.6;
+  white-space: nowrap;
 }
 
 .ip-menu-sessions .selected,
 .ip-menu-sessions button:hover:not(:disabled) {
   color: var(--pure-theme-sub-menu-active-text);
-  background: var(--pure-theme-menu-hover);
 }
 
-.session-item.selected {
-  border-left: 1px solid var(--pure-theme-menu-active-before);
-}
-
-.session-item.selected > svg {
-  color: var(--pure-theme-menu-active-before);
+.session-item.selected strong,
+.session-new.selected {
+  font-weight: 600;
 }
 
 .session-new {
@@ -206,7 +184,7 @@ function openSession(id: number | null) {
 }
 
 .ip-menu-sessions button:focus-visible {
-  outline: 2px solid var(--pure-theme-menu-active-before);
+  outline: 1px solid currentcolor;
   outline-offset: -2px;
 }
 
@@ -240,6 +218,5 @@ function openSession(id: number | null) {
   place-items: center;
   width: 100%;
   min-height: 44px;
-  border-radius: 8px;
 }
 </style>

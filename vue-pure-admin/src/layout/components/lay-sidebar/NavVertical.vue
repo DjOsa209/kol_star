@@ -90,7 +90,13 @@ onBeforeUnmount(() => {
 <template>
   <div
     v-loading="loading"
-    :class="['sidebar-container', showLogo ? 'has-logo' : 'no-logo']"
+    :class="[
+      'sidebar-container',
+      showLogo ? 'has-logo' : 'no-logo',
+      {
+        'ip-recommendation-menu': route.path === '/business/ip/recommendations'
+      }
+    ]"
     @mouseenter.prevent="isShow = true"
     @mouseleave.prevent="isShow = false"
   >
@@ -135,5 +141,20 @@ onBeforeUnmount(() => {
 <style scoped>
 :deep(.el-loading-mask) {
   opacity: 0.45;
+}
+
+.ip-recommendation-menu :deep(.el-menu-item.is-active) {
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+.ip-recommendation-menu :deep(.el-menu-item.is-active::before),
+.ip-recommendation-menu
+  :deep(.is-active.outer-most.el-sub-menu > .el-sub-menu__title::before) {
+  display: none !important;
+}
+
+.ip-recommendation-menu :deep(.left-collapse svg) {
+  color: var(--pure-theme-menu-text) !important;
 }
 </style>
