@@ -15,7 +15,6 @@ import VuePdfEmbed, { useVuePdfEmbed } from "vue-pdf-embed";
 import { Icon } from "@iconify/vue";
 import * as XLSX from "xlsx";
 import { workspaceIcons as icons } from "./icons";
-import infinixWordmark from "@/assets/infinix-wordmark.svg";
 import {
   converseIPRecommendations,
   type IPRecommendationPresentation,
@@ -408,6 +407,10 @@ function startNew() {
   workbenchTab.value = "candidates";
   editing.value = false;
   activeView.value = "all";
+  const query = { ...route.query };
+  delete query.subscriptionId;
+  delete query.resultId;
+  void router.replace({ path: route.path, query });
 }
 
 function editSubscription(item: RecommendationSubscription) {
@@ -1004,76 +1007,38 @@ onUnmounted(() => {
 
 <template>
   <div v-loading="loading" class="ip-recommend-page">
-    <aside class="research-sidebar" aria-label="IP运营导航">
-      <div class="research-brand">
-        <img :src="infinixWordmark" alt="Infinix" /><span>IP运营</span>
-      </div>
-      <nav class="research-nav">
-        <router-link to="/business/ip/resources"
-          ><Icon :icon="icons.home" />IP资源库</router-link
+    <div class="research-main">
+      <header class="ip-head research-header">
+        <div>
+          <h1>IP AI推荐</h1>
+          <p>通过对话明确合作方向，研究候选并形成初步意向</p>
+        </div>
+        <el-button
+          :disabled="conversationBusy || attachmentReading"
+          @click="startNew"
         >
-        <router-link to="/business/ip/requests"
-          ><Icon :icon="icons.file" />IP提需</router-link
-        >
-        <span class="nav-current" aria-current="page"
-          ><Icon :icon="icons.spark" />AI推荐</span
-        >
-      </nav>
-      <div class="session-heading">项目会话</div>
-      <div class="session-list">
-        <button
-          v-for="item in subscriptions"
-          :key="item.id"
-          type="button"
-          :class="{ 'session-current': selectedId === item.id }"
-          :disabled="conversationBusy"
-          @click="selectSubscription(item.id)"
-        >
-          <Icon :icon="icons.chat" /><span>{{ item.name }}</span>
-        </button>
-        <p v-if="!subscriptions.length" class="session-empty">
-          项目研究与对话将在这里保留。
-        </p>
-      </div>
-      <button
-        type="button"
-        class="new-session"
-        aria-label="新建会话"
-        :disabled="conversationBusy"
-        @click="startNew"
-      >
-        <Icon :icon="icons.plus" /><span>新建会话</span>
-      </button>
-      <div class="sidebar-bottom">
-        <router-link to="/business/ip/requests"
-          ><Icon :icon="icons.back" />返回工作台</router-link
-        >
-        <button
-          v-if="selectedSubscription"
-          type="button"
-          :disabled="conversationBusy"
-          @click="showConditions"
-        >
-          <Icon :icon="icons.settings" /><span>会话设置</span>
-        </button>
-      </div>
-    </aside>
-    <main class="research-main">
-      <div class="workspace-breadcrumb">IP运营 <span>/</span> AI推荐助手</div>
-      <el-select
-        class="mobile-sessions"
-        :model-value="selectedId || 0"
-        :disabled="conversationBusy"
-        aria-label="选择项目会话"
-        @change="value => (value ? selectSubscription(value) : startNew())"
-        ><el-option label="新建项目会话" :value="0" /><el-option
-          v-for="item in subscriptions"
-          :key="item.id"
-          :label="item.name"
-          :value="item.id"
-      /></el-select>
-      <header class="research-header">
-        <h1>AI 推荐助手</h1>
+          <Icon :icon="icons.plus" />新建会话
+        </el-button>
+      </header>
+      <div class="research-session-bar">
+        <label class="session-switch">
+          <span>项目会话</span>
+          <el-select
+            class="project-session-select"
+            :model-value="selectedId || 0"
+            :disabled="conversationBusy || attachmentReading"
+            aria-label="选择项目会话"
+            @change="value => (value ? selectSubscription(value) : startNew())"
+          >
+            <el-option label="新合作研究" :value="0" />
+            <el-option
+              v-for="item in subscriptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </label>
         <div class="project-context">
           <h2>{{ projectLabel }}</h2>
           <p>
@@ -1090,7 +1055,7 @@ onUnmounted(() => {
             /></router-link>
           </p>
         </div>
-      </header>
+      </div>
       <nav class="research-stages" aria-label="推荐研究阶段">
         <button
           v-for="(label, index) in [
@@ -1756,7 +1721,7 @@ onUnmounted(() => {
           </div>
         </section>
       </div>
-    </main>
+    </div>
     <el-dialog
       v-model="editing"
       class="ip-workspace-dialog"
@@ -2197,11 +2162,11 @@ onUnmounted(() => {
   --workspace-line: #e3e6df;
   --workspace-accent: #caff00;
 
-  position: fixed;
-  inset: 0;
-  z-index: 1400;
-  display: flex;
-  font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  position: relative;
+  min-width: 0;
+  min-height: calc(100vh - 150px);
+  padding: 16px 28px 36px;
+  container: ip-recommendation / inline-size;
   font-size: 14px;
   line-height: 1.6;
   color: var(--workspace-ink);
@@ -2247,196 +2212,35 @@ onUnmounted(() => {
   background: #e4f7a0;
 }
 
-.research-sidebar {
-  display: flex;
-  flex: 0 0 207px;
-  flex-direction: column;
-  gap: 0;
-  padding: 24px 14px;
-  overflow-y: auto;
-  color: #e2e8e1;
-  background: #18201c;
-}
-
-.research-brand {
-  display: flex;
-  flex-direction: column;
-  padding: 0 12px 32px;
-  line-height: 1.4;
-}
-
-.research-brand img {
-  width: 114px;
-  height: auto;
-  margin: 8px 0 4px;
-  filter: invert(1);
-}
-
-.research-brand span {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #bec8bd;
-}
-
-.research-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-bottom: 28px;
-  border-bottom: 1px solid #374039;
-}
-
-.research-nav a,
-.nav-current {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  min-height: 44px;
-  padding: 10px 14px;
-  color: #dce4da;
-  border-radius: 8px;
-}
-
-.research-nav svg {
-  flex: none;
-  width: 20px;
-  height: 20px;
-}
-
-.research-nav a:hover {
-  color: white;
-  text-decoration: none;
-  background: #263029;
-}
-
-.nav-current {
-  position: relative;
-  font-weight: 600;
-  color: white;
-  background: #2b342e;
-}
-
-.nav-current::before {
-  position: absolute;
-  top: 14px;
-  bottom: 14px;
-  left: 0;
-  width: 2px;
-  content: "";
-  background: var(--workspace-accent);
-}
-
-.session-heading {
-  padding: 24px 12px 12px;
-  font-size: 12px;
-  color: #b3bfb1;
-}
-
-.session-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 44vh;
-  overflow-y: auto;
-}
-
-.session-list button,
-.new-session {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 12px;
-  color: #dbe5d8;
-  text-align: left;
-  background: none;
-  border: 0;
-  border-radius: 7px;
-}
-
-.session-list button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.session-list svg,
-.new-session svg {
-  flex: none;
-  width: 17px;
-  height: 17px;
-}
-
-.session-list button:hover,
-.session-list .session-current {
-  color: white;
-  background: #2b342e;
-}
-
-.session-empty {
-  padding: 0 12px;
-  font-size: 12px;
-  color: #b3bfb1;
-}
-
-.new-session {
-  margin-top: 12px;
-}
-
-.new-session:hover {
-  background: #2b342e;
-}
-
-.sidebar-bottom {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 24px 8px 4px;
-  margin-top: auto;
-}
-
-.sidebar-bottom a,
-.sidebar-bottom button {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  font-size: 12px;
-  color: #c7d2c3;
-  text-align: left;
-  background: none;
-  border: 0;
-}
-
-.sidebar-bottom svg {
-  width: 17px;
-  height: 17px;
-}
-
 .research-main {
-  flex: 1;
   min-width: 0;
-  padding: 18px 28px 32px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-color: #b6c1b0 #fafaf7;
-  scrollbar-width: thin;
 }
 
-.workspace-breadcrumb {
-  margin-bottom: 20px;
-  font-size: 12px;
-  color: #59685c;
+.research-session-bar {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-top: 1px solid var(--workspace-line);
 }
 
-.workspace-breadcrumb span {
-  margin: 0 12px;
-  color: #8b958a;
+.session-switch {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--workspace-muted);
 }
 
-.mobile-sessions {
-  display: none;
+.session-switch > span {
+  flex: none;
+}
+
+.project-session-select {
+  width: 280px;
+  max-width: 100%;
 }
 
 .research-header {
@@ -2450,11 +2254,28 @@ onUnmounted(() => {
 .research-header h1 {
   flex: none;
   margin: 0;
-  font-size: 46px;
+  font-size: 28px;
   font-weight: 700;
   line-height: 1.3;
   color: #111914;
   letter-spacing: -0.025em;
+}
+
+.research-header p {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--workspace-muted);
+}
+
+.research-header :deep(.el-button > span) {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.research-header svg {
+  width: 16px;
+  height: 16px;
 }
 
 .project-context {
@@ -2465,7 +2286,7 @@ onUnmounted(() => {
 
 .project-context h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -2831,7 +2652,7 @@ onUnmounted(() => {
 
 .assistant-content > h2 {
   margin: 0 0 8px;
-  font-size: clamp(24px, 2.4vw, 36px);
+  font-size: clamp(24px, 2.2cqw, 30px);
   font-weight: 650;
   line-height: 1.3;
   color: #101713;
@@ -3734,16 +3555,7 @@ onUnmounted(() => {
   max-width: calc(100vw - 32px);
 }
 
-@media (width <= 1150px) {
-  .research-sidebar {
-    flex-basis: 160px;
-    padding: 20px 10px;
-  }
-
-  .research-main {
-    padding: 16px 20px 28px;
-  }
-
+@container ip-recommendation (width <= 1050px) {
   .research-columns {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 0.95fr);
     gap: 20px;
@@ -3758,77 +3570,23 @@ onUnmounted(() => {
     padding-left: 12px;
   }
 
-  .research-header h1 {
-    font-size: 32px;
-  }
-
-  .project-context h2 {
-    font-size: 17px;
-  }
-
   .composer-actions > span {
     display: none;
   }
 }
 
-@media (width <= 900px) {
-  .mobile-sessions {
-    display: block;
-    max-width: 280px;
-    margin-bottom: 16px;
-  }
-
-  .research-sidebar {
-    flex-basis: 68px;
-    padding: 24px 10px;
-  }
-
-  .research-brand {
-    padding: 0 0 28px;
-  }
-
-  .research-brand img {
-    width: 46px;
-  }
-
-  .research-brand span,
-  .session-heading,
-  .session-list {
-    display: none;
-  }
-
-  .research-nav a,
-  .nav-current,
-  .new-session,
-  .sidebar-bottom a,
-  .sidebar-bottom button {
-    gap: 0;
-    justify-content: center;
-    padding: 12px;
-    font-size: 0;
-  }
-
-  .sidebar-bottom span,
-  .new-session span {
-    display: none;
-  }
-
+@container ip-recommendation (width <= 780px) {
   .research-columns {
     grid-template-columns: 1fr;
-    gap: 28px;
+    gap: 24px;
   }
 
-  .assistant-content > h2 {
-    font-size: 28px;
+  .research-session-bar {
+    align-items: flex-start;
   }
 
-  .cooperation-workbench {
-    padding: 24px;
-  }
-
-  .comparison-media img,
-  .comparison-media .visual-empty {
-    height: clamp(160px, 26vw, 240px);
+  .project-session-select {
+    width: 220px;
   }
 
   .research-stages {
@@ -3846,41 +3604,36 @@ onUnmounted(() => {
   }
 }
 
-@media (width <= 600px) {
-  .research-sidebar {
-    flex-basis: 52px;
-    padding: 20px 6px;
-  }
-
-  .research-brand img {
-    width: 34px;
-  }
-
-  .research-nav a,
-  .nav-current,
-  .new-session,
-  .sidebar-bottom a,
-  .sidebar-bottom button {
-    padding: 10px 6px;
-  }
-
-  .research-main {
-    padding: 20px 14px 28px;
-  }
-
-  .workspace-breadcrumb {
-    margin-bottom: 16px;
-    font-size: 10px;
-  }
-
+@container ip-recommendation (width <= 540px) {
   .research-header {
-    flex-direction: column;
     gap: 12px;
     align-items: flex-start;
   }
 
   .research-header h1 {
-    font-size: 30px;
+    font-size: 24px;
+  }
+
+  .research-header p {
+    font-size: 13px;
+  }
+
+  .research-header :deep(.el-button) {
+    flex: none;
+  }
+
+  .research-session-bar {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .session-switch {
+    width: 100%;
+  }
+
+  .project-session-select {
+    flex: 1;
+    width: auto;
   }
 
   .project-context {
@@ -4039,6 +3792,12 @@ onUnmounted(() => {
 
   .condition-editor .editor-footer > span {
     max-width: none;
+  }
+}
+
+@media (width <= 600px) {
+  .ip-recommend-page {
+    padding: 16px;
   }
 }
 </style>

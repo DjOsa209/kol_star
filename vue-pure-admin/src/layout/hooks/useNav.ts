@@ -3,7 +3,7 @@ import { getConfig } from "@/config";
 import { useRouter } from "vue-router";
 import { emitter } from "@/utils/mitt";
 import Avatar from "@/assets/user.jpg";
-import brandWordmark from "@/assets/infinix-wordmark.svg";
+import brandWordmark from "@/assets/infinix-wordmark.svg?url";
 import { getTopMenu } from "@/router/utils";
 import { useFullscreen } from "@vueuse/core";
 import type { routeMetaType } from "../types";
