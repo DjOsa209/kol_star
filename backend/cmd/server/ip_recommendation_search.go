@@ -20,6 +20,12 @@ type ipExternalSearch struct {
 	Provider   string                   `json:"provider"`
 	SearchedAt string                   `json:"searchedAt"`
 	Results    []recommendationEvidence `json:"results"`
+	Phase      string                   `json:"phase,omitempty"`
+	Brief      *ipResearchBrief         `json:"brief,omitempty"`
+	Candidates []ipExternalCandidate    `json:"candidates,omitempty"`
+	Queries    []string                 `json:"queries,omitempty"`
+	Rounds     int                      `json:"rounds,omitempty"`
+	Gaps       []string                 `json:"gaps,omitempty"`
 }
 
 type ipSearchProvider struct{ name, endpoint, key string }
@@ -100,6 +106,11 @@ func searchExternalIPResources(ctx context.Context, userID int, query string, co
 }
 
 func searchExternalIPResourcesWithTransport(ctx context.Context, query string, provider ipSearchProvider, transport http.RoundTripper) ([]recommendationEvidence, error) {
+	items, err := searchIPResearchPages(ctx, query, provider, preferredIPResearchDomains(), 360, transport)
+	return prioritizeIPResearchEvidence(filterIPResearchEvidence(items, researchTopic(query))), err
+}
+
+func searchIPResearchPages(ctx context.Context, query string, provider ipSearchProvider, domains []string, summaryLimit int, transport http.RoundTripper) ([]recommendationEvidence, error) {
 	endpoint, err := url.Parse(provider.endpoint)
 	if err != nil {
 		return nil, errors.New("搜索服务配置无效")
@@ -109,7 +120,7 @@ func searchExternalIPResourcesWithTransport(ctx context.Context, query string, p
 	switch provider.name {
 	case "tavily":
 		method = http.MethodPost
-		encoded, _ := json.Marshal(map[string]any{"query": query, "search_depth": "basic", "max_results": 6, "auto_parameters": false, "include_answer": false, "include_raw_content": false, "include_images": false, "include_domains": preferredIPResearchDomains(), "include_domains_mode": "prefer", "include_published_date": true})
+		encoded, _ := json.Marshal(map[string]any{"query": query, "search_depth": "basic", "max_results": 6, "auto_parameters": false, "include_answer": false, "include_raw_content": false, "include_images": false, "include_domains": domains, "include_domains_mode": "prefer", "include_published_date": true})
 		body = bytes.NewReader(encoded)
 	case "brave", "searxng":
 		params := endpoint.Query()
@@ -155,10 +166,11 @@ func searchExternalIPResourcesWithTransport(ctx context.Context, query string, p
 	}
 	var payload struct {
 		Results []struct {
-			Title       string `json:"title"`
-			URL         string `json:"url"`
-			Content     string `json:"content"`
-			PublishedAt string `json:"published_date"`
+			Title       string  `json:"title"`
+			URL         string  `json:"url"`
+			Content     string  `json:"content"`
+			PublishedAt string  `json:"published_date"`
+			Score       float64 `json:"score"`
 		} `json:"results"`
 		Web struct {
 			Results []struct {
@@ -173,22 +185,22 @@ func searchExternalIPResourcesWithTransport(ctx context.Context, query string, p
 	}
 	items := []recommendationEvidence{}
 	seen := map[string]bool{}
-	appendResult := func(title, rawURL, summary, publishedAt string) {
+	appendResult := func(title, rawURL, summary, publishedAt string, score float64) {
 		link, source, valid := canonicalRecommendationEvidenceURL(rawURL)
-		title, summary = cleanRecommendationEvidenceText(title, 160), cleanRecommendationEvidenceText(summary, 360)
+		title, summary = cleanRecommendationEvidenceText(title, 160), cleanRecommendationEvidenceText(summary, summaryLimit)
 		if !valid || title == "" || summary == "" || seen[link] || len(items) >= 20 {
 			return
 		}
 		seen[link] = true
-		items = append(items, recommendationEvidence{Title: title, URL: link, Source: source, Summary: summary, PublishedAt: cleanRecommendationEvidenceText(publishedAt, 80)})
+		items = append(items, labelIPResearchEvidence(recommendationEvidence{Title: title, URL: link, Source: source, Summary: summary, Score: score, PublishedAt: cleanRecommendationEvidenceText(publishedAt, 80)}))
 	}
 	for _, result := range payload.Results {
-		appendResult(result.Title, result.URL, result.Content, result.PublishedAt)
+		appendResult(result.Title, result.URL, result.Content, result.PublishedAt, result.Score)
 	}
 	for _, result := range payload.Web.Results {
-		appendResult(result.Title, result.URL, result.Description, "")
+		appendResult(result.Title, result.URL, result.Description, "", 0)
 	}
-	return prioritizeIPResearchEvidence(items), nil
+	return items, nil
 }
 
 func externalIPSearchPresentation(search *ipExternalSearch) ipRecommendationPresentation {

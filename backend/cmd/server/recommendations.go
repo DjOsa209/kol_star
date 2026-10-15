@@ -69,15 +69,16 @@ type recommendationCandidate struct {
 // External references are returned by the fixed, server-side search provider.
 // Model output can select these references by index, but cannot supply URLs.
 type recommendationEvidence struct {
-	Title          string `json:"title"`
-	URL            string `json:"url"`
-	Source         string `json:"source"`
-	PublishedAt    string `json:"publishedAt,omitempty"`
-	Summary        string `json:"summary,omitempty"`
-	SourceName     string `json:"sourceName,omitempty"`
-	SourcePriority string `json:"sourcePriority,omitempty"`
-	SourceCategory string `json:"sourceCategory,omitempty"`
-	EvidenceUse    string `json:"evidenceUse,omitempty"`
+	Score          float64 `json:"score,omitempty"`
+	Title          string  `json:"title"`
+	URL            string  `json:"url"`
+	Source         string  `json:"source"`
+	PublishedAt    string  `json:"publishedAt,omitempty"`
+	Summary        string  `json:"summary,omitempty"`
+	SourceName     string  `json:"sourceName,omitempty"`
+	SourcePriority string  `json:"sourcePriority,omitempty"`
+	SourceCategory string  `json:"sourceCategory,omitempty"`
+	EvidenceUse    string  `json:"evidenceUse,omitempty"`
 }
 
 func readRecommendationJSON(w http.ResponseWriter, r *http.Request, out any) bool {
@@ -262,6 +263,7 @@ func (a *app) recommendationSubscriptionSave(w http.ResponseWriter, r *http.Requ
 			workspace.Messages = slices.Clone(workspace.Messages)
 			workspace.Messages = append(workspace.Messages, ipRecommendationMessage{Role: "assistant", Content: "寻找条件已更新", CreatedAt: time.Now().Format("2006-01-02 15:04")})
 			workspace.Stage = "research"
+			workspace.ExternalBrief = nil
 			s.IPWorkspace = &workspace
 		}
 	} else {

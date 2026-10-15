@@ -46,6 +46,13 @@ func labelIPResearchEvidence(item recommendationEvidence) recommendationEvidence
 		return item
 	}
 	host := strings.ToLower(parsed.Hostname())
+	if (host == "wipo.int" || strings.HasSuffix(host, ".wipo.int")) && host != "branddb.wipo.int" && !strings.Contains(parsed.Path, "/global-brand-database") {
+		item.SourceName = "WIPO"
+		item.SourcePriority = ""
+		item.SourceCategory = "公开资料"
+		item.EvidenceUse = "WIPO 网站公开页面；具体内容用途需逐页核实，不能视为商标数据库查询结果或授权证明"
+		return item
+	}
 	for _, source := range ipResearchSources {
 		for _, domain := range source.Domains {
 			if host == domain || strings.HasSuffix(host, "."+domain) {

@@ -22,6 +22,7 @@ import { useAppStoreHook } from "@/store/modules/app";
 import { useSettingStoreHook } from "@/store/modules/settings";
 import * as XLSX from "xlsx";
 import { workspaceIcons as icons } from "./icons";
+import ExternalResearchWorkbench from "./ExternalResearchWorkbench.vue";
 import {
   streamIPRecommendations,
   type IPRecommendationPresentation,
@@ -708,6 +709,7 @@ const workbenchTab = ref<"candidates" | "compare" | "intent" | "external">(
   "candidates"
 );
 const compareIds = ref<number[]>([]);
+const externalCompareCount = ref(0);
 const activeCandidateId = ref<number | null>(null);
 const expectedLaunch = ref("");
 const historyOpen = ref(false);
@@ -769,6 +771,11 @@ const intentItems = computed(() =>
 );
 const currentStage = computed(() => {
   if (!selectedSubscription.value) return 0;
+  if (
+    workbenchTab.value === "external" &&
+    latestWebSearch.value?.candidates?.length
+  )
+    return externalCompareCount.value >= 2 ? 3 : 2;
   if (
     selectedSubscription.value.ipWorkspace?.stage === "confirm" ||
     !visibleResults.value.length
@@ -867,6 +874,13 @@ function selectStage(index: number) {
     conditionsOpen.value = !conditionsOpen.value;
     return;
   }
+  if (
+    latestWebSearch.value?.candidates?.length &&
+    (workbenchTab.value === "external" || !visibleResults.value.length)
+  ) {
+    workbenchTab.value = "external";
+    return;
+  }
   workbenchTab.value = index === 3 ? "compare" : "candidates";
 }
 function toggleCompare(item: RecommendationResult) {
@@ -959,8 +973,10 @@ async function converse(
       visibleResults.value[0]?.resourceId ||
       null;
     if (action === "compare") workbenchTab.value = "compare";
-    else if (action === "search") workbenchTab.value = "external";
-    else if (action === "recommend") workbenchTab.value = "candidates";
+    else if (action === "search") {
+      workbenchTab.value = "external";
+      webSearchMode.value = true;
+    } else if (action === "recommend") workbenchTab.value = "candidates";
     composerText.value = "";
     streamingPresentation.value = null;
     pendingUserMessage.value = null;
@@ -1031,7 +1047,14 @@ function composerKeydown(event: KeyboardEvent) {
 }
 function followUp(text: string) {
   composerText.value = text;
-  void converse(text.startsWith("为什么") ? "discuss" : "recommend", text);
+  void converse(
+    webSearchMode.value || presentation.value?.webSearch
+      ? "search"
+      : text.startsWith("为什么")
+        ? "discuss"
+        : "recommend",
+    text
+  );
 }
 function queueIntent(item: RecommendationResult) {
   if (chosenIds.value.includes(item.resourceId)) {
@@ -1142,9 +1165,24 @@ watch(selectedId, () => {
   pendingUserMessage.value = null;
   resumableSessionId.value = null;
   compareIds.value = [];
-  webSearchMode.value = false;
+  webSearchMode.value =
+    !!selectedSubscription.value?.ipWorkspace?.messages.at(-1)?.presentation
+      ?.webSearch;
+  workbenchTab.value = webSearchMode.value ? "external" : "candidates";
   activeCandidateId.value = null;
 });
+watch(
+  () =>
+    selectedSubscription.value?.ipWorkspace?.messages.at(-1)?.presentation
+      ?.webSearch,
+  research => {
+    if (!conversationBusy.value) {
+      webSearchMode.value = !!research;
+      workbenchTab.value = research ? "external" : "candidates";
+    }
+  },
+  { immediate: true }
+);
 watch(visibleResults, () => {
   if (!compareIds.value.length && visibleResults.value.length >= 2)
     compareIds.value = visibleResults.value
@@ -1252,7 +1290,12 @@ watch(
             'stage-current': currentStage === index
           }"
           :aria-current="currentStage === index ? 'step' : undefined"
-          :disabled="conversationBusy || (index > 1 && !visibleResults.length)"
+          :disabled="
+            conversationBusy ||
+            (index > 1 &&
+              !visibleResults.length &&
+              !latestWebSearch?.candidates?.length)
+          "
           @click="selectStage(index)"
         >
           <span class="stage-dot"
@@ -1390,7 +1433,7 @@ watch(
                   presentation.source === "ai"
                     ? "AI 推荐助手"
                     : presentation.webSearch
-                      ? "联网检索结果"
+                      ? "IP 研究助手"
                       : "规则合作建议"
                 }}</strong
                 ><time v-if="latestAssistant && !streamingPresentation">{{
@@ -1402,12 +1445,15 @@ watch(
                 <p class="recommendation-explanation">
                   {{ presentation.explanation }}
                 </p>
-                <div v-if="presentation.webSearch" class="external-evidence">
+                <div
+                  v-if="presentation.webSearch?.results.length"
+                  class="external-evidence"
+                >
                   <h3>
                     联网来源 · {{ presentation.webSearch.results.length }}
                   </h3>
                   <a
-                    v-for="source in presentation.webSearch.results"
+                    v-for="source in presentation.webSearch.results.slice(0, 5)"
                     :key="source.url"
                     :href="safeExternalUrl(source.url)"
                     target="_blank"
@@ -1521,7 +1567,7 @@ watch(
             <p class="composer-note">
               {{
                 webSearchMode
-                  ? "联网模式：仅发送输入框中的公开关键词，项目资料不用于搜索。"
+                  ? "联网模式：根据公开 IP 方向、市场与用途改写检索词，预算和附件不用于搜索。"
                   : "支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。"
               }}
             </p>
@@ -1667,7 +1713,7 @@ watch(
                 :class="{ active: workbenchTab === 'external' }"
                 @click="workbenchTab = 'external'"
               >
-                库外 <b>{{ latestWebSearch?.results.length || 0 }}</b>
+                库外 <b>{{ latestWebSearch?.candidates?.length || 0 }}</b>
               </button>
             </div>
             <button
@@ -1692,54 +1738,12 @@ watch(
             role="tabpanel"
             aria-labelledby="external-tab"
           >
-            <p class="workspace-hint">
-              优先查找授权目录与机构，影响力榜单用于补充背景。
-            </p>
-            <template v-if="latestWebSearch">
-              <p>公开线索 · {{ latestWebSearch.query }}</p>
-              <small
-                >搜索时间 {{ formatTime(latestWebSearch.searchedAt) }} ·
-                授权、报价与合作地域待核实</small
-              >
-              <article
-                v-for="source in latestWebSearch.results"
-                :key="source.url"
-                class="external-resource"
-              >
-                <a
-                  :href="safeExternalUrl(source.url)"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {{ source.title }} <Icon :icon="icons.external" />
-                </a>
-                <small>
-                  {{ source.sourceName || source.source }}
-                  {{
-                    source.sourcePriority ? ` · ${source.sourcePriority}` : ""
-                  }}
-                  · {{ source.sourceCategory || "其他公开资料" }}
-                </small>
-                <small v-if="source.sourceName">{{ source.source }}</small>
-                <small v-if="source.publishedAt"
-                  >来源发布/更新时间：{{ source.publishedAt }}</small
-                >
-                <p>{{ source.summary }}</p>
-                <small v-if="source.evidenceUse">{{
-                  source.evidenceUse
-                }}</small>
-              </article>
-              <p v-if="!latestWebSearch.results.length">
-                暂无可用线索，换个具体名称或公开合作关键词试试。
-              </p>
-            </template>
-            <template v-else>
-              <h3>寻找资源库之外的合作线索</h3>
-              <p>
-                开启输入框下方的“联网搜索”，输入 IP
-                名称、艺术家或公开合作关键词。
-              </p>
-            </template>
+            <ExternalResearchWorkbench
+              :research="latestWebSearch"
+              :busy="conversationBusy"
+              @ask="text => converse('search', text)"
+              @compare-change="externalCompareCount = $event"
+            />
           </div>
           <div v-else-if="!visibleResults.length" class="workbench-empty">
             <Icon :icon="icons.library" />
@@ -1995,7 +1999,7 @@ watch(
           </div>
           <div v-if="workbenchTab === 'external'" class="workbench-footer">
             <p class="workspace-hint">
-              库外线索核实后可录入 IP 资源库，再参与对比与意向选择。
+              库外候选可在此对比；核实并入库后，才能加入正式意向或回填提需。
             </p>
             <router-link to="/business/ip/resources"
               >前往 IP 资源库 <Icon :icon="icons.arrow"

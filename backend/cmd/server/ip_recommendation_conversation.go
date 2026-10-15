@@ -35,8 +35,9 @@ type ipRecommendationPresentation struct {
 	WebSearch             *ipExternalSearch       `json:"webSearch,omitempty"`
 }
 type ipRecommendationConversation struct {
-	Stage    string                    `json:"stage"`
-	Messages []ipRecommendationMessage `json:"messages"`
+	Stage         string                    `json:"stage"`
+	Messages      []ipRecommendationMessage `json:"messages"`
+	ExternalBrief *ipResearchBrief          `json:"externalBrief,omitempty"`
 }
 type ipConversationCriteria struct {
 	Query           *string  `json:"query"`
@@ -499,44 +500,20 @@ func (a *app) ipRecommendationConversation(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusInternalServerError, 500, message)
 		}
 	}
-	var webSearch *ipExternalSearch
 	if input.Action == "search" {
-		if stream != nil && stream.send("status", map[string]string{"message": "正在联网搜索公开 IP 线索…"}) != nil {
-			return
-		}
-		var err error
-		webSearch, err = searchExternalIPResources(r.Context(), userID, input.Message, a.Config().WebSearch)
-		if err != nil {
-			if r.Context().Err() == nil {
-				fail(err.Error())
-			}
-			return
-		}
-		baseEmit := emit
-		emit = func(p ipRecommendationPresentation) error {
-			p.WebSearch = webSearch
-			p.PrimaryResourceID = 0
-			p.AlternativeResourceID = 0
-			return baseEmit(p)
-		}
+		a.handleIPExternalResearch(w, r, s, userID, input.Message, candidates, stream)
+		return
 	}
 	presentation := ipRecommendationPresentation{Source: "rule", Headline: "已整理当前项目需求", Explanation: "请核对寻找条件，确认后开始推荐。", Questions: []string{}, Basis: []ipRecommendationBasis{}, Adjustments: []string{}, SuggestedPrompts: []string{"优先艺术与设计，排除游戏", "先寻找东南亚市场的IP"}}
-	if webSearch != nil {
-		presentation = externalIPSearchPresentation(webSearch)
-	}
 	aiOK := false
 	model, configured := a.assistantAIModel(r.Context())
 	configured = configured && model.EnableRecommendationReason
-	if configured && (webSearch == nil || len(webSearch.Results) > 0) {
+	if configured {
 		preview := emit
 		if input.Action == "recommend" {
 			preview = nil
 		} // Old candidates cannot support the new recommendation.
-		modelCandidates := candidates
-		if webSearch != nil {
-			modelCandidates = nil
-		}
-		if plan, err := a.requestIPConversationPlanResponse(r.Context(), model, s, input.Message, input.Action, modelCandidates, input.CompareIDs, input.Stream, preview, webSearch); err == nil {
+		if plan, err := a.requestIPConversationPlanResponse(r.Context(), model, s, input.Message, input.Action, candidates, input.CompareIDs, input.Stream, preview); err == nil {
 			if input.Action == "clarify" || input.Action == "recommend" {
 				s = applyIPConversationCriteria(s, plan.Criteria)
 			}
@@ -558,10 +535,10 @@ func (a *app) ipRecommendationConversation(w http.ResponseWriter, r *http.Reques
 	} else {
 		workspace := *s.IPWorkspace
 		workspace.Messages = slices.Clone(workspace.Messages)
+		if recommendationCriteriaChanged(previous, s) {
+			workspace.ExternalBrief = nil
+		}
 		s.IPWorkspace = &workspace
-	}
-	if webSearch != nil && s.IPWorkspace.Stage == "" {
-		s.IPWorkspace.Stage = "confirm"
 	}
 	if input.Message != "" {
 		s.IPWorkspace.Messages = append(s.IPWorkspace.Messages, ipRecommendationMessage{Role: "user", Content: input.Message, CreatedAt: time.Now().Format("2006-01-02 15:04")})
@@ -621,11 +598,6 @@ func (a *app) ipRecommendationConversation(w http.ResponseWriter, r *http.Reques
 	}
 	if r.Context().Err() != nil {
 		return
-	}
-	if webSearch != nil {
-		presentation.WebSearch = webSearch
-		presentation.PrimaryResourceID = 0
-		presentation.AlternativeResourceID = 0
 	}
 	s.IPWorkspace.Messages = append(s.IPWorkspace.Messages, ipRecommendationMessage{Role: "assistant", Content: presentation.Headline, CreatedAt: time.Now().Format("2006-01-02 15:04"), Presentation: &presentation})
 	if _, err = a.persistIPConversation(r.Context(), s, s, userID); err != nil {

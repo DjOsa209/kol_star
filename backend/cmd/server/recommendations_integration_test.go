@@ -330,47 +330,47 @@ func TestRecommendationDBSmoke(t *testing.T) {
 		calls := 0
 		http.DefaultTransport = recommendationEvidenceTransportFunc(func(req *http.Request) (*http.Response, error) {
 			calls++
-			var body map[string]any
-			if json.NewDecoder(req.Body).Decode(&body) != nil || body["query"] != "public art licensing" || req.URL.Host != "api.tavily.com" {
-				t.Fatal("unexpected external request")
-			}
-			for _, field := range []string{"criteria", "history", "budgetMax", "documentText"} {
-				if _, exists := body[field]; exists {
-					t.Fatal("private project data sent to search provider")
-				}
-			}
-			return recommendationEvidenceTestResponse(200, `{"results":[{"title":"Licensing directory","url":"https://www.licenseglobal.com/licensing-resources/example","content":"Public artist and licensing information"}]}`), nil
+			return recommendationEvidenceTestResponse(503, `{}`), nil
 		})
-		for run := 0; run < 2; run++ {
-			status, data := post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "public art licensing", "documentText": "PRIVATE attachment, never search this"}, token)
-			if status != 200 {
-				t.Fatalf("search failed: %d %+v", status, data)
-			}
-			p := data["presentation"].(map[string]any)
-			search := p["webSearch"].(map[string]any)
-			if len(search["results"].([]any)) != 1 || len(data["results"].([]any)) != len(beforeResults) {
-				t.Fatal("external sources entered library candidate set")
-			}
+		status, data := post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "推荐几个电竞IP", "documentText": "PRIVATE attachment, never search this"}, token)
+		if status != 200 {
+			t.Fatalf("clarification failed: %d", status)
 		}
-		if calls != 1 {
-			t.Fatal("same-user repeated search consumed another request")
+		p := data["presentation"].(map[string]any)
+		search := p["webSearch"].(map[string]any)
+		if search["phase"] != "clarify" || len(p["questions"].([]any)) == 0 || len(p["questions"].([]any)) > 2 || calls != 0 {
+			t.Fatal("vague request searched instead of clarifying")
+		}
+		status, data = post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "东南亚，偏产品联名，预算还没定"}, token)
+		if status != 200 {
+			t.Fatalf("scoped research failed: %d", status)
+		}
+		search = data["presentation"].(map[string]any)["webSearch"].(map[string]any)
+		if search["phase"] != "unavailable" || calls != 0 || len(data["results"].([]any)) != len(beforeResults) {
+			t.Fatal("missing model charged search or altered library results")
 		}
 		after, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
-		if err != nil || after.Query != before.Query || after.BudgetMax != before.BudgetMax || after.IPWorkspace == nil || len(after.IPWorkspace.Messages) != 4 || len(after.IPWorkspace.Messages[3].Presentation.WebSearch.Results) != 1 {
-			t.Fatalf("search memory or criteria failed: %+v %v", after, err)
+		if err != nil || after.Query != before.Query || after.BudgetMax != before.BudgetMax || after.IPWorkspace == nil || len(after.IPWorkspace.Messages) != 4 || after.IPWorkspace.ExternalBrief.Topic != "电竞" || after.IPWorkspace.ExternalBrief.Goal != "产品联名" {
+			t.Fatal("public research memory or private criteria persistence failed")
 		}
-		storedSource := after.IPWorkspace.Messages[3].Presentation.WebSearch.Results[0]
-		if storedSource.SourcePriority != "P0" || storedSource.SourceName != "License Global" || storedSource.EvidenceUse == "" {
-			t.Fatal("source priority or evidence use lost from conversation memory")
+		mock := &ipExternalSearch{Phase: "complete", Brief: after.IPWorkspace.ExternalBrief, Candidates: []ipExternalCandidate{{ID: "ext-test", Name: "Mock Nova", Kind: "战队", Identity: "Mock Nova esports team", Evidence: []recommendationEvidence{{Title: "Mock Nova esports", URL: "https://example.com/nova"}}}}, Results: []recommendationEvidence{}}
+		after.IPWorkspace.Messages[3].Presentation.WebSearch = mock
+		if _, err := a.persistIPConversation(ctx, after, after, adminID); err != nil {
+			t.Fatal(err)
+		}
+		restored, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
+		if err != nil || restored.IPWorkspace.Messages[3].Presentation.WebSearch.Candidates[0].ID != "ext-test" {
+			t.Fatal("candidate evidence lost after reload")
 		}
 		t.Setenv("TAVILY_API_KEY", "")
-		status, _ := post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "different public keywords"}, token)
-		if status != 500 {
-			t.Fatal("unconfigured search appeared successful")
+		status, _ = post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "继续深入研究"}, token)
+		if status != 503 {
+			t.Fatalf("unconfigured search appeared successful: %d", status)
 		}
 		unchanged, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
 		if err != nil || len(unchanged.IPWorkspace.Messages) != 4 {
 			t.Fatal("failed search persisted a fake response")
 		}
+
 	})
 }

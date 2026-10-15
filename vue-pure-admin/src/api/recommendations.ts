@@ -36,6 +36,7 @@ export interface RecommendationSubscription extends RecommendationSubscriptionIn
   ipWorkspace?: {
     stage: "confirm" | "research" | "compare";
     messages: IPRecommendationMessage[];
+    externalBrief?: IPResearchBrief;
   };
 }
 
@@ -62,12 +63,41 @@ export interface IPRecommendationPresentation {
   primaryResourceId?: number;
   alternativeResourceId?: number;
   source: "ai" | "rule";
-  webSearch?: {
-    query: string;
-    provider: string;
-    searchedAt: string;
-    results: RecommendationEvidence[];
-  };
+  webSearch?: IPExternalResearch;
+}
+
+export interface IPResearchBrief {
+  topic: string;
+  markets: string[];
+  goal: string;
+  kinds: string[];
+  asked: boolean;
+  explore: boolean;
+}
+
+export interface IPExternalCandidate {
+  id: string;
+  name: string;
+  kind: string;
+  identity: string;
+  reason: string;
+  entryPoints: string[];
+  pending: string[];
+  evidence: RecommendationEvidence[];
+  identityQuote: string;
+}
+
+export interface IPExternalResearch {
+  query: string;
+  provider: string;
+  searchedAt: string;
+  results: RecommendationEvidence[];
+  phase?: "clarify" | "complete" | "partial" | "unavailable";
+  brief?: IPResearchBrief;
+  candidates?: IPExternalCandidate[];
+  queries?: string[];
+  rounds?: number;
+  gaps?: string[];
 }
 
 export interface IPRecommendationMessage {
