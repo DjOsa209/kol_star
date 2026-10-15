@@ -505,7 +505,7 @@ func (a *app) ipRecommendationConversation(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		var err error
-		webSearch, err = searchExternalIPResources(r.Context(), userID, input.Message)
+		webSearch, err = searchExternalIPResources(r.Context(), userID, input.Message, a.Config().WebSearch)
 		if err != nil {
 			if r.Context().Err() == nil {
 				fail(err.Error())

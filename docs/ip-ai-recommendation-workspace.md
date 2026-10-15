@@ -63,9 +63,17 @@
 
 搜索不改动既有寻找条件或库内推荐结果。线索不自动入库，也不使用虚构的资源 ID；核实后在资源库录入，才能参与库内对比与意向回填。来源记录随结构化回答保存在原会话 JSON 中，多轮对话与会话切换可以恢复。同一用户、服务配置和关键词缓存 15 分钟，进程内最多 512 项；空结果也缓存，失败不缓存。接口保留 SSE 状态、取消和错误重试，搜索失败时不保存虚假回答。
 
-后端支持以下环境变量，密钥仅在服务端配置，修改后需重启后端：
+用户已选 Tavily，并更正配置位置为 `config.yaml`。实际文件 `backend/config.yaml` 已预留以下内容；可提交模板为 `backend/config.example.yaml`，真实文件仍由 Git 忽略。
 
-用户已选 Tavily。配置模板为 `backend/.env.example`；本地已预留 `backend/.env`，只需填写 `TAVILY_API_KEY=`。从后端目录启动时自动加载 `.env`，其他工作目录可指定 `ENV_FILE=/绝对路径/.env`；部署环境变量优先于文件内容。默认文件不存在不会阻止启动，显式指定的文件不存在或格式错误会返回脱敏错误。真实 env 文件已忽略，不提交到 Git；只有空密钥模板入库。
+```yaml
+web_search:
+  provider: tavily
+  tavily_api_key: ""
+```
+
+只需填写 `web_search.tavily_api_key`。服务端搜索每次从应用当前 Config 读取设置；运行新版本后，保存 YAML 沿用现有热加载，密钥轮换会改变缓存标识。若通过 `CONFIG_FILE` 指定其他 YAML，则应编辑实际加载的文件。本地调试服务当前使用 `/tmp/kol-admin-ui-debug-config.yaml`，该文件同样预留空密钥块；默认部署使用 `backend/config.yaml`。Viper 标准 `WEB_SEARCH_PROVIDER` / `WEB_SEARCH_TAVILY_API_KEY` 部署环境变量可覆盖 YAML。
+
+以下旧环境变量仅作 YAML 对应值为空时的兼容回退；env 修改需重启进程。已配置 YAML 时无需 `.env`，旧 dotenv 加载与 `ENV_FILE` 保留兼容，不再作为用户的推荐配置入口。
 
 | 服务 | 配置 |
 | --- | --- |

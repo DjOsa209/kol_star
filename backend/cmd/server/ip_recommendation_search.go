@@ -26,11 +26,22 @@ type ipSearchProvider struct{ name, endpoint, key string }
 
 var ipExternalSearchCache recommendationEvidenceCacheStore
 
-func configuredIPSearchProvider() (ipSearchProvider, error) {
-	name := strings.ToLower(strings.TrimSpace(os.Getenv("IP_WEB_SEARCH_PROVIDER")))
+func configuredIPSearchProvider(configs ...WebSearchConfig) (ipSearchProvider, error) {
+	var cfg WebSearchConfig
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
+	name := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	if name == "" {
+		name = strings.ToLower(strings.TrimSpace(os.Getenv("IP_WEB_SEARCH_PROVIDER")))
+	}
+	tavilyKey := strings.TrimSpace(cfg.TavilyAPIKey)
+	if tavilyKey == "" {
+		tavilyKey = strings.TrimSpace(os.Getenv("TAVILY_API_KEY"))
+	}
 	if name == "" || name == "auto" {
 		switch {
-		case strings.TrimSpace(os.Getenv("TAVILY_API_KEY")) != "":
+		case tavilyKey != "":
 			name = "tavily"
 		case strings.TrimSpace(os.Getenv("SEARXNG_BASE_URL")) != "":
 			name = "searxng"
@@ -41,7 +52,7 @@ func configuredIPSearchProvider() (ipSearchProvider, error) {
 	p := ipSearchProvider{name: name}
 	switch name {
 	case "tavily":
-		p.endpoint, p.key = "https://api.tavily.com/search", strings.TrimSpace(os.Getenv("TAVILY_API_KEY"))
+		p.endpoint, p.key = "https://api.tavily.com/search", tavilyKey
 	case "brave":
 		if os.Getenv("BRAVE_SEARCH_STORAGE_ALLOWED") != "1" {
 			return p, errors.New("Brave 搜索尚未配置结果存储权限，请联系管理员")
@@ -65,8 +76,8 @@ func configuredIPSearchProvider() (ipSearchProvider, error) {
 
 // Only the explicitly entered public search keywords leave this service.
 // Project criteria, attachments, budgets and conversation history are never sent.
-func searchExternalIPResources(ctx context.Context, userID int, query string) (*ipExternalSearch, error) {
-	p, err := configuredIPSearchProvider()
+func searchExternalIPResources(ctx context.Context, userID int, query string, configs ...WebSearchConfig) (*ipExternalSearch, error) {
+	p, err := configuredIPSearchProvider(configs...)
 	if err != nil {
 		return nil, err
 	}

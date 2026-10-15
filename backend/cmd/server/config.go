@@ -23,6 +23,7 @@ type Config struct {
 	PlatformAPIs PlatformAPIConfig `mapstructure:"platform_apis"`
 	Collector    CollectorConfig   `mapstructure:"collector"`
 	AIModel      AIModelConfig     `mapstructure:"ai_model"`
+	WebSearch    WebSearchConfig   `mapstructure:"web_search"`
 	Feishu       FeishuConfig      `mapstructure:"feishu"`
 	SSO          SSOConfig         `mapstructure:"sso"`
 }
@@ -60,6 +61,11 @@ type CollectorConfig struct {
 
 type AIModelConfig struct {
 	APIKey string `mapstructure:"api_key"`
+}
+
+type WebSearchConfig struct {
+	Provider     string `mapstructure:"provider"`
+	TavilyAPIKey string `mapstructure:"tavily_api_key"`
 }
 
 type FeishuConfig struct {
@@ -146,6 +152,8 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("platform_apis.meta_graph_api_version", "v21.0")
 	v.SetDefault("collector.agent_token", "")
 	v.SetDefault("ai_model.api_key", "")
+	v.SetDefault("web_search.provider", "")
+	v.SetDefault("web_search.tavily_api_key", "")
 	v.SetDefault("feishu.api_base_url", "https://open.feishu.cn")
 	v.SetDefault("sso.provider", "uac")
 	v.SetDefault("sso.default_role_code", "operation")

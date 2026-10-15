@@ -1,5 +1,8 @@
 ai_model:
     api_key: ""
+web_search:
+    provider: tavily
+    tavily_api_key: ""
 collector:
     agent_token: ""
 feishu:
