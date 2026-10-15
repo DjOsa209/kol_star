@@ -65,6 +65,8 @@
 
 后端支持以下环境变量，密钥仅在服务端配置，修改后需重启后端：
 
+用户已选 Tavily。配置模板为 `backend/.env.example`；本地已预留 `backend/.env`，只需填写 `TAVILY_API_KEY=`。从后端目录启动时自动加载 `.env`，其他工作目录可指定 `ENV_FILE=/绝对路径/.env`；部署环境变量优先于文件内容。默认文件不存在不会阻止启动，显式指定的文件不存在或格式错误会返回脱敏错误。真实 env 文件已忽略，不提交到 Git；只有空密钥模板入库。
+
 | 服务 | 配置 |
 | --- | --- |
 | Tavily | `IP_WEB_SEARCH_PROVIDER=tavily`、`TAVILY_API_KEY` |
@@ -72,6 +74,28 @@
 | Brave | `IP_WEB_SEARCH_PROVIDER=brave`、`BRAVE_SEARCH_API_KEY`、已确认存储权益时设置 `BRAVE_SEARCH_STORAGE_ALLOWED=1` |
 
 未指定 provider 或指定 `auto` 时，仅按已经配置的 Tavily、SearXNG、Brave 顺序选择一次，不在失败后自动切换服务或启用收费计划。Tavily 固定 `basic`，关闭自动参数、完整正文及额外回答，单次搜索使用 1 积分。所有结果 URL 使用既有 HTTPS 来源校验，服务端不抓取结果网页；供应商请求超时 15 秒，不跟随重定向。
+
+### 用户指定的参考来源
+
+使用 [Tavily 的优先域名参数](https://docs.tavily.com/documentation/api-reference/endpoint/search) `include_domains` 与 `include_domains_mode: "prefer"`，在同一次基础搜索中优先这些站点，保留其他相关网页，不逐站新增请求。服务端根据实际结果 URL 匹配机构和来源层级，按 P0 → P1 → P2 → 其他排列，同层保留供应商相关性顺序。用户的“第二优先级”榜单类以 P2 标识；优先级不代表真实性评级或合作可用性。
+
+| 层级 | 机构与官方入口 | 证据用途 |
+| --- | --- | --- |
+| P0 | [Licensing Expo Brand Directory](https://www.brandlicensingexpo.com/exhibitor-list/brand-directory/) | 品牌、授权方与参展主体线索；保留旧 `licensingexpo.com` 域名匹配 |
+| P0 | [License Global Rankings & Lists](https://www.licenseglobal.com/licensing-resources/rankings-lists) | 授权企业与行业榜单；原 Top 150 链接跳转至此目录 |
+| P0 | [Licensing International Survey](https://licensinginternational.org/get-survey/) | 行业分类、规模与趋势；不证明具体 IP 可授权，完整报告有会员或付费要求 |
+| P1 | [Brand Licensing Europe](https://www.brandlicensing.eu/) | 欧洲品牌、授权机构与合作主体发现 |
+| P1 | [WIPO Global Brand Database](https://www.wipo.int/zh/web/global-brand-database) | 商标主体与注册地域核查线索；不推断已取得 IP 合作授权 |
+| P2 | [Kantar BrandZ](https://www.kantar.com/Campaigns/BrandZ/Global) | 品牌估值与影响力背景，不作为授权报价 |
+| P2 | [YouGov Rankings](https://yougov.com/reports/rankings) | 消费者认知与市场差异；用户提供的 [2025 报告](https://yougov.com/reports/51444-yougov-best-global-brands-2025) 保留为历史参考 |
+| P2 | [SportsPro 50MM](https://50mm.sportspro.com/) | 运动员商业价值背景；兼容榜单跳转到 `sportspro.com` |
+| P2 | [Parrot Analytics](https://www.parrotanalytics.com/) | 公开影视需求与地区影响力资料 |
+| P2 | [Billboard Charts](https://www.billboard.com/charts/) / [Luminate](https://luminatedata.com/) | 公开音乐榜单、消费研究与趋势 |
+| P2 | [Esports Charts](https://escharts.com/) | 公开赛事、战队和观众数据 |
+
+2026-10-15 核对来源入口，实际访问记录只用于修正目录和分类，不写入业务会话证据。Billboard Charts 此次公开读取返回 402，未读取其榜单正文；Licensing International 明示完整报告受会员或付费访问限制。模型只使用 Tavily 实际返回的可见摘要，不宣称读取付费报告、数据库完整注册记录或实时专有指标。
+
+结果增加 `sourceName/sourcePriority/sourceCategory/evidenceUse`，供界面和模型区分机构、层级与用途；保留供应商返回的 `publishedAt`。界面使用普通文本展示，沿用白色容器和单色菜单。榜单年份、数据观察区间、网页发布/更新日期与检索时间分别看待，不将旧榜单称为最新。提示词同样约束后续多轮回答，不将行业规模、品牌价值、商标登记或影响力排名推断为授权、报价或效果保证。
 
 2026-10-14 核对的免费方案：[Tavily](https://www.tavily.com/pricing) 每月 1,000 积分、无需信用卡；[Brave](https://brave.com/search/api/) 每月 $5 额度，Search 为 $5/1,000 请求，需要信用卡验证；[SearXNG](https://docs.searxng.org/) 为可自建的免费软件，服务器运维另计。原有 Wikidata 免费查询继续用于核实库内 IP 身份背景，不等同于广泛的库外网页搜索。
 

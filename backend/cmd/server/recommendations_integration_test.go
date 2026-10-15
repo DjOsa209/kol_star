@@ -339,7 +339,7 @@ func TestRecommendationDBSmoke(t *testing.T) {
 					t.Fatal("private project data sent to search provider")
 				}
 			}
-			return recommendationEvidenceTestResponse(200, `{"results":[{"title":"Official artist","url":"https://artist.com/licensing","content":"Public artist and licensing information"}]}`), nil
+			return recommendationEvidenceTestResponse(200, `{"results":[{"title":"Licensing directory","url":"https://www.licenseglobal.com/licensing-resources/example","content":"Public artist and licensing information"}]}`), nil
 		})
 		for run := 0; run < 2; run++ {
 			status, data := post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "public art licensing", "documentText": "PRIVATE attachment, never search this"}, token)
@@ -358,6 +358,10 @@ func TestRecommendationDBSmoke(t *testing.T) {
 		after, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
 		if err != nil || after.Query != before.Query || after.BudgetMax != before.BudgetMax || after.IPWorkspace == nil || len(after.IPWorkspace.Messages) != 4 || len(after.IPWorkspace.Messages[3].Presentation.WebSearch.Results) != 1 {
 			t.Fatalf("search memory or criteria failed: %+v %v", after, err)
+		}
+		storedSource := after.IPWorkspace.Messages[3].Presentation.WebSearch.Results[0]
+		if storedSource.SourcePriority != "P0" || storedSource.SourceName != "License Global" || storedSource.EvidenceUse == "" {
+			t.Fatal("source priority or evidence use lost from conversation memory")
 		}
 		t.Setenv("TAVILY_API_KEY", "")
 		status, _ := post(a.ipRecommendationConversation, map[string]any{"subscriptionId": id, "action": "search", "message": "different public keywords"}, token)

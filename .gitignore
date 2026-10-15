@@ -7,6 +7,9 @@
 .mysql-run/
 .mysql-undo/
 backend/config.yaml
+backend/.env
+backend/.env.*
+!backend/.env.example
 backend/uploads/resource-images/*
 !backend/uploads/resource-images/.gitkeep
 backend/uploads/ip-documents/*

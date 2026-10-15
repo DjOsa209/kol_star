@@ -13,6 +13,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
+	"github.com/subosito/gotenv"
 )
 
 type Config struct {
@@ -85,6 +86,9 @@ type SSOConfig struct {
 }
 
 func loadConfig() (Config, *viper.Viper, error) {
+	if err := loadBackendEnvFile(); err != nil {
+		return Config{}, nil, err
+	}
 	v := viper.New()
 	v.SetConfigType("yaml")
 	if file := strings.TrimSpace(os.Getenv("CONFIG_FILE")); file != "" {
@@ -107,6 +111,28 @@ func loadConfig() (Config, *viper.Viper, error) {
 	}
 	log.Printf("config loaded from %s", v.ConfigFileUsed())
 	return cfg, v, nil
+}
+
+// Local dotenv is optional; deployed process variables always take precedence.
+// ENV_FILE supports an absolute file path when the binary runs outside backend/.
+func loadBackendEnvFile() error {
+	file := strings.TrimSpace(os.Getenv("ENV_FILE"))
+	explicit := file != ""
+	if !explicit {
+		file = ".env"
+	}
+	return loadBackendEnvFileFrom(file, explicit)
+}
+
+func loadBackendEnvFileFrom(file string, required bool) error {
+	if err := gotenv.Load(file); err != nil {
+		if !required && errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		// Do not include dotenv contents or parser errors, which may contain keys.
+		return errors.New("后端 env 文件无法读取或格式错误，请检查 ENV_FILE 与配置格式")
+	}
+	return nil
 }
 
 func setConfigDefaults(v *viper.Viper) {

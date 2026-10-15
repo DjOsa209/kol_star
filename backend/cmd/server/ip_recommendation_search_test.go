@@ -23,8 +23,12 @@ func TestIPExternalSearchProviderRequestsAndProvenance(t *testing.T) {
 					if json.NewDecoder(req.Body).Decode(&body) != nil {
 						t.Fatal("invalid provider payload")
 					}
-					if body["query"] != "public art licensing" || body["search_depth"] != "basic" || body["max_results"] != float64(6) || body["auto_parameters"] != false || len(body) != 7 {
+					if body["query"] != "public art licensing" || body["search_depth"] != "basic" || body["max_results"] != float64(6) || body["auto_parameters"] != false || body["include_domains_mode"] != "prefer" || body["include_published_date"] != true {
 						t.Fatalf("unexpected provider payload: %+v", body)
+					}
+					domains, _ := body["include_domains"].([]any)
+					if len(domains) < 12 {
+						t.Fatal("preferred research domains missing")
 					}
 					if req.Header.Get("Authorization") != "Bearer server-secret" || req.Method != http.MethodPost {
 						t.Fatal("missing server-side authentication")

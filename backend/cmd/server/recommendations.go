@@ -69,11 +69,15 @@ type recommendationCandidate struct {
 // External references are returned by the fixed, server-side search provider.
 // Model output can select these references by index, but cannot supply URLs.
 type recommendationEvidence struct {
-	Title       string `json:"title"`
-	URL         string `json:"url"`
-	Source      string `json:"source"`
-	PublishedAt string `json:"publishedAt,omitempty"`
-	Summary     string `json:"summary,omitempty"`
+	Title          string `json:"title"`
+	URL            string `json:"url"`
+	Source         string `json:"source"`
+	PublishedAt    string `json:"publishedAt,omitempty"`
+	Summary        string `json:"summary,omitempty"`
+	SourceName     string `json:"sourceName,omitempty"`
+	SourcePriority string `json:"sourcePriority,omitempty"`
+	SourceCategory string `json:"sourceCategory,omitempty"`
+	EvidenceUse    string `json:"evidenceUse,omitempty"`
 }
 
 func readRecommendationJSON(w http.ResponseWriter, r *http.Request, out any) bool {

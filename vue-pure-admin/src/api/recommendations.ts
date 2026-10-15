@@ -104,6 +104,10 @@ export interface RecommendationEvidence {
   source: string;
   publishedAt?: string;
   summary?: string;
+  sourceName?: string;
+  sourcePriority?: "P0" | "P1" | "P2";
+  sourceCategory?: string;
+  evidenceUse?: string;
 }
 
 export interface RecommendationNotification {

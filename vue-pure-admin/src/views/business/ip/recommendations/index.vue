@@ -1630,6 +1630,9 @@ watch(
             role="tabpanel"
             aria-labelledby="external-tab"
           >
+            <p class="workspace-hint">
+              优先查找授权目录与机构，影响力榜单用于补充背景。
+            </p>
             <template v-if="latestWebSearch">
               <p>公开线索 · {{ latestWebSearch.query }}</p>
               <small
@@ -1648,8 +1651,21 @@ watch(
                 >
                   {{ source.title }} <Icon :icon="icons.external" />
                 </a>
-                <small>{{ source.source }} · 库外资料</small>
+                <small>
+                  {{ source.sourceName || source.source }}
+                  {{
+                    source.sourcePriority ? ` · ${source.sourcePriority}` : ""
+                  }}
+                  · {{ source.sourceCategory || "其他公开资料" }}
+                </small>
+                <small v-if="source.sourceName">{{ source.source }}</small>
+                <small v-if="source.publishedAt"
+                  >来源发布/更新时间：{{ source.publishedAt }}</small
+                >
                 <p>{{ source.summary }}</p>
+                <small v-if="source.evidenceUse">{{
+                  source.evidenceUse
+                }}</small>
               </article>
               <p v-if="!latestWebSearch.results.length">
                 暂无可用线索，换个具体名称或公开合作关键词试试。
