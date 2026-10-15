@@ -53,3 +53,10 @@ sso:
     uac_app_secret: ""
     uac_lang: zh_CN
     uac_source: ""
+
+# China mainland, Asia/Shanghai. Embedded verified calendars: 2025, 2026.
+# Add a COMPLETE annual schedule here after checking the State Council notice.
+# Each entry: year, source (HTTPS), holidays (inclusive YYYY-MM-DD/YYYY-MM-DD ranges),
+# workdays (makeup dates YYYY-MM-DD). Entries replace the entire named year.
+# An unconfigured year shows "年度日历待核定"; it is never guessed from weekdays.
+work_calendar: []

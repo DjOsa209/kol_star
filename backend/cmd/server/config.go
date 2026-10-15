@@ -17,15 +17,16 @@ import (
 )
 
 type Config struct {
-	Server       ServerConfig      `mapstructure:"server"`
-	MySQL        MySQLConfig       `mapstructure:"mysql"`
-	CORS         CORSConfig        `mapstructure:"cors"`
-	PlatformAPIs PlatformAPIConfig `mapstructure:"platform_apis"`
-	Collector    CollectorConfig   `mapstructure:"collector"`
-	AIModel      AIModelConfig     `mapstructure:"ai_model"`
-	WebSearch    WebSearchConfig   `mapstructure:"web_search"`
-	Feishu       FeishuConfig      `mapstructure:"feishu"`
-	SSO          SSOConfig         `mapstructure:"sso"`
+	WorkCalendar []workCalendarYear `mapstructure:"work_calendar"`
+	Server       ServerConfig       `mapstructure:"server"`
+	MySQL        MySQLConfig        `mapstructure:"mysql"`
+	CORS         CORSConfig         `mapstructure:"cors"`
+	PlatformAPIs PlatformAPIConfig  `mapstructure:"platform_apis"`
+	Collector    CollectorConfig    `mapstructure:"collector"`
+	AIModel      AIModelConfig      `mapstructure:"ai_model"`
+	WebSearch    WebSearchConfig    `mapstructure:"web_search"`
+	Feishu       FeishuConfig       `mapstructure:"feishu"`
+	SSO          SSOConfig          `mapstructure:"sso"`
 }
 
 type ServerConfig struct {
@@ -166,6 +167,9 @@ func decodeConfig(v *viper.Viper) (Config, error) {
 		return Config{}, err
 	}
 	cfg = cfg.withDefaults()
+	if _, err := newWorkCalendar(cfg.WorkCalendar); err != nil {
+		return Config{}, err
+	}
 	if cfg.SSO.Enabled && !cfg.SSO.ready() {
 		return Config{}, errors.New("SSO 已启用，但 provider、frontend_url、redirect_uri、uac_gateway 或 uac_app_id 配置不完整")
 	}

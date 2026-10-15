@@ -72,11 +72,13 @@ func (a *app) sendIPStageNotifications(ctx context.Context, cfg Config, requestI
 	if sender == nil {
 		return result, errors.New("IP notification sender is nil")
 	}
-	var projectName, briefJSON string
+	var projectName, briefJSON, submittedAt, ipReviewedAt string
 	var creatorID int64
 	if err := a.DB().QueryRowContext(ctx,
-		"select project_name, coalesce(brief,''), created_by from biz_ip_requests where id=?", requestID,
-	).Scan(&projectName, &briefJSON, &creatorID); err != nil {
+		`select project_name, coalesce(brief,''), created_by,
+        coalesce(date_format(submitted_at,'%Y-%m-%d %H:%i:%s'),''),
+        coalesce(date_format(ip_reviewed_at,'%Y-%m-%d %H:%i:%s'),'') from biz_ip_requests where id=?`, requestID,
+	).Scan(&projectName, &briefJSON, &creatorID, &submittedAt, &ipReviewedAt); err != nil {
 		return result, fmt.Errorf("read IP request for notification: %w", err)
 	}
 	var brief map[string]any
@@ -89,6 +91,23 @@ func (a *app) sendIPStageNotifications(ctx context.Context, cfg Config, requestI
 	directoryRecipients := ipStageDirectoryRecipients(brief, stage)
 	directory := newUACDirectoryClient(cfg.SSO, nil)
 	message := ipStageFeishuMessage(cfg, requestID, projectName, stage)
+	if stage == "submitted" || stage == "ip_reviewed" {
+		calendar, err := newWorkCalendar(cfg.WorkCalendar)
+		if err != nil {
+			return result, err
+		}
+		start, label, days := ipStageTime(submittedAt), "IP意见", 10
+		if stage == "ip_reviewed" {
+			start, label, days = ipStageTime(ipReviewedAt), "营销意见", 5
+		}
+		deadline := calendar.stageDeadline(label, days, start, time.Time{}, true, false, time.Now())
+		message += fmt.Sprintf("\n反馈周期：%d个工作日（次日起算，含法定调休）", days)
+		if deadline.DueAt != "" {
+			message += "\n最晚反馈：" + ipStageTime(deadline.DueAt).Format("2006-01-02 15:04") + "（北京时间）"
+		} else {
+			message += "\n" + deadline.Warning
+		}
+	}
 	sentEmails := map[string]bool{}
 	deliver := func(email string) {
 		email = strings.ToLower(strings.TrimSpace(email))

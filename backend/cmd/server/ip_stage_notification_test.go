@@ -13,8 +13,9 @@ import (
 )
 
 type mockIPStageSender struct {
-	emails []string
-	fail   map[string]bool
+	emails   []string
+	messages []string
+	fail     map[string]bool
 }
 
 func (sender *mockIPStageSender) sendToEmail(_ context.Context, email, message string) error {
@@ -22,6 +23,7 @@ func (sender *mockIPStageSender) sendToEmail(_ context.Context, email, message s
 		return errors.New("missing IP notification title")
 	}
 	sender.emails = append(sender.emails, email)
+	sender.messages = append(sender.messages, message)
 	if sender.fail[email] {
 		return errors.New("mock send failed")
 	}
@@ -44,8 +46,8 @@ func TestIPStageNotificationRecipientsDeduplicateAndSkipUnavailable(t *testing.T
 	defer db.Close()
 	a := newApp(db, Config{})
 	cfg := Config{Feishu: FeishuConfig{ApplicationEnabled: true, AppID: "app", AppSecret: "secret", FrontendURL: "https://xmp.example.com/"}}
-	mock.ExpectQuery("select project_name, coalesce\\(brief,''\\), created_by from biz_ip_requests").WithArgs(int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by"}).AddRow("新品联名", string(briefJSON), 99))
+	mock.ExpectQuery("select project_name, coalesce\\(brief,''\\), created_by").WithArgs(int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by", "submitted_at", "ip_reviewed_at"}).AddRow("新品联名", string(briefJSON), 99, "2026-09-30 10:00:00", "2026-10-15 10:00:00"))
 	mock.ExpectQuery("select coalesce\\(email,''\\), status, auth_provider from sys_users").WithArgs(int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{"email", "status", "auth_provider"}).AddRow("A@example.com", 1, "uac"))
 	mock.ExpectQuery("select coalesce\\(email,''\\), status, auth_provider from sys_users").WithArgs(int64(12)).
@@ -64,6 +66,9 @@ func TestIPStageNotificationRecipientsDeduplicateAndSkipUnavailable(t *testing.T
 	}
 	if strings.Join(sender.emails, ",") != "a@example.com,b@example.com" {
 		t.Fatalf("unexpected recipients: %v", sender.emails)
+	}
+	if len(sender.messages) != 2 || !strings.Contains(sender.messages[0], "最晚反馈：2026-10-22 23:59（北京时间）") {
+		t.Fatalf("deadline missing from actual stage message: %v", sender.messages)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -115,7 +120,7 @@ func TestIPStageNotificationDeliveryFailureDoesNotStopNextRecipient(t *testing.T
 	a := newApp(db, Config{})
 	cfg := Config{Feishu: FeishuConfig{ApplicationEnabled: true, AppID: "app", AppSecret: "secret"}}
 	mock.ExpectQuery("select project_name").WithArgs(int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by"}).AddRow("新品联名", string(briefJSON), 9))
+		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by", "submitted_at", "ip_reviewed_at"}).AddRow("新品联名", string(briefJSON), 9, "2026-09-30 10:00:00", "2026-10-15 10:00:00"))
 	mock.ExpectQuery("select coalesce\\(email,''\\)").WithArgs(int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{"email", "status", "auth_provider"}).AddRow("a@example.com", 1, "uac"))
 	mock.ExpectQuery("select coalesce\\(email,''\\)").WithArgs(int64(12)).
@@ -158,7 +163,7 @@ func TestIPStageNotificationResolvesUnloggedSSOColleagueByEmployeeNo(t *testing.
 	defer db.Close()
 	a := newApp(db, Config{})
 	mock.ExpectQuery("select project_name").WithArgs(int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by"}).AddRow("新品联名", string(briefJSON), 9))
+		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by", "submitted_at", "ip_reviewed_at"}).AddRow("新品联名", string(briefJSON), 9, "2026-09-30 10:00:00", "2026-10-15 10:00:00"))
 	cfg := Config{
 		Feishu: FeishuConfig{ApplicationEnabled: true, AppID: "feishu-app", AppSecret: "feishu-secret"},
 		SSO:    SSOConfig{Enabled: true, Provider: "uac", UACGateway: server.URL, UACAppID: "uac-app", UACAppSecret: "uac-secret"},
@@ -173,7 +178,7 @@ func TestIPStageNotificationResolvesUnloggedSSOColleagueByEmployeeNo(t *testing.
 	}}
 	spoofedJSON, _ := json.Marshal(spoofed)
 	mock.ExpectQuery("select project_name").WithArgs(int64(43)).
-		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by"}).AddRow("伪造联系人", string(spoofedJSON), 9))
+		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by", "submitted_at", "ip_reviewed_at"}).AddRow("伪造联系人", string(spoofedJSON), 9, "2026-09-30 10:00:00", "2026-10-15 10:00:00"))
 	spoofedResult, err := a.sendIPStageNotifications(context.Background(), cfg, 43, "submitted", sender)
 	if err != nil || spoofedResult.Sent != 0 || spoofedResult.Skipped != 1 || len(sender.emails) != 1 {
 		t.Fatalf("mismatched directory identity was notified: result=%+v err=%v emails=%v", spoofedResult, err, sender.emails)
@@ -210,7 +215,7 @@ func TestIPStageNotificationRechecksCachedSSOStatus(t *testing.T) {
 	defer db.Close()
 	a := newApp(db, Config{})
 	mock.ExpectQuery("select project_name").WithArgs(int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by"}).AddRow("新品联名", string(briefJSON), 9))
+		WillReturnRows(sqlmock.NewRows([]string{"project_name", "brief", "created_by", "submitted_at", "ip_reviewed_at"}).AddRow("新品联名", string(briefJSON), 9, "2026-09-30 10:00:00", "2026-10-15 10:00:00"))
 	mock.ExpectQuery("select coalesce\\(email,''\\)").WithArgs(int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{"email", "status", "auth_provider"}).AddRow("old@example.com", 1, "uac"))
 	mock.ExpectQuery("select employee_no").WithArgs(int64(11)).

@@ -167,3 +167,45 @@ export const searchIPColleagues = (q: string, page = 1) =>
       directoryWarning?: string;
     }
   >("get", "/business/ip/colleagues", { params: { q, page } });
+
+export interface IPStageDeadline {
+  label: string;
+  workingDays: number;
+  startedAt?: string;
+  dueAt?: string;
+  completedAt?: string;
+  state:
+    | "waiting"
+    | "unknown_start"
+    | "calendar_pending"
+    | "pending"
+    | "due_today"
+    | "overdue"
+    | "completed";
+  late: boolean;
+  remainingWorkdays: number;
+  overdueWorkdays: number;
+  warning?: string;
+}
+export interface IPWorkflowNotification {
+  id: number;
+  requestId: number;
+  stage: "submitted" | "ip_reviewed" | "marketing_reviewed";
+  projectName: string;
+  title: string;
+  description: string;
+  targetPath: string;
+  readAt: string | null;
+  createdAt: string;
+}
+export const listIPWorkflowNotifications = () =>
+  http.request<Result<{ list: IPWorkflowNotification[]; unread: number }>>(
+    "get",
+    "/business/ip/requests/notifications"
+  );
+export const markIPWorkflowNotificationsRead = (ids: number[]) =>
+  http.request<Result<{ updated: number }>>(
+    "post",
+    "/business/ip/requests/notifications/read",
+    { data: { ids } }
+  );

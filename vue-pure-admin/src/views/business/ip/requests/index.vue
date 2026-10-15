@@ -5,6 +5,7 @@ import { ElMessage } from "element-plus";
 import dayjs from "dayjs";
 import * as XLSX from "xlsx";
 import RequestText from "./components/RequestText.vue";
+import DeadlineStatus from "./components/DeadlineStatus.vue";
 import {
   getIPResource,
   getIPRequest,
@@ -1216,6 +1217,7 @@ async function sendMarketing(saveDraft = false) {
       }
     });
     ElMessage.success(saveDraft ? "营销意见草稿已保存" : "营销意见已提交");
+    if (!saveDraft) window.dispatchEvent(new Event("ip-workflow-updated"));
     await loadDetail(Number(detail.value.request.id));
   } finally {
     saving.value = false;
@@ -1389,7 +1391,21 @@ onUnmounted(() => {
                 >{{ listStatusText(scope.row.status) }}</el-tag
               ></template
             ></el-table-column
-          ><el-table-column label="操作" width="115"
+          ><el-table-column label="最晚反馈（北京时间）" min-width="225">
+            <template #default="{ row }">
+              <DeadlineStatus
+                v-if="row.status !== 'draft'"
+                compact
+                :deadline="
+                  menuKind === 'feedback' ||
+                  (menuKind === 'requests' && row.status === 'submitted')
+                    ? row.deadlines?.ip
+                    : row.deadlines?.marketing
+                "
+              />
+              <span v-else>提交后开始计时</span>
+            </template> </el-table-column
+          ><el-table-column label="操作" width="115" fixed="right"
             ><template #default="scope"
               ><el-button link type="primary" @click="goDetail(scope.row.id)">{{
                 menuKind === "feedback"
@@ -1838,7 +1854,9 @@ onUnmounted(() => {
               <dt>意向IP</dt>
               <dd>{{ form.candidateIds.length }} 个</dd>
             </dl>
-            <div class="ip-note">提交后流转至IP组进行初步意向反馈。</div>
+            <div class="ip-note">
+              提交后，IP意见需在10个工作日内反馈；IP意见提交后，营销意见需在5个工作日内补齐。按中国大陆法定节假日与调休、次日起算，截止日北京时间23:59。
+            </div>
           </div>
         </div>
       </div>
@@ -1885,6 +1903,13 @@ onUnmounted(() => {
             ><b>3</b>营销意见补充</span
           ><span><b>4</b>意向IP确认</span>
         </div>
+        <section class="ip-deadline-summary" aria-label="意见反馈时效">
+          <DeadlineStatus :deadline="detail.request.deadlines?.ip" />
+          <DeadlineStatus :deadline="detail.request.deadlines?.marketing" />
+          <p>
+            按中国大陆法定节假日与调休，阶段开始次日起算；截止时间为北京时间。草稿保存不重置期限。
+          </p>
+        </section>
         <div class="ip-detail-summary">
           <div>
             <span>合作目标</span>
@@ -2627,9 +2652,9 @@ onUnmounted(() => {
 }
 
 .ip-invalid-field {
+  outline: 2px solid #f3a24c;
   background: #fff9f1;
   border-radius: 6px;
-  outline: 2px solid #f3a24c;
 }
 
 .ip-stage-head {
@@ -2660,29 +2685,29 @@ onUnmounted(() => {
 .ip-colleague-picker-search,
 .ip-colleague-picker-pages {
   display: flex;
-  align-items: center;
   gap: 12px;
+  align-items: center;
 }
 
 .ip-colleague-picker-results {
   min-height: 120px;
   max-height: 360px;
-  overflow: auto;
   margin: 16px 0;
+  overflow: auto;
 }
 
 .ip-colleague-picker-person {
   display: flex;
-  width: 100%;
-  padding: 12px;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
   background: #fff;
   border: 0;
   border-bottom: 1px solid #edf0e9;
-  text-align: left;
-  cursor: pointer;
 }
 
 .ip-colleague-picker-person:hover {
@@ -2690,8 +2715,8 @@ onUnmounted(() => {
 }
 
 .ip-colleague-picker-person span {
-  color: #7e858b;
   font-size: 12px;
+  color: #7e858b;
 }
 
 .ip-colleague-picker-pages {
@@ -2758,8 +2783,8 @@ onUnmounted(() => {
 .ip-selected-item {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
   gap: 10px;
+  align-items: stretch;
 }
 
 .ip-selected-main {
@@ -2925,10 +2950,10 @@ onUnmounted(() => {
 
 .ip-detail-summary strong {
   font-size: 16px;
+  font-variant-numeric: tabular-nums;
   line-height: 1.5;
   color: #15191c;
   overflow-wrap: anywhere;
-  font-variant-numeric: tabular-nums;
 }
 
 .ip-detail-body {
@@ -3284,8 +3309,8 @@ dl.ip-detail-contact-list {
 
   .ip-steps,
   .ip-timeline {
-    font-size: 12px;
     flex-wrap: wrap;
+    font-size: 12px;
   }
 
   .ip-request-detail {
@@ -3326,6 +3351,31 @@ dl.ip-detail-contact-list {
   .ip-detail-timeline span {
     gap: 6px;
     font-size: 12px;
+  }
+}
+</style>
+
+<style scoped lang="scss">
+.ip-deadline-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 32px;
+  padding: 20px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.ip-deadline-summary p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-regular);
+}
+
+@media (width <= 640px) {
+  .ip-deadline-summary {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

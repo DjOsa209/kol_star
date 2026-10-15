@@ -8,19 +8,24 @@ import {
   type RecommendationDomain,
   type RecommendationNotification
 } from "@/api/recommendations";
+import { useIPWorkflowNotificationsStore } from "@/store/modules/ipWorkflowNotifications";
+import type { IPWorkflowNotification } from "@/api/ip";
 import BellIcon from "~icons/lucide/bell";
 
 const router = useRouter();
+const workflow = useIPWorkflowNotificationsStore();
 const { t } = useI18n();
 const dropdownRef = ref();
-const activeDomain = ref<RecommendationDomain>("creator");
+const activeDomain = ref<RecommendationDomain | "workflow">("creator");
 const notices = ref<RecommendationNotification[]>([]);
 const unread = ref(0);
 const loading = ref(false);
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
 const visibleNotices = computed(() =>
-  notices.value.filter(item => item.domain === activeDomain.value)
+  activeDomain.value === "workflow"
+    ? workflow.items.map(item => ({ ...item, domain: "workflow" as const }))
+    : notices.value.filter(item => item.domain === activeDomain.value)
 );
 const unreadInActiveDomain = computed(() =>
   visibleNotices.value.filter(item => !item.readAt)
@@ -63,7 +68,25 @@ async function markRead(ids: number[]) {
   unread.value = Math.max(0, unread.value - newlyRead);
 }
 
-async function openNotice(item: RecommendationNotification) {
+async function openNotice(
+  item:
+    | RecommendationNotification
+    | (IPWorkflowNotification & { domain: "workflow" })
+) {
+  if (item.domain === "workflow") {
+    try {
+      if (!item.readAt) await workflow.markRead([item.id]);
+    } finally {
+      dropdownRef.value?.handleClose();
+      if (
+        /^\/business\/ip\/(requests|feedback|marketing)\?id=\d+$/.test(
+          item.targetPath
+        )
+      )
+        router.push(item.targetPath);
+    }
+    return;
+  }
   try {
     if (!item.readAt) await markRead([item.id]);
   } finally {
@@ -82,14 +105,25 @@ async function openNotice(item: RecommendationNotification) {
 
 async function markDomainRead() {
   try {
-    await markRead(unreadInActiveDomain.value.map(item => item.id));
+    const ids = unreadInActiveDomain.value.map(item => item.id);
+    if (activeDomain.value === "workflow") await workflow.markRead(ids);
+    else await markRead(ids);
   } catch {
     // Keep the unread marker when the server rejects the update.
   }
 }
 
 function onVisibleChange(visible: boolean) {
-  if (visible) refresh(true);
+  if (visible) {
+    if (
+      /^\/business\/ip\/(requests|feedback|marketing)/.test(
+        router.currentRoute.value.path
+      )
+    )
+      activeDomain.value = "workflow";
+    refresh(true);
+    if (workflow.owner) void workflow.refresh().catch(() => {});
+  }
 }
 
 function formatTime(value: string) {
@@ -101,9 +135,11 @@ function formatTime(value: string) {
 function openDomain() {
   dropdownRef.value?.handleClose();
   router.push(
-    activeDomain.value === "ip"
-      ? "/business/ip/recommendations"
-      : "/business/assistant"
+    activeDomain.value === "workflow"
+      ? "/business/ip/requests"
+      : activeDomain.value === "ip"
+        ? "/business/ip/recommendations"
+        : "/business/assistant"
   );
 }
 
@@ -123,8 +159,15 @@ onUnmounted(() => {
     placement="bottom-end"
     @visible-change="onVisibleChange"
   >
-    <span class="dropdown-badge navbar-bg-hover select-none mr-1.75">
-      <el-badge :value="unread" :max="99" :hidden="unread === 0">
+    <span
+      class="dropdown-badge navbar-bg-hover select-none mr-1.75"
+      aria-label="消息提醒"
+    >
+      <el-badge
+        :value="unread + workflow.unread"
+        :max="99"
+        :hidden="unread + workflow.unread === 0"
+      >
         <span class="header-notice-icon"
           ><IconifyIconOffline :icon="BellIcon"
         /></span>
@@ -133,9 +176,13 @@ onUnmounted(() => {
     <template #dropdown>
       <el-dropdown-menu class="recommendation-notice-menu">
         <div class="notice-head">
-          <strong>推荐提醒</strong><small>每周更新</small>
+          <strong>消息提醒</strong>
         </div>
         <el-tabs v-model="activeDomain" stretch class="notice-tabs">
+          <el-tab-pane
+            name="workflow"
+            :label="`IP需求 ${workflow.unread || ''}`"
+          />
           <el-tab-pane
             name="creator"
             :label="`${t('menus.creatorRecommendations')} ${creatorCount || ''}`"
@@ -148,12 +195,14 @@ onUnmounted(() => {
         <el-scrollbar max-height="350px" class="notice-scroll">
           <el-empty
             v-if="!visibleNotices.length"
-            description="暂无新推荐提醒"
+            :description="
+              activeDomain === 'workflow' ? '暂无需求提醒' : '暂无新推荐提醒'
+            "
             :image-size="60"
           />
           <button
             v-for="item in visibleNotices"
-            :key="item.id"
+            :key="`${item.domain}-${item.id}`"
             class="notice-item"
             :class="{ unread: !item.readAt }"
             type="button"
@@ -170,9 +219,9 @@ onUnmounted(() => {
           <el-button size="small" text @click.stop="markDomainRead">{{
             t("buttons.pureMarkAsRead")
           }}</el-button>
-          <el-button size="small" text @click.stop="openDomain"
-            >查看推荐 →</el-button
-          >
+          <el-button size="small" text @click.stop="openDomain">{{
+            activeDomain === "workflow" ? "查看需求 →" : "查看推荐 →"
+          }}</el-button>
         </div>
       </el-dropdown-menu>
     </template>
@@ -185,22 +234,28 @@ onUnmounted(() => {
   100% {
     transform-origin: top;
   }
+
   15% {
     transform: rotateZ(10deg);
   }
+
   30% {
     transform: rotateZ(-10deg);
   }
+
   45% {
     transform: rotateZ(5deg);
   }
+
   60% {
     transform: rotateZ(-5deg);
   }
+
   75% {
     transform: rotateZ(2deg);
   }
 }
+
 .dropdown-badge {
   display: flex;
   align-items: center;
@@ -209,37 +264,47 @@ onUnmounted(() => {
   height: 48px;
   cursor: pointer;
 }
+
 .header-notice-icon {
   font-size: 16px;
 }
+
 .dropdown-badge:hover .header-notice-icon :deep(svg) {
   animation: pure-bell-ring 1s both;
 }
+
 .recommendation-notice-menu {
   width: 360px;
   padding: 0;
 }
+
 .notice-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 14px 17px 3px;
 }
+
 .notice-head strong {
   font-size: 14px;
 }
+
 .notice-head small {
   color: #92999a;
 }
+
 .notice-tabs {
   padding: 0 12px;
 }
+
 .notice-tabs :deep(.el-tabs__header) {
   margin: 0;
 }
+
 .notice-scroll {
   padding: 4px 12px;
 }
+
 .notice-item {
   display: flex;
   flex-direction: column;
@@ -252,20 +317,24 @@ onUnmounted(() => {
   border: 0;
   border-bottom: 1px solid #ebede7;
 }
+
 .notice-item:hover {
   background: #f7f9ed;
 }
+
 .notice-item.unread {
   background: #faffeb;
 }
+
 .notice-title {
   display: flex;
-  align-items: center;
   gap: 6px;
+  align-items: center;
   font-size: 13px;
   font-weight: 700;
   color: #161a1d;
 }
+
 .notice-title i {
   flex: none;
   width: 6px;
@@ -273,19 +342,22 @@ onUnmounted(() => {
   background: #a5d900;
   border-radius: 50%;
 }
+
 .notice-description {
   display: -webkit-box;
   overflow: hidden;
+  -webkit-line-clamp: 2;
   font-size: 12px;
   line-height: 1.5;
   color: #747d7f;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
+
 .notice-item time {
   font-size: 11px;
   color: #9ca4a5;
 }
+
 .notice-foot {
   display: flex;
   align-items: center;

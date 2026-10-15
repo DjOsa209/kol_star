@@ -251,6 +251,7 @@ func TestIPExternalOnlySubmissionCanEnterFeedbackAndMarketingFlow(t *testing.T) 
 	expectIPTestSession(mock)
 	mock.ExpectBegin()
 	mock.ExpectExec("insert into biz_ip_requests").WillReturnResult(sqlmock.NewResult(81, 1))
+	mock.ExpectExec("insert ignore into biz_ip_workflow_notifications").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	status, response := ipTestPost(t, a, a.ipRequestSave, map[string]any{
 		"projectName": "库外IP需求", "department": "营销", "markets": []string{"南亚"},
@@ -265,8 +266,9 @@ func TestIPExternalOnlySubmissionCanEnterFeedbackAndMarketingFlow(t *testing.T) 
 	// The IP group may associate a library candidate after reviewing the external suggestion.
 	// It is not automatically imported as a resource when the demand is submitted.
 	mock.ExpectBegin()
-	mock.ExpectQuery("select status from biz_ip_requests").WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("submitted"))
+	mock.ExpectQuery("select status,project_name").WillReturnRows(sqlmock.NewRows([]string{"status", "project_name", "brief", "created_by"}).AddRow("submitted", "测试需求", "{}", 1))
 	mock.ExpectExec("insert into biz_ip_request_candidates").WillReturnResult(sqlmock.NewResult(12, 1))
+	mock.ExpectQuery("select ip_id from biz_ip_request_candidates").WillReturnRows(sqlmock.NewRows([]string{"ip_id"}).AddRow(91))
 	mock.ExpectExec("update biz_ip_requests set status='ip_reviewed'").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	assessment := map[string]any{
@@ -284,8 +286,12 @@ func TestIPExternalOnlySubmissionCanEnterFeedbackAndMarketingFlow(t *testing.T) 
 		t.Fatalf("IP feedback: status=%d response=%v", status, response)
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectQuery("select status,project_name").WillReturnRows(sqlmock.NewRows([]string{"status", "project_name", "brief", "created_by"}).AddRow("ip_reviewed", "测试需求", "{}", 1))
 	mock.ExpectQuery("select ip_id from biz_ip_request_candidates").WillReturnRows(sqlmock.NewRows([]string{"ip_id"}).AddRow(91))
 	mock.ExpectExec("update biz_ip_requests set market_heat=").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("insert ignore into biz_ip_workflow_notifications").WithArgs(int64(81), "marketing_reviewed", sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
 	opinion := map[string]any{}
 	for _, key := range []string{"marketHeat", "fanAudience", "commercialValue", "marketingRisks", "recentTrend", "socialFollowers", "ugcForecast", "audienceMatch", "prOpinion"} {
 		opinion[key] = "已评估"
@@ -340,9 +346,10 @@ func TestIPFeedbackAllowsMultipleIPsAtSameTier(t *testing.T) {
 	defer db.Close()
 	a := newApp(db, Config{})
 	mock.ExpectBegin()
-	mock.ExpectQuery("select status from biz_ip_requests").WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("submitted"))
+	mock.ExpectQuery("select status,project_name").WillReturnRows(sqlmock.NewRows([]string{"status", "project_name", "brief", "created_by"}).AddRow("submitted", "测试需求", "{}", 1))
 	mock.ExpectExec("insert into biz_ip_request_candidates").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("insert into biz_ip_request_candidates").WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectQuery("select ip_id from biz_ip_request_candidates").WillReturnRows(sqlmock.NewRows([]string{"ip_id"}).AddRow(91).AddRow(92))
 	mock.ExpectExec("update biz_ip_requests set status='ip_reviewed'").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	assessment := map[string]any{

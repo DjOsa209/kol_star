@@ -2279,3 +2279,25 @@ use kol_admin;
 alter table biz_ip_resources
   add column market_penetrations json null after markets;
 -- END 053_ip_market_penetrations.sql
+
+-- BEGIN 054_ip_workflow_deadlines.sql
+use kol_admin;
+
+-- Older requests deliberately keep NULL: neither created_at nor updated_at
+-- can establish when a draft was submitted or when IP review was completed.
+alter table biz_ip_requests
+  add column submitted_at datetime null,
+  add column ip_reviewed_at datetime null,
+  add column marketing_reviewed_at datetime null;
+
+create table if not exists biz_ip_workflow_notifications (
+  id bigint primary key auto_increment,
+  request_id bigint not null,
+  user_id bigint not null,
+  stage varchar(32) not null,
+  read_at datetime null,
+  created_at datetime not null,
+  unique key uk_ip_workflow_notice (request_id, user_id, stage),
+  index idx_ip_workflow_user (user_id, read_at, id)
+);
+-- END 054_ip_workflow_deadlines.sql

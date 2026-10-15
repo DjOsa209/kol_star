@@ -129,3 +129,5 @@ Default seeded login:
 
 - username: `admin`
 - password: `admin123`
+
+Apply `migrations/054_ip_workflow_deadlines.sql` before deploying IP request deadlines and completion notifications. IP feedback has 10 working days after demand submission; marketing feedback has 5 working days after IP review. China mainland holidays **and makeup workdays** are counted from the following day, through 23:59:59 Asia/Shanghai. Verified 2025/2026 calendars are embedded; maintain complete later annual schedules in the hot-reloaded `work_calendar` list in `config.yaml`. Unknown years are explicitly pending rather than assumed weekdays. Old requests retain unknown stage timestamps. See [IP deadline rules, annual calendar maintenance and QA](../docs/ip-request-deadlines.md).
