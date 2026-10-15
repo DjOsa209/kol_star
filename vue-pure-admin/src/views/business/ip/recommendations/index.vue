@@ -1511,23 +1511,14 @@ watch(
             </div>
           </div>
           <div class="conversation-dock">
-            <p
-              class="composer-note"
-              :class="{ 'web-search-note': webSearchMode }"
-              role="status"
-            >
-              <template v-if="webSearchMode">
-                <strong>联网搜索已开启</strong
-                >：仅发送输入框中的公开关键词，项目资料不用于搜索。
-              </template>
-              <template v-else>
-                支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。
-              </template>
+            <p class="composer-note">
+              {{
+                webSearchMode
+                  ? "联网模式：仅发送输入框中的公开关键词，项目资料不用于搜索。"
+                  : "支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。"
+              }}
             </p>
-            <div
-              class="conversation-composer"
-              :class="{ 'web-search-active': webSearchMode }"
-            >
+            <div class="conversation-composer">
               <textarea
                 v-model="composerText"
                 :disabled="conversationBusy || attachmentReading"
@@ -1573,7 +1564,13 @@ watch(
                   @click="webSearchMode = !webSearchMode"
                 >
                   <Icon :icon="icons.external" /><span>联网搜索</span>
-                  <Icon v-if="webSearchMode" :icon="icons.check" />
+                  <svg
+                    class="web-search-outline"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <rect x="0.5" y="0.5" rx="6" pathLength="100" />
+                  </svg>
                 </button>
                 <span>Ctrl / ⌘ + Enter 发送</span
                 ><button
@@ -3193,10 +3190,6 @@ watch(
   outline: 1px solid #879e62;
 }
 
-.conversation-composer.web-search-active {
-  border-color: #79913c;
-}
-
 .conversation-composer textarea {
   display: block;
   width: 100%;
@@ -3219,7 +3212,6 @@ watch(
 
 .composer-actions {
   display: flex;
-  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   margin-top: 10px;
@@ -3248,28 +3240,46 @@ watch(
 }
 
 .composer-actions .web-search-toggle {
+  position: relative;
   flex: none;
-  gap: 6px;
-  min-height: 36px;
-  padding: 0 10px;
   white-space: nowrap;
-  border: 1px solid transparent;
-  border-radius: 8px;
 }
 
-.composer-actions .web-search-toggle:hover:not(:disabled) {
-  background: #eef3e8;
+.composer-actions .web-search-outline {
+  position: absolute;
+  inset: 0 -6px;
+  width: calc(100% + 12px);
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
 }
 
-.composer-actions .web-search-toggle[aria-pressed="true"] {
-  font-weight: 600;
-  color: #18201c;
-  background: var(--workspace-accent);
-  border-color: #79913c;
+.web-search-outline rect {
+  width: calc(100% - 1px);
+  height: calc(100% - 1px);
+  opacity: 0;
+  fill: none;
+  stroke: #79913c;
+  stroke-width: 1;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transition:
+    stroke-dashoffset 160ms ease-out,
+    opacity 120ms ease-out;
 }
 
-.composer-actions .web-search-toggle[aria-pressed="true"]:hover:not(:disabled) {
-  background: #bce900;
+.web-search-toggle[aria-pressed="true"] .web-search-outline rect {
+  opacity: 1;
+  stroke-dashoffset: 0;
+  transition:
+    stroke-dashoffset 480ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .web-search-toggle[aria-pressed] .web-search-outline rect {
+    transition: none;
+  }
 }
 
 @media (pointer: coarse) {
@@ -3343,10 +3353,6 @@ watch(
   margin: 0 0 10px;
   font-size: 11px;
   color: #737c70;
-}
-
-.composer-note.web-search-note {
-  color: #4b5e34;
 }
 
 .attachment-input {
