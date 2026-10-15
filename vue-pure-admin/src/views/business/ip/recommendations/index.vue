@@ -709,12 +709,10 @@ const workbenchTab = ref<"candidates" | "compare" | "intent" | "external">(
   "candidates"
 );
 const compareIds = ref<number[]>([]);
-const externalCompareCount = ref(0);
 const activeCandidateId = ref<number | null>(null);
 const expectedLaunch = ref("");
 const historyOpen = ref(false);
 const conditionsOpen = ref(false);
-const stageLabels = ["需求理解", "条件确认", "候选研究", "比较决策"];
 const attachmentReading = ref(false);
 const attachment = ref<{ name: string; text: string } | null>(null);
 const canSendMessage = computed(
@@ -770,20 +768,6 @@ const comparison = computed(() =>
 const intentItems = computed(() =>
   visibleResults.value.filter(item => chosenIds.value.includes(item.resourceId))
 );
-const currentStage = computed(() => {
-  if (!selectedSubscription.value) return 0;
-  if (
-    workbenchTab.value === "external" &&
-    latestWebSearch.value?.candidates?.length
-  )
-    return externalCompareCount.value >= 2 ? 3 : 2;
-  if (
-    selectedSubscription.value.ipWorkspace?.stage === "confirm" ||
-    !visibleResults.value.length
-  )
-    return 1;
-  return selectedSubscription.value.ipWorkspace?.stage === "compare" ? 3 : 2;
-});
 const presentation = computed<IPRecommendationPresentation | null>(() => {
   if (streamingPresentation.value) return streamingPresentation.value;
   if (conversationBusy.value) return null;
@@ -869,20 +853,6 @@ function comparisonValue(item: RecommendationResult, field: string) {
 function showConditions() {
   if (selectedSubscription.value) editSubscription(selectedSubscription.value);
   else editing.value = true;
-}
-function selectStage(index: number) {
-  if (index < 2) {
-    conditionsOpen.value = !conditionsOpen.value;
-    return;
-  }
-  if (
-    latestWebSearch.value?.candidates?.length &&
-    (workbenchTab.value === "external" || !visibleResults.value.length)
-  ) {
-    workbenchTab.value = "external";
-    return;
-  }
-  workbenchTab.value = index === 3 ? "compare" : "candidates";
 }
 function toggleCompare(item: RecommendationResult) {
   if (compareIds.value.includes(item.resourceId))
@@ -1256,40 +1226,6 @@ watch(
           {{ projectLabel }}
         </h2>
         <div class="research-tools">
-          <el-dropdown
-            trigger="click"
-            :disabled="conversationBusy"
-            @command="value => selectStage(Number(value))"
-          >
-            <button
-              type="button"
-              class="quiet-button stage-switch"
-              :disabled="conversationBusy"
-              :aria-label="`研究阶段：${stageLabels[currentStage]}`"
-            >
-              <span class="stage-indicator" aria-hidden="true" />{{
-                stageLabels[currentStage]
-              }}<Icon icon="ri:arrow-down-s-line" />
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu aria-label="推荐研究阶段">
-                <el-dropdown-item
-                  v-for="(label, index) in stageLabels"
-                  :key="label"
-                  :command="index"
-                  :aria-current="currentStage === index ? 'step' : undefined"
-                  :disabled="
-                    index > 1 &&
-                    !visibleResults.length &&
-                    !latestWebSearch?.candidates?.length
-                  "
-                >
-                  {{ label
-                  }}<Icon v-if="currentStage === index" :icon="icons.check" />
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <button
             type="button"
             class="quiet-button conditions-toggle"
@@ -1743,7 +1679,6 @@ watch(
               :research="latestWebSearch"
               :busy="conversationBusy"
               @ask="text => converse('search', text)"
-              @compare-change="externalCompareCount = $event"
             />
           </div>
           <div v-else-if="!visibleResults.length" class="workbench-empty">
@@ -2490,7 +2425,7 @@ watch(
   position: relative;
   min-width: 0;
   min-height: calc(100vh - 150px);
-  padding: 16px 28px 36px;
+  padding: 12px 24px 16px;
   container: ip-recommendation / inline-size;
   font-size: 14px;
   line-height: 1.6;
@@ -2601,18 +2536,8 @@ watch(
   align-items: center;
 }
 
-.stage-switch,
 .conditions-toggle {
   font-size: 13px;
-}
-
-.stage-indicator {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  background: var(--workspace-accent);
-  border: 1px solid #526350;
-  border-radius: 50%;
 }
 
 .quiet-button {
@@ -2695,7 +2620,7 @@ watch(
   grid-template-columns: minmax(0, 1.12fr) minmax(360px, 1fr);
   gap: 0;
   align-items: stretch;
-  height: clamp(560px, calc(100dvh - 240px), 960px);
+  height: max(640px, calc(100dvh - 180px));
   overflow: hidden;
   background: #fff;
   border: 1px solid var(--workspace-line);
@@ -3948,7 +3873,7 @@ watch(
 
 @container ip-recommendation (width <= 780px) {
   .research-columns {
-    grid-template-rows: repeat(2, clamp(560px, 75dvh, 760px));
+    grid-template-rows: repeat(2, max(640px, calc(100dvh - 160px)));
     grid-template-columns: 1fr;
     height: auto;
   }
