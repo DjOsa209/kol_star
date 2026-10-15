@@ -81,7 +81,7 @@ web_search:
   tavily_api_key: ""
 ```
 
-只需填写 `web_search.tavily_api_key`。服务端搜索每次从应用当前 Config 读取设置；运行新版本后，保存 YAML 沿用现有热加载，密钥轮换会改变缓存标识。若通过 `CONFIG_FILE` 指定其他 YAML，则应编辑实际加载的文件。本地调试服务当前使用 `/tmp/kol-admin-ui-debug-config.yaml`，该文件同样预留空密钥块；默认部署使用 `backend/config.yaml`。Viper 标准 `WEB_SEARCH_PROVIDER` / `WEB_SEARCH_TAVILY_API_KEY` 部署环境变量可覆盖 YAML。
+只需填写 `web_search.tavily_api_key`。服务端搜索每次从应用当前 Config 读取设置；运行新版本后，保存 YAML 沿用现有热加载，密钥轮换会改变缓存标识。若通过 `CONFIG_FILE` 指定其他 YAML，则应编辑实际加载的文件。早期本地调试使用 `/tmp/kol-admin-ui-debug-config.yaml`；2026-10-15 真实验收后已切到用户配置的 `backend/config.yaml`，本地监听仍为 `127.0.0.1:8082`。Viper 标准 `WEB_SEARCH_PROVIDER` / `WEB_SEARCH_TAVILY_API_KEY` 部署环境变量可覆盖 YAML。
 
 以下旧环境变量仅作 YAML 对应值为空时的兼容回退；env 修改需重启进程。已配置 YAML 时无需 `.env`，旧 dotenv 加载与 `ENV_FILE` 保留兼容，不再作为用户的推荐配置入口。
 
@@ -117,7 +117,7 @@ web_search:
 
 2026-10-14 核对的免费方案：[Tavily](https://www.tavily.com/pricing) 每月 1,000 积分、无需信用卡；[Brave](https://brave.com/search/api/) 每月 $5 额度，Search 为 $5/1,000 请求，需要信用卡验证；[SearXNG](https://docs.searxng.org/) 为可自建的免费软件，服务器运维另计。原有 Wikidata 免费查询继续用于核实库内 IP 身份背景，不等同于广泛的库外网页搜索。
 
-本地尚未配置搜索密钥或 SearXNG 地址；真实浏览器验证了入口与未配置提示，成功检索、来源过滤、缓存及持久化由模拟搜索供应商和真实本地数据库验证，未宣称已启用真实第三方搜索。
+早期无密钥时仅验证入口、配置错误与模拟供应商。2026-10-15 已按用户授权完成真实 Tavily 与 gpt-5 研究，实际耗时、候选质量、修复与剩余缺口见 [真实联网验收](qa/ip-live-esports-20261015.md)。
 
 ## 验证范围
 

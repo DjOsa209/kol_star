@@ -120,7 +120,12 @@ func searchIPResearchPages(ctx context.Context, query string, provider ipSearchP
 	switch provider.name {
 	case "tavily":
 		method = http.MethodPost
-		encoded, _ := json.Marshal(map[string]any{"query": query, "search_depth": "basic", "max_results": 6, "auto_parameters": false, "include_answer": false, "include_raw_content": false, "include_images": false, "include_domains": domains, "include_domains_mode": "prefer", "include_published_date": true})
+		payload := map[string]any{"query": query, "search_depth": "basic", "max_results": 6, "auto_parameters": false, "include_answer": false, "include_raw_content": false, "include_images": false, "include_published_date": true}
+		if len(domains) > 0 {
+			payload["include_domains"] = domains
+			payload["include_domains_mode"] = "prefer"
+		}
+		encoded, _ := json.Marshal(payload)
 		body = bytes.NewReader(encoded)
 	case "brave", "searxng":
 		params := endpoint.Query()

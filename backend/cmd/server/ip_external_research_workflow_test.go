@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestIPResearchPublicScopeAndMemory(t *testing.T) {
@@ -235,6 +236,83 @@ func TestIPResearchExcludedTopicIsNotTheSearchDirection(t *testing.T) {
 		b := prepareIPResearchBrief(recommendationSubscription{}, tc.message)
 		if b.Topic != tc.want {
 			t.Fatalf("excluded topic became active: %+v", b)
+		}
+	}
+}
+
+func TestIPResearchNamedFollowUpUsesOnlyNamedHistoricalCandidate(t *testing.T) {
+	brief := &ipResearchBrief{Topic: "电竞", Markets: []string{"东南亚"}, Goal: "产品联名", Kinds: []string{"游戏IP", "赛事", "战队"}}
+	s := recommendationSubscription{IPWorkspace: &ipRecommendationConversation{ExternalBrief: brief, Messages: []ipRecommendationMessage{
+		{Presentation: &ipRecommendationPresentation{WebSearch: &ipExternalSearch{Candidates: []ipExternalCandidate{{Name: "Mobile Legends: Bang Bang"}, {Name: "Free Fire World Series"}}}}},
+		{Presentation: &ipRecommendationPresentation{WebSearch: &ipExternalSearch{Candidates: []ipExternalCandidate{{Name: "Free Fire World Series"}}}}},
+	}}}
+	b := prepareIPResearchBrief(s, "继续补查「Mobile Legends: Bang Bang」的合作依据与目标市场适配")
+	if !slices.Equal(b.FocusNames, []string{"Mobile Legends: Bang Bang"}) {
+		t.Fatalf("named follow-up expanded to unrelated candidates: %+v", b.FocusNames)
+	}
+	for round := 0; round < 3; round++ {
+		for _, q := range researchQueries(b, round, nil) {
+			if strings.Contains(q, "Free Fire") || !strings.Contains(q, "Mobile Legends: Bang Bang") {
+				t.Fatalf("unrelated search query: %s", q)
+			}
+		}
+	}
+}
+
+func TestIPResearchExtractionCannotReplaceNamedFocus(t *testing.T) {
+	pages := []recommendationEvidence{{Title: "Official esports", URL: "https://example.com/games", Summary: "Mobile Legends: Bang Bang is a mobile game. Free Fire is a mobile game."}}
+	transport := recommendationEvidenceTransportFunc(func(*http.Request) (*http.Response, error) {
+		return researchMockCompletion(map[string]any{"candidates": []any{
+			researchMockCandidate("Mobile Legends: Bang Bang", "游戏IP", "Mobile Legends: Bang Bang is a mobile game.", "目标市场适配待核实", []int{0}),
+			researchMockCandidate("Free Fire", "游戏IP", "Free Fire is a mobile game.", "目标市场适配待核实", []int{0}),
+		}}), nil
+	})
+	b := ipResearchBrief{Topic: "电竞", Kinds: []string{"游戏IP"}, FocusNames: []string{"Mobile Legends: Bang Bang"}}
+	items, err := extractIPResearchCandidates(context.Background(), &assistantAIModel{BaseURL: "https://model.example.com"}, b, pages, transport)
+	if err != nil || len(items) != 1 || items[0].Name != "Mobile Legends: Bang Bang" {
+		t.Fatalf("model replaced named follow-up: %+v %v", items, err)
+	}
+}
+
+func TestIPResearchVerificationOmitsEmptyDomainPreference(t *testing.T) {
+	transport := recommendationEvidenceTransportFunc(func(req *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if json.NewDecoder(req.Body).Decode(&body) != nil {
+			t.Fatal("invalid provider payload")
+		}
+		if _, present := body["include_domains"]; present {
+			t.Error("unrestricted verification must omit empty include_domains")
+		}
+		if _, present := body["include_domains_mode"]; present {
+			t.Error("unrestricted verification must omit include_domains_mode")
+		}
+		return recommendationEvidenceTestResponse(200, `{"results":[]}`), nil
+	})
+	_, err := searchIPResearchPages(context.Background(), "public esports identity", ipSearchProvider{name: "tavily", endpoint: "https://api.tavily.com/search"}, nil, 1600, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIPResearchModelUsesConfiguredTimeoutWithinOverallBudget(t *testing.T) {
+	for _, tc := range []struct{ modelTimeout, parentTimeout, minimum, maximum time.Duration }{
+		{30 * time.Second, 20 * time.Second, 19 * time.Second, 20 * time.Second},
+		{2 * time.Second, 20 * time.Second, time.Second, 2 * time.Second},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), tc.parentTimeout)
+		transport := recommendationEvidenceTransportFunc(func(req *http.Request) (*http.Response, error) {
+			deadline, ok := req.Context().Deadline()
+			remaining := time.Until(deadline)
+			if !ok || remaining < tc.minimum || remaining > tc.maximum {
+				t.Errorf("model request budget=%s, expected %s..%s", remaining, tc.minimum, tc.maximum)
+			}
+			return researchMockCompletion(map[string]any{"ok": true}), nil
+		})
+		var output map[string]any
+		err := ipResearchJSON(ctx, &assistantAIModel{BaseURL: "https://model.example.com", Timeout: tc.modelTimeout}, transport, "Return JSON", nil, &output)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }
