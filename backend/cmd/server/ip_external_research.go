@@ -126,7 +126,8 @@ func prepareIPResearchBrief(s recommendationSubscription, message string) ipRese
 			break
 		}
 	}
-	if topic := researchTopic(message); topic != "" && topic != b.Topic {
+	topicMessage := regexp.MustCompile(`(?:排除|不要|不考虑|不看|不做)\s*(?:电竞|游戏|动漫|动画|影视|体育|音乐|艺术设计|艺术|设计|战队|赛事|选手)`).ReplaceAllString(message, "")
+	if topic := researchTopic(topicMessage); topic != "" && topic != b.Topic {
 		b.Topic = topic
 		b.Kinds = nil
 		b.ExcludedKinds = nil

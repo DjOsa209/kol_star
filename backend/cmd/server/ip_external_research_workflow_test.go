@@ -229,3 +229,12 @@ func TestIPResearchMarketDisambiguation(t *testing.T) {
 		}
 	}
 }
+
+func TestIPResearchExcludedTopicIsNotTheSearchDirection(t *testing.T) {
+	for _, tc := range []struct{ message, want string }{{"优先艺术设计，排除游戏", "艺术设计"}, {"不要电竞，找体育IP", "体育"}} {
+		b := prepareIPResearchBrief(recommendationSubscription{}, tc.message)
+		if b.Topic != tc.want {
+			t.Fatalf("excluded topic became active: %+v", b)
+		}
+	}
+}
