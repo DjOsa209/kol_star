@@ -136,6 +136,10 @@ export const saveIPRequest = (data: IPRequestInput) =>
     "/business/ip/requests/save",
     { data }
   );
+export const deleteIPRequest = (id: number) =>
+  http.request<Result<null>>("post", "/business/ip/requests/delete", {
+    data: { id }
+  });
 export const getIPRequest = (id: number) =>
   http.request<Result<{ request: any; candidates: any[] }>>(
     "get",

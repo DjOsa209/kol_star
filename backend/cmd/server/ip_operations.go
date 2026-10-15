@@ -944,6 +944,7 @@ func (a *app) ipRequestsList(w http.ResponseWriter, r *http.Request) {
         created_by as createdBy, date_format(created_at, '%Y-%m-%d %H:%i') as createdAt,
 		date_format(updated_at, '%Y-%m-%d %H:%i') as updatedAt,
 		(select count(*) from biz_ip_request_candidates c where c.request_id=biz_ip_requests.id) as candidateCount
+		, exists(select 1 from biz_ip_request_candidates c where c.request_id=biz_ip_requests.id and (c.feasibility<>'' or c.recommendation<>'' or coalesce(c.reason,'')<>'' or coalesce(c.assessment,'') not in ('','{}','null'))) as feedbackStarted
 		from biz_ip_requests`+where+` order by updated_at desc, id desc limit ? offset ?`, listArgs...)
 	if err != nil {
 		writeDBError(w, err)
@@ -952,8 +953,10 @@ func (a *app) ipRequestsList(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []map[string]any{}
 	}
+	userID, _ := a.currentUserID(r)
 	for _, row := range rows {
 		a.enrichIPRequestDeadlines(row, time.Now())
+		ipRequestManagementActions(row, userID)
 	}
 	writeOK(w, tableData{List: rows, Total: total, PageSize: filter.PageSize, CurrentPage: filter.Page})
 }
@@ -971,7 +974,7 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 	if !item.Submit && item.ProjectName == "" {
 		item.ProjectName = "未命名需求"
 	}
-	if len(item.CandidateIDs) > 5 {
+	if item.ID <= 0 && len(item.CandidateIDs) > 5 {
 		writeError(w, http.StatusBadRequest, 400, "最多选择5个意向IP")
 		return
 	}
@@ -983,7 +986,7 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, 400, "库外IP信息不完整")
 		return
 	}
-	if item.Submit && !ipBriefValid(item.Brief, item.CandidateIDs) {
+	if item.ID <= 0 && item.Submit && !ipBriefValid(item.Brief, item.CandidateIDs) {
 		writeError(w, http.StatusBadRequest, 400, "请补齐项目与各意向IP的评估信息")
 		return
 	}
@@ -1007,7 +1010,11 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 	if item.ExpectedLaunch != "" {
 		launch = item.ExpectedLaunch
 	}
-	userID, _ := a.currentUserID(r)
+	userID, authenticated := a.currentUserID(r)
+	if !authenticated {
+		writeError(w, http.StatusUnauthorized, 401, "请重新登录")
+		return
+	}
 	tx, err := a.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeDBError(w, err)
@@ -1015,36 +1022,105 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	id := item.ID
+	submissionTransition := item.Submit
+	candidatesLocked := false
 	if id > 0 {
-		var exists int
-		if err := tx.QueryRowContext(r.Context(), "select count(*) from biz_ip_requests where id=? and status='draft' and created_by=?", id, userID).Scan(&exists); err != nil {
+		var oldStatus, oldBrief string
+		var creatorID int64
+		var oldSubmitted sql.NullString
+		var feedbackStarted bool
+		err := tx.QueryRowContext(r.Context(), `select status,created_by,date_format(submitted_at,'%Y-%m-%d %H:%i:%s'),coalesce(brief,''),
+            exists(select 1 from biz_ip_request_candidates c where c.request_id=biz_ip_requests.id and (c.feasibility<>'' or c.recommendation<>'' or coalesce(c.reason,'')<>'' or coalesce(c.assessment,'') not in ('','{}','null')))
+            from biz_ip_requests where id=? for update`, id).Scan(&oldStatus, &creatorID, &oldSubmitted, &oldBrief, &feedbackStarted)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, 404, "需求不存在或已删除")
+			return
+		}
+		if err != nil {
 			writeDBError(w, err)
 			return
 		}
-		if exists == 0 {
-			writeError(w, http.StatusConflict, 409, "只能修改本人草稿")
+		if creatorID != int64(userID) {
+			writeError(w, http.StatusForbidden, 403, "只能编辑本人发起的需求")
 			return
 		}
-		result, err := tx.ExecContext(r.Context(), `update biz_ip_requests set project_name=?,department=?,markets=?,expected_launch=?,goal=?,description=?,budget_currency=?,budget_min=?,budget_max=?,external_recommendation=?,brief=?,status=?,submitted_at=? where id=? and status='draft' and created_by=?`,
+		submissionTransition = oldStatus == "draft" && item.Submit
+		if oldStatus != "draft" {
+			if !item.Submit {
+				writeError(w, http.StatusConflict, 409, "已提交的需求不能改为草稿，请保存修改")
+				return
+			}
+			status = oldStatus
+			submittedAt = nil
+			if oldSubmitted.Valid {
+				submittedAt = oldSubmitted.String
+			}
+		}
+		candidatesLocked = oldStatus != "draft" && (oldStatus != "submitted" || feedbackStarted)
+		validationIDs := item.CandidateIDs
+		if candidatesLocked {
+			candidateRows, err := tx.QueryContext(r.Context(), "select ip_id from biz_ip_request_candidates where request_id=?", id)
+			if err != nil {
+				writeDBError(w, err)
+				return
+			}
+			savedIDs := map[int64]bool{}
+			for candidateRows.Next() {
+				var candidateID int64
+				if err = candidateRows.Scan(&candidateID); err != nil {
+					break
+				}
+				savedIDs[candidateID] = true
+			}
+			if err == nil {
+				err = candidateRows.Err()
+			}
+			candidateRows.Close()
+			if err != nil {
+				writeDBError(w, err)
+				return
+			}
+			matches := len(savedIDs) == len(item.CandidateIDs)
+			for _, candidateID := range item.CandidateIDs {
+				if !savedIDs[candidateID] {
+					matches = false
+				}
+				delete(savedIDs, candidateID)
+			}
+			if !matches || len(savedIDs) > 0 {
+				writeError(w, http.StatusConflict, 409, "IP组已开始反馈，意向IP名单不可修改；请刷新后编辑其他需求内容")
+				return
+			}
+			// Preserve original candidate briefings, including IPs added by reviewers.
+			var savedBrief map[string]any
+			if oldBrief != "" && json.Unmarshal([]byte(oldBrief), &savedBrief) != nil {
+				writeError(w, 409, 409, "原需求资料无法读取，请联系管理员")
+				return
+			}
+			if item.Brief == nil {
+				item.Brief = map[string]any{}
+			}
+			item.Brief["candidateEvaluations"] = savedBrief["candidateEvaluations"]
+			validationIDs = nil
+		} else if len(item.CandidateIDs) > 5 {
+			writeError(w, 400, 400, "最多选择5个意向IP")
+			return
+		}
+		if item.Submit && !ipBriefValid(item.Brief, validationIDs) {
+			writeError(w, 400, 400, "请补齐项目与各意向IP的评估信息")
+			return
+		}
+		_, err = tx.ExecContext(r.Context(), `update biz_ip_requests set project_name=?,department=?,markets=?,expected_launch=?,goal=?,description=?,budget_currency=?,budget_min=?,budget_max=?,external_recommendation=?,brief=?,status=?,submitted_at=? where id=? and created_by=?`,
 			item.ProjectName, item.Department, ipJSON(item.Markets), launch, item.Goal, item.Description, item.BudgetCurrency, item.BudgetMin, item.BudgetMax, item.ExternalRecommendation, ipJSON(item.Brief), status, submittedAt, id, userID)
 		if err != nil {
 			writeDBError(w, err)
 			return
 		}
-		if item.Submit {
-			affected, err := result.RowsAffected()
-			if err != nil {
+		if !candidatesLocked {
+			if _, err := tx.ExecContext(r.Context(), "delete from biz_ip_request_candidates where request_id=?", id); err != nil {
 				writeDBError(w, err)
 				return
 			}
-			if affected != 1 {
-				writeError(w, http.StatusConflict, 409, "需求已提交，请刷新后查看")
-				return
-			}
-		}
-		if _, err := tx.ExecContext(r.Context(), "delete from biz_ip_request_candidates where request_id=?", id); err != nil {
-			writeDBError(w, err)
-			return
 		}
 	} else {
 		result, err := tx.ExecContext(r.Context(), `insert into biz_ip_requests (project_name,department,markets,expected_launch,goal,description,budget_currency,budget_min,budget_max,external_recommendation,brief,status,created_by,submitted_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -1057,6 +1133,9 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 	}
 	seen := map[int64]bool{}
 	for _, ipID := range item.CandidateIDs {
+		if candidatesLocked {
+			break
+		}
 		if ipID <= 0 || seen[ipID] {
 			continue
 		}
@@ -1077,7 +1156,7 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
-	if item.Submit {
+	if submissionTransition {
 		a.notifyIPStageAsync(id, "submitted")
 	}
 	writeOK(w, map[string]any{"id": id, "status": status})
@@ -1094,6 +1173,7 @@ func (a *app) ipRequestDetail(w http.ResponseWriter, r *http.Request) {
 		external_recommendation as externalRecommendation,brief,marketing_profile as marketingProfile,status,market_heat as marketHeat,
 		fan_audience as fanAudience,commercial_value as commercialValue,marketing_risks as marketingRisks,
 		marketing_channels as marketingChannels,marketing_comments as marketingComments,
+        exists(select 1 from biz_ip_request_candidates c where c.request_id=biz_ip_requests.id and (c.feasibility<>'' or c.recommendation<>'' or coalesce(c.reason,'')<>'' or coalesce(c.assessment,'') not in ('','{}','null'))) as feedbackStarted,
 		created_by as createdBy,date_format(created_at, '%Y-%m-%d %H:%i') as createdAt,
         date_format(submitted_at, '%Y-%m-%d %H:%i:%s') as submittedAt,
         date_format(ip_reviewed_at, '%Y-%m-%d %H:%i:%s') as ipReviewedAt,
@@ -1119,6 +1199,8 @@ func (a *app) ipRequestDetail(w http.ResponseWriter, r *http.Request) {
 		candidates = []map[string]any{}
 	}
 	a.enrichIPRequestDeadlines(rows[0], time.Now())
+	userID, _ := a.currentUserID(r)
+	ipRequestManagementActions(rows[0], userID)
 	writeOK(w, map[string]any{"request": rows[0], "candidates": candidates})
 }
 

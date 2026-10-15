@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import dayjs from "dayjs";
 import * as XLSX from "xlsx";
 import RequestText from "./components/RequestText.vue";
@@ -14,6 +14,7 @@ import {
   readIPFile,
   searchIPColleagues,
   saveIPRequest,
+  deleteIPRequest,
   submitIPFeedback,
   submitIPMarketing,
   type IPColleague,
@@ -31,6 +32,13 @@ const total = ref(0);
 const page = ref(1);
 const keyword = ref("");
 const detail = ref<{ request: any; candidates: any[] } | null>(null);
+const deletingID = ref<number | null>(null);
+const editingSubmitted = computed(
+  () => !!form.value.id && detail.value?.request.status !== "draft"
+);
+const candidateSelectionLocked = computed(
+  () => !!form.value.id && !!detail.value?.request.candidatesLocked
+);
 const resourceOptions = ref<any[]>([]);
 const ipImageUrls = ref<Record<number, string>>({});
 const librarySelectionKey = ref(`ip-request-${crypto.randomUUID()}`);
@@ -718,6 +726,47 @@ function goNew() {
 function goDetail(id: number) {
   router.push({ path: route.path, query: { id: String(id) } });
 }
+function goEdit(id: number) {
+  router.push({
+    path: "/business/ip/requests",
+    query: { id: String(id), mode: "edit" }
+  });
+}
+async function deleteRequest(row: any) {
+  if (!row.canDelete || deletingID.value != null) return;
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${row.projectName}」？需求、IP评估意见和营销意见将一并删除，无法恢复。资源库和 AI 会话会保留，会话与该需求的关联将解除。`,
+      "删除IP需求",
+      {
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+        type: "warning",
+        distinguishCancelAndClose: true,
+        closeOnClickModal: false
+      }
+    );
+  } catch {
+    return;
+  }
+  deletingID.value = Number(row.id);
+  try {
+    await deleteIPRequest(Number(row.id));
+    ElMessage.success("需求已删除");
+    if (mode.value !== "list") {
+      goList();
+    } else {
+      if (rows.value.length === 1 && page.value > 1) page.value--;
+      await loadRows();
+    }
+  } catch (error) {
+    ElMessage.error(
+      (error as any)?.response?.data?.message || "删除失败，请刷新后重试"
+    );
+  } finally {
+    deletingID.value = null;
+  }
+}
 function storeRecommendationContext() {
   localStorage.setItem(
     librarySelectionKey.value,
@@ -847,6 +896,10 @@ function addFeedbackCandidate() {
 }
 function editDraft() {
   if (!detail.value) return;
+  if (!detail.value.request.canEdit) {
+    ElMessage.warning("只能编辑本人发起的需求");
+    return;
+  }
   const item = detail.value.request;
   form.value = {
     id: Number(item.id),
@@ -877,7 +930,12 @@ function editDraft() {
   loadResources();
 }
 async function syncLibrarySelection() {
-  if (!librarySelectionKey.value || mode.value !== "new") return;
+  if (
+    !librarySelectionKey.value ||
+    mode.value !== "new" ||
+    candidateSelectionLocked.value
+  )
+    return;
   const saved = localStorage.getItem(librarySelectionKey.value);
   if (!saved) return;
   localStorage.removeItem(librarySelectionKey.value);
@@ -1122,7 +1180,7 @@ async function save(submit: boolean) {
       }
     }
     await loadMissingSelectedResources();
-    for (const id of item.candidateIds) {
+    for (const id of candidateSelectionLocked.value ? [] : item.candidateIds) {
       const candidateName = selectedIP(id)?.name;
       if (!candidateName) {
         await showValidation(
@@ -1195,8 +1253,21 @@ async function save(submit: boolean) {
   saving.value = true;
   try {
     const result = await saveIPRequest({ ...item, submit });
-    ElMessage.success(submit ? "需求已提交，等待IP组反馈" : "草稿已保存");
+    ElMessage.success(
+      editingSubmitted.value
+        ? "需求已更新，已有意见及截止时间已保留"
+        : submit
+          ? "需求已提交，等待IP组反馈"
+          : "草稿已保存"
+    );
     if (Number(route.query.id) === Number(result.data.id)) {
+      if (route.query.mode === "edit") {
+        await router.replace({
+          path: route.path,
+          query: { id: String(result.data.id) }
+        });
+        return;
+      }
       mode.value = "detail";
       await loadDetail(Number(result.data.id));
     } else
@@ -1204,6 +1275,10 @@ async function save(submit: boolean) {
         path: "/business/ip/requests",
         query: { id: String(result.data.id) }
       });
+  } catch (error) {
+    ElMessage.error(
+      (error as any)?.response?.data?.message || "需求保存失败，请稍后重试"
+    );
   } finally {
     saving.value = false;
   }
@@ -1348,7 +1423,13 @@ async function syncRoute() {
   const id = Number(route.query.id);
   if (id > 0) {
     mode.value = "detail";
-    loadDetail(id);
+    await loadDetail(id);
+    if (
+      route.query.mode === "edit" &&
+      menuKind.value === "requests" &&
+      detail.value
+    )
+      editDraft();
   } else if (route.query.mode === "new" && menuKind.value === "requests") {
     mode.value = "new";
     form.value = initialForm();
@@ -1423,7 +1504,9 @@ onUnmounted(() => {
             mode === "list"
               ? pageTitle
               : mode === "new"
-                ? "提起IP需求"
+                ? form.id
+                  ? "编辑IP需求"
+                  : "提起IP需求"
                 : menuKind === "requests"
                   ? "IP需求详情"
                   : pageTitle
@@ -1434,7 +1517,9 @@ onUnmounted(() => {
             mode === "list"
               ? pageSubtitle
               : mode === "new"
-                ? "明确合作目标和授权预算，提交给IP组评估"
+                ? editingSubmitted
+                  ? "修改项目资料，保留已有意见、流程进度与反馈截止时间"
+                  : "明确合作目标和授权预算，提交给IP组评估"
                 : menuKind === "requests"
                   ? "查看需求、IP反馈与营销意见"
                   : pageSubtitle
@@ -1472,8 +1557,14 @@ onUnmounted(() => {
             >搜索</el-button
           ><span>共 {{ total }} 条需求</span>
         </div>
-        <el-table :data="rows" empty-text="暂无符合条件的IP需求" stripe
-          ><el-table-column label="项目名称" min-width="220"
+        <el-table
+          class="ip-request-table"
+          :data="rows"
+          :cell-style="{ textAlign: 'center' }"
+          :header-cell-style="{ textAlign: 'center' }"
+          empty-text="暂无符合条件的IP需求"
+          stripe
+          ><el-table-column label="项目名称" min-width="200"
             ><template #default="scope"
               ><button class="ip-link" @click="goDetail(scope.row.id)">
                 {{ scope.row.projectName }}</button
@@ -1481,23 +1572,23 @@ onUnmounted(() => {
                 >{{ scope.row.department }} · {{ scope.row.createdAt }}</small
               ></template
             ></el-table-column
-          ><el-table-column label="目标市场" min-width="150"
+          ><el-table-column label="目标市场" min-width="120"
             ><template #default="scope">{{
               arrayValue(scope.row.markets).join(" / ")
             }}</template></el-table-column
           ><el-table-column
             prop="goal"
             label="合作目标"
-            min-width="120"
-          /><el-table-column label="授权费用预算" min-width="180"
+            min-width="100"
+          /><el-table-column label="授权费用预算" min-width="150"
             ><template #default="scope">{{
               priceText(scope.row)
             }}</template></el-table-column
           ><el-table-column
             prop="candidateCount"
             label="意向IP"
-            width="90"
-          /><el-table-column label="进度" width="160"
+            width="70"
+          /><el-table-column label="进度" width="130"
             ><template #default="scope"
               ><el-tag
                 :type="
@@ -1512,7 +1603,7 @@ onUnmounted(() => {
                 >{{ listStatusText(scope.row.status) }}</el-tag
               ></template
             ></el-table-column
-          ><el-table-column label="最晚反馈（北京时间）" min-width="225">
+          ><el-table-column label="最晚反馈（北京时间）" min-width="200">
             <template #default="{ row }">
               <DeadlineStatus
                 v-if="row.status !== 'draft'"
@@ -1526,19 +1617,54 @@ onUnmounted(() => {
               />
               <span v-else>提交后开始计时</span>
             </template> </el-table-column
-          ><el-table-column label="操作" width="115" fixed="right"
+          ><el-table-column
+            label="操作"
+            :width="menuKind === 'requests' ? 200 : 115"
+            fixed="right"
             ><template #default="scope"
-              ><el-button link type="primary" @click="goDetail(scope.row.id)">{{
-                menuKind === "feedback"
-                  ? scope.row.status === "submitted"
-                    ? "填写反馈"
-                    : "查看反馈"
-                  : menuKind === "marketing"
-                    ? scope.row.status === "ip_reviewed"
-                      ? "补充意见"
-                      : "查看意见"
-                    : "查看详情"
-              }}</el-button></template
+              ><div class="ip-row-actions">
+                <el-button link @click="goDetail(scope.row.id)">{{
+                  menuKind === "feedback"
+                    ? scope.row.status === "submitted"
+                      ? "填写反馈"
+                      : "查看反馈"
+                    : menuKind === "marketing"
+                      ? scope.row.status === "ip_reviewed"
+                        ? "补充意见"
+                        : "查看意见"
+                      : "查看详情"
+                }}</el-button>
+                <template v-if="menuKind === 'requests'">
+                  <span
+                    :title="
+                      scope.row.canEdit ? '编辑需求' : '仅发起人本人可编辑'
+                    "
+                  >
+                    <el-button
+                      link
+                      :disabled="!scope.row.canEdit || deletingID != null"
+                      :aria-label="`编辑${scope.row.projectName}`"
+                      @click="goEdit(scope.row.id)"
+                      >编辑</el-button
+                    >
+                  </span>
+                  <span
+                    :title="
+                      scope.row.canDelete ? '删除需求' : '仅发起人本人可删除'
+                    "
+                  >
+                    <el-button
+                      link
+                      type="danger"
+                      :disabled="!scope.row.canDelete || deletingID != null"
+                      :loading="deletingID === Number(scope.row.id)"
+                      :aria-label="`删除${scope.row.projectName}`"
+                      @click="deleteRequest(scope.row)"
+                      >删除</el-button
+                    >
+                  </span>
+                </template>
+              </div></template
             ></el-table-column
           ></el-table
         >
@@ -1554,7 +1680,7 @@ onUnmounted(() => {
     ></template>
 
     <template v-else-if="mode === 'new'"
-      ><div class="ip-steps">
+      ><div v-if="!editingSubmitted" class="ip-steps">
         <span class="active"><b>1</b>基本信息</span>
         <span :class="{ active: form.candidateIds.length > 0 }"
           ><b>2</b>初步意向IP</span
@@ -1674,10 +1800,15 @@ onUnmounted(() => {
               <div>
                 <h2>初步意向IP</h2>
                 <p>
-                  最多5个意向IP；可前往资源库查看完整档案、版权资料及历史合作。
+                  {{
+                    candidateSelectionLocked
+                      ? "IP组已开始反馈，意向IP名单和原始评估资料保持不变，可继续编辑其他项目资料。"
+                      : "最多5个意向IP；可前往资源库查看完整档案、版权资料及历史合作。"
+                  }}
                 </p>
               </div>
               <a
+                v-if="!candidateSelectionLocked"
                 class="ip-outline-link"
                 :href="libraryHref"
                 target="_blank"
@@ -1685,6 +1816,7 @@ onUnmounted(() => {
                 >前往IP资源库 ↗</a
               >
               <a
+                v-if="!candidateSelectionLocked"
                 class="ip-outline-link"
                 :href="recommendationHref"
                 target="_blank"
@@ -1695,6 +1827,7 @@ onUnmounted(() => {
             </div>
             <el-select
               v-model="form.candidateIds"
+              :disabled="candidateSelectionLocked"
               multiple
               filterable
               placeholder="搜索并选择资源库中的IP"
@@ -1729,7 +1862,12 @@ onUnmounted(() => {
                       }}</small
                     >
                   </div>
-                  <el-button link @click="removeCandidate(id)">移除</el-button>
+                  <el-button
+                    v-if="!candidateSelectionLocked"
+                    link
+                    @click="removeCandidate(id)"
+                    >移除</el-button
+                  >
                 </div>
                 <a
                   class="ip-text-link"
@@ -1749,6 +1887,7 @@ onUnmounted(() => {
                       ></span
                     ><el-input
                       v-model="form.brief.candidateEvaluations[id].reason"
+                      :disabled="candidateSelectionLocked"
                       placeholder="商业潜力、品牌调性或话题契合"
                   /></label>
                   <label
@@ -1765,6 +1904,7 @@ onUnmounted(() => {
                       v-model="
                         form.brief.candidateEvaluations[id].productEvaluation
                       "
+                      :disabled="candidateSelectionLocked"
                       placeholder="认知度、用户重叠率、机型适配"
                   /></label>
                   <label
@@ -1778,6 +1918,7 @@ onUnmounted(() => {
                       ></span
                     ><el-input
                       v-model="form.brief.candidateEvaluations[id].technicalFit"
+                      :disabled="candidateSelectionLocked"
                       placeholder="视觉惊喜度、开发及本地化难度"
                   /></label>
                 </div>
@@ -2061,10 +2202,14 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="ip-bottom">
-        <el-button :loading="saving" @click="save(false)">保存草稿</el-button
-        ><el-button class="ip-primary" :loading="saving" @click="save(true)"
-          >提交需求 →</el-button
-        >
+        <el-button
+          v-if="!editingSubmitted"
+          :disabled="saving"
+          @click="save(false)"
+          >保存草稿</el-button
+        ><el-button class="ip-primary" :loading="saving" @click="save(true)">{{
+          editingSubmitted ? "保存修改" : "提交需求 →"
+        }}</el-button>
       </div></template
     >
 
@@ -2206,8 +2351,20 @@ onUnmounted(() => {
           </section>
         </div>
         <div class="ip-detail-actions">
-          <el-button v-if="detail.request.status === 'draft'" @click="editDraft"
-            >继续编辑草稿</el-button
+          <el-button
+            v-if="menuKind === 'requests' && detail.request.canEdit"
+            @click="goEdit(Number(detail.request.id))"
+            >{{
+              detail.request.status === "draft" ? "继续编辑草稿" : "编辑需求"
+            }}</el-button
+          >
+          <el-button
+            v-if="menuKind === 'requests' && detail.request.canDelete"
+            type="danger"
+            plain
+            :loading="deletingID === Number(detail.request.id)"
+            @click="deleteRequest(detail.request)"
+            >删除需求</el-button
           >
           <el-button @click="openRecommendationsFromDetail"
             >根据此需求寻找匹配IP ↗</el-button
@@ -2815,6 +2972,24 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 18px;
+}
+
+.ip-row-actions {
+  display: inline-flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.ip-request-table :deep(.ip-deadline),
+.ip-request-table :deep(.deadline-label) {
+  align-items: center;
+  justify-content: center;
+}
+
+.ip-request-table :deep(.cell) {
+  overflow-wrap: anywhere;
 }
 
 .ip-steps,

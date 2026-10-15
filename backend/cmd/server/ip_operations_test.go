@@ -304,7 +304,7 @@ func TestIPExternalOnlySubmissionCanEnterFeedbackAndMarketingFlow(t *testing.T) 
 	}
 }
 
-func TestIPDraftSubmissionRejectsLostStatusTransition(t *testing.T) {
+func TestIPRequestEditRejectsOtherCreator(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -313,11 +313,8 @@ func TestIPDraftSubmissionRejectsLostStatusTransition(t *testing.T) {
 	a := newApp(db, Config{})
 	expectIPTestSession(mock)
 	mock.ExpectBegin()
-	mock.ExpectQuery("select count\\(\\*\\) from biz_ip_requests where id=\\? and status='draft'").
-		WithArgs(int64(81), 1).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectExec("update biz_ip_requests set project_name=").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("select status,created_by,date_format").WithArgs(int64(81)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "created_by", "submitted_at", "brief", "feedbackStarted"}).AddRow("submitted", 2, "2026-10-01 12:00:00", "{}", false))
 	mock.ExpectRollback()
 	status, response := ipTestPost(t, a, a.ipRequestSave, map[string]any{
 		"id": 81, "projectName": "库外IP需求", "department": "营销", "markets": []string{"南亚"},
@@ -325,8 +322,8 @@ func TestIPDraftSubmissionRejectsLostStatusTransition(t *testing.T) {
 		"budgetMin": 1000, "budgetMax": 10000, "candidateIds": []int{},
 		"brief": ipTestBrief(), "submit": true,
 	})
-	if status != http.StatusConflict || response["code"] != float64(409) {
-		t.Fatalf("lost draft transition: status=%d response=%v", status, response)
+	if status != http.StatusForbidden || response["code"] != float64(403) {
+		t.Fatalf("other creator edit: status=%d response=%v", status, response)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

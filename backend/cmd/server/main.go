@@ -258,6 +258,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/ip/resources/import", a.requireMenu("/business/ip/resources", a.ipImport))
 	mux.HandleFunc("POST /business/ip/requests/list", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipRequestsList))
 	mux.HandleFunc("POST /business/ip/requests/save", a.requireMenu("/business/ip/requests", a.ipRequestSave))
+	mux.HandleFunc("POST /business/ip/requests/delete", a.requireMenu("/business/ip/requests", a.ipRequestDelete))
 	mux.HandleFunc("GET /business/ip/colleagues", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipColleagues))
 	mux.HandleFunc("GET /business/ip/requests/detail", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing", "/business/ip/recommendations"}, a.ipRequestDetail))
 	mux.HandleFunc("POST /business/ip/requests/feedback", a.requireMenu("/business/ip/feedback", a.ipRequestFeedback))

@@ -140,6 +140,10 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 	}
 	code, result = request(a.ipRequestDetail, "GET", "/?id="+strconv.FormatInt(requestID, 10), nil, creatorToken)
 	expectOK(code, result)
+	management := result["data"].(map[string]any)["request"].(map[string]any)
+	if management["canEdit"] != true || management["canDelete"] != true || management["candidatesLocked"] != false {
+		t.Fatalf("creator management actions missing: %v", management)
+	}
 	deadlines := result["data"].(map[string]any)["request"].(map[string]any)["deadlines"].(map[string]any)
 	if deadlines["ip"].(map[string]any)["dueAt"] != "2026-10-20T23:59:59+08:00" {
 		t.Fatalf("wrong actual DB deadline: %v", deadlines)
@@ -147,6 +151,12 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 	var before string
 	if err := db.QueryRow("select date_format(submitted_at,'%Y-%m-%d %H:%i:%s') from biz_ip_requests where id=?", requestID).Scan(&before); err != nil {
 		t.Fatal(err)
+	}
+	payload["description"] = "修改需求说明，不重新提起评估"
+	code, result = request(a.ipRequestSave, "POST", "/", payload, creatorToken)
+	expectOK(code, result)
+	if result["data"].(map[string]any)["status"] != "submitted" {
+		t.Fatal("editing pending demand restarted workflow")
 	}
 	assessment := map[string]any{"licenseContent": "形象", "licenseTerritory": "中国", "ipResources": "素材包", "brandResources": "渠道", "businessRisk": "低", "publicRisk": "低", "ownershipClarity": "清晰", "scoreDimensions": map[string]any{"audienceMatch": 90, "marketCoverage": 90, "scheduleAvailability": 80, "licenseRisk": 90}}
 	feedback := map[string]any{"requestId": requestID, "saveDraft": true, "candidates": []any{map[string]any{"ipId": ipID, "priorityOrder": 0, "feasibility": "可行", "recommendation": "推荐", "reason": "契合", "assessment": assessment}}}
@@ -273,5 +283,54 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "select date_format(submitted_at,'%Y-%m-%d %H:%i:%s') from biz_ip_requests where id=?", requestID).Scan(&after); err != nil || after != before {
 		t.Fatalf("submission clock changed: %s -> %s err=%v", before, after, err)
 	}
-	t.Log("PASS: working-day DDL, five independent colleagues, scoped validation, concurrent merge, stale-write rejection, final-only completion and no station popup")
+	// The creator can edit a completed request without losing colleagues' opinions.
+	completedProfile := raw
+	payload["projectName"] = marker + " edited"
+	code, result = request(a.ipRequestSave, "POST", "/", payload, creatorToken)
+	expectOK(code, result)
+	var editedProfile, editedSubmitted, editedIPTime string
+	if err := db.QueryRow("select status,marketing_profile,date_format(submitted_at,'%Y-%m-%d %H:%i:%s'),date_format(ip_reviewed_at,'%Y-%m-%d %H:%i:%s') from biz_ip_requests where id=?", requestID).Scan(&statusNow, &editedProfile, &editedSubmitted, &editedIPTime); err != nil {
+		t.Fatal(err)
+	}
+	if statusNow != "marketing_reviewed" || editedProfile != completedProfile || editedSubmitted != before || editedIPTime != "2026-10-15 15:00:00" {
+		t.Fatal("editing changed feedback or workflow clocks")
+	}
+	var reason string
+	if err := db.QueryRow("select reason from biz_ip_request_candidates where request_id=? and ip_id=?", requestID, ipID).Scan(&reason); err != nil || reason != "契合" {
+		t.Fatalf("editing lost IP feedback: %v", err)
+	}
+	code, _ = request(a.ipRequestDelete, "POST", "/", map[string]any{"id": requestID}, partners["brand"].token)
+	if code != 403 {
+		t.Fatalf("another colleague could delete creator's request: %d", code)
+	}
+	var creatorID int64
+	if err := db.QueryRow("select created_by from biz_ip_requests where id=?", requestID).Scan(&creatorID); err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := db.Exec("insert into biz_recommendation_subscriptions(user_id,domain,name,query_text,filters,active,request_id) values (?,'ip',?,'','{}',0,?)", creatorID, marker, requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscriptionID, _ := subscription.LastInsertId()
+	t.Cleanup(func() {
+		if _, err := db.Exec("delete from biz_recommendation_subscriptions where id=?", subscriptionID); err != nil {
+			t.Error(err)
+		}
+	})
+	code, result = request(a.ipRequestDelete, "POST", "/", map[string]any{"id": requestID}, creatorToken)
+	expectOK(code, result)
+	var remaining int
+	if err := db.QueryRow("select count(*) from biz_ip_requests where id=?", requestID).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatal("creator deletion did not remove demand")
+	}
+	if err := db.QueryRow("select count(*) from biz_ip_request_candidates where request_id=?", requestID).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatal("deletion left candidate feedback")
+	}
+	if err := db.QueryRow("select count(*) from biz_ip_resources where id=?", ipID).Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatal("demand deletion removed resource-library IP")
+	}
+	if err := db.QueryRow("select count(*) from biz_recommendation_subscriptions where id=? and request_id is null and active=0", subscriptionID).Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatal("demand deletion failed to preserve and detach AI conversation")
+	}
+	t.Log("PASS: working-day DDL, independent feedback, completed-demand edit preserves opinions and clocks, creator-only deletion and library preservation")
 }

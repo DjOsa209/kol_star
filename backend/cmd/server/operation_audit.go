@@ -38,6 +38,7 @@ var operationActions = map[string]string{
 	"/business/ip/resources/file/delete":             "删除 IP 文件",
 	"/business/ip/resources/import":                  "批量导入 IP 资源",
 	"/business/ip/requests/save":                     "保存 IP 需求",
+	"/business/ip/requests/delete":                   "删除 IP 需求",
 	"/business/ip/requests/feedback":                 "提交 IP 反馈",
 	"/business/ip/requests/marketing":                "补充营销意见",
 	"/business/resources/create":                     "新增资源",
