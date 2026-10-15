@@ -714,6 +714,12 @@ const historyOpen = ref(false);
 const conditionsOpen = ref(false);
 const attachmentReading = ref(false);
 const attachment = ref<{ name: string; text: string } | null>(null);
+const canSendMessage = computed(
+  () =>
+    !conversationBusy.value &&
+    !attachmentReading.value &&
+    composerText.value.trim().length > 0
+);
 const attachmentInput = ref<HTMLInputElement>();
 const pdfSource = ref<{ data: Uint8Array } | undefined>();
 const pdfReadError = ref("");
@@ -990,6 +996,7 @@ function retryConversation() {
   return sendMessage();
 }
 function sendMessage() {
+  if (!canSendMessage.value) return;
   const text = composerText.value.trim();
   if (webSearchMode.value) return converse("search", text);
   if (
@@ -1576,13 +1583,7 @@ watch(
                 ><button
                   type="button"
                   class="send-message"
-                  :disabled="
-                    conversationBusy ||
-                    attachmentReading ||
-                    (webSearchMode
-                      ? !composerText.trim()
-                      : !composerText.trim() && !attachment && !criteria.query)
-                  "
+                  :disabled="!canSendMessage"
                   :aria-label="
                     webSearchMode ? '搜索库外资源' : '发送需求或调整偏好'
                   "
