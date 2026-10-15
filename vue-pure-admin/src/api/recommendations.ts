@@ -196,6 +196,18 @@ export const deleteRecommendationSubscription = (
     data: { domain, id }
   });
 
+export const setRecommendationSubscriptionActive = (
+  domain: RecommendationDomain,
+  id: number,
+  active: boolean
+) =>
+  http.request<Result<{ id: number; warning?: string }>>(
+    "post",
+    `${prefix}/subscriptions/save`,
+    { data: { domain, id, active } },
+    { timeout: 130000 }
+  );
+
 export const runRecommendationSubscription = (
   domain: RecommendationDomain,
   subscriptionId: number

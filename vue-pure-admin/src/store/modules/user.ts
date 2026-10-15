@@ -16,6 +16,7 @@ import {
   refreshTokenApi
 } from "@/api/user";
 import { useMultiTagsStoreHook } from "./multiTags";
+import { useIPRecommendationSessionsStore } from "./ipRecommendationSessions";
 import {
   type DataInfo,
   getToken,
@@ -135,6 +136,7 @@ export const useUserStore = defineStore("pure-user", {
           });
         }
       } finally {
+        useIPRecommendationSessionsStore().clearCache();
         this.username = "";
         this.roles = [];
         this.permissions = [];

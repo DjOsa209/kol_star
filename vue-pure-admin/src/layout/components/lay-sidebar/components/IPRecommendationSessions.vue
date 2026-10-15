@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useAppStoreHook } from "@/store/modules/app";
 import { useIPRecommendationSessionsStore } from "@/store/modules/ipRecommendationSessions";
 import Chat from "~icons/ri/chat-1-line";
 import Plus from "~icons/ri/add-line";
+import More from "~icons/ri/more-line";
 
 defineProps<{ collapsed: boolean }>();
 const route = useRoute();
 const sessions = useIPRecommendationSessionsStore();
 const visible = computed(() => route.path === "/business/ip/recommendations");
+const moreMenuId = ref<number | null>(null);
+
+function menuVisibility(id: number, open: boolean) {
+  if (open) moreMenuId.value = id;
+  else if (moreMenuId.value === id) moreMenuId.value = null;
+}
 
 function openSession(id: number | null) {
   if (sessions.busy) return;
@@ -44,7 +51,10 @@ function openSession(id: number | null) {
       <p v-if="!sessions.loaded" class="session-empty" role="status">
         正在加载会话…
       </p>
-      <div v-else-if="sessions.loadError" class="session-empty">
+      <div
+        v-else-if="sessions.loadError && !sessions.subscriptions.length"
+        class="session-empty"
+      >
         <p>会话暂时无法加载</p>
         <button
           type="button"
@@ -58,23 +68,68 @@ function openSession(id: number | null) {
         新建会话，开始项目研究。
       </p>
       <nav v-else class="session-list" aria-label="项目会话列表">
-        <button
+        <div
           v-for="item in sessions.subscriptions"
           :key="item.id"
-          type="button"
-          class="session-item"
-          :class="{ selected: sessions.selectedId === item.id }"
-          :aria-current="sessions.selectedId === item.id ? 'true' : undefined"
-          :title="item.name"
-          :disabled="sessions.busy"
-          @click="openSession(item.id)"
+          class="session-row"
+          :class="{ 'menu-open': moreMenuId === item.id }"
         >
-          <IconifyIconOffline :icon="Chat" />
-          <span
-            ><strong>{{ item.name }}</strong></span
+          <button
+            type="button"
+            class="session-item"
+            :class="{ selected: sessions.selectedId === item.id }"
+            :aria-current="sessions.selectedId === item.id ? 'true' : undefined"
+            :title="item.name"
+            :disabled="sessions.busy"
+            @click="openSession(item.id)"
           >
-        </button>
+            <IconifyIconOffline :icon="Chat" />
+            <span
+              ><strong>{{ item.name }}</strong></span
+            >
+          </button>
+          <el-dropdown
+            trigger="click"
+            placement="bottom-end"
+            :disabled="sessions.busy"
+            @visible-change="open => menuVisibility(item.id, open)"
+            @command="sessions.navigate({ action: 'delete', id: item.id })"
+          >
+            <button
+              type="button"
+              class="session-more"
+              :aria-label="`${item.name}的更多操作`"
+              :aria-expanded="moreMenuId === item.id"
+              :disabled="sessions.busy"
+            >
+              <IconifyIconOffline :icon="More" />
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu
+                ><el-dropdown-item command="delete" :disabled="sessions.busy"
+                  >删除会话</el-dropdown-item
+                ></el-dropdown-menu
+              >
+            </template>
+          </el-dropdown>
+        </div>
       </nav>
+      <p
+        v-if="
+          sessions.loaded && sessions.loadError && sessions.subscriptions.length
+        "
+        class="session-empty"
+        role="status"
+      >
+        会话更新失败，已保留现有列表
+        <button
+          type="button"
+          :disabled="sessions.busy"
+          @click="sessions.navigate({ action: 'reload' })"
+        >
+          重试
+        </button>
+      </p>
       <button
         type="button"
         class="session-new"
@@ -157,6 +212,50 @@ function openSession(id: number | null) {
 .session-item > span {
   flex: 1;
   min-width: 0;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.session-row .session-item {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.session-row :deep(.el-dropdown) {
+  display: flex;
+  flex: none;
+  color: inherit;
+}
+
+.session-more {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 4px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.session-row:hover .session-more,
+.session-row:focus-within .session-more,
+.session-row.menu-open .session-more {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .session-more {
+    width: 44px;
+    height: 44px;
+    pointer-events: auto;
+    opacity: 1;
+  }
 }
 
 .session-item strong {

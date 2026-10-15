@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
+import { contentViewKey } from "./viewKey";
 import LayFrame from "../lay-frame/index.vue";
 import LayFooter from "../lay-footer/index.vue";
 import { useTags } from "@/layout/hooks/useTag";
@@ -146,7 +147,7 @@ const transitionMain = defineComponent({
                   >
                     <component
                       :is="Comp"
-                      :key="fullPath"
+                      :key="contentViewKey(route, fullPath)"
                       :frameInfo="frameInfo"
                       class="main-content"
                     />
@@ -154,7 +155,7 @@ const transitionMain = defineComponent({
                   <component
                     :is="Comp"
                     v-else
-                    :key="fullPath"
+                    :key="contentViewKey(route, fullPath)"
                     :frameInfo="frameInfo"
                     class="main-content"
                   />
@@ -170,7 +171,7 @@ const transitionMain = defineComponent({
                 >
                   <component
                     :is="Comp"
-                    :key="fullPath"
+                    :key="contentViewKey(route, fullPath)"
                     :frameInfo="frameInfo"
                     class="main-content"
                   />
@@ -178,7 +179,7 @@ const transitionMain = defineComponent({
                 <component
                   :is="Comp"
                   v-else
-                  :key="fullPath"
+                  :key="contentViewKey(route, fullPath)"
                   :frameInfo="frameInfo"
                   class="main-content"
                 />

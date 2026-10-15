@@ -16,6 +16,8 @@ import { Icon } from "@iconify/vue";
 import dayjs from "dayjs";
 import { storeToRefs } from "pinia";
 import { useIPRecommendationSessionsStore } from "@/store/modules/ipRecommendationSessions";
+import { useUserStoreHook } from "@/store/modules/user";
+import { getToken } from "@/utils/auth";
 import { useAppStoreHook } from "@/store/modules/app";
 import { useSettingStoreHook } from "@/store/modules/settings";
 import * as XLSX from "xlsx";
@@ -28,6 +30,7 @@ import {
   listRecommendationResults,
   listRecommendationSubscriptions,
   saveRecommendationSubscription,
+  setRecommendationSubscriptionActive,
   sendRecommendationFeedback,
   type RecommendationResult,
   type RecommendationSubscription,
@@ -47,6 +50,14 @@ const router = useRouter();
 const loading = ref(false);
 const saving = ref(false);
 const sessionStore = useIPRecommendationSessionsStore();
+const sessionToken = getToken();
+const sessionOwnerKey = sessionToken
+  ? `${useUserStoreHook().username}:${sessionToken.sessionExpires}`
+  : "";
+sessionStore.bindOwner(sessionOwnerKey);
+function sessionViewCurrent() {
+  return !disposed && sessionStore.ownerKey === sessionOwnerKey;
+}
 const { subscriptions, selectedId } = storeToRefs(sessionStore);
 const appStore = useAppStoreHook();
 const settingStore = useSettingStoreHook();
@@ -314,25 +325,24 @@ function pdfFailed() {
   previewError.value = "PDF 无法预览，请下载文件查看";
 }
 
-async function loadSubscriptions(selectId?: number) {
-  sessionStore.loadError = false;
+async function loadSubscriptions(selectId?: number, force = false) {
   try {
-    const response = await listRecommendationSubscriptions("ip");
-    subscriptions.value = response.data.list || [];
-    const requested = selectId || Number(route.query.subscriptionId);
-    if (requested && subscriptions.value.some(item => item.id === requested))
-      selectedId.value = requested;
-    else if (
-      !selectedId.value ||
-      !subscriptions.value.some(item => item.id === selectedId.value)
-    )
-      selectedId.value = subscriptions.value[0]?.id || null;
+    await sessionStore.refresh(async () => {
+      const response = await listRecommendationSubscriptions("ip");
+      return response.data.list || [];
+    }, force);
   } catch (error) {
-    sessionStore.loadError = true;
-    throw error;
-  } finally {
-    sessionStore.loaded = true;
+    if (!subscriptions.value.length) throw error;
   }
+  if (!sessionViewCurrent()) return;
+  const requested = selectId || Number(route.query.subscriptionId);
+  if (requested && subscriptions.value.some(item => item.id === requested))
+    selectedId.value = requested;
+  else if (
+    !selectedId.value ||
+    !subscriptions.value.some(item => item.id === selectedId.value)
+  )
+    selectedId.value = subscriptions.value[0]?.id || null;
 }
 
 let resultsRequestSequence = 0;
@@ -353,7 +363,7 @@ async function loadResults() {
     if (
       sequence !== resultsRequestSequence ||
       selectedId.value !== subscriptionId ||
-      disposed
+      !sessionViewCurrent()
     )
       return;
     results.value = response.data.list || [];
@@ -390,6 +400,9 @@ async function loadImages(items: RecommendationResult[]) {
 
 function selectSubscription(id: number) {
   if (conversationBusy.value || attachmentReading.value) return;
+  if (selectedId.value === id) return;
+  ++resultsRequestSequence;
+  results.value = [];
   if (selectedId.value !== id)
     chosenIds.value =
       selectionKey.value || route.query.selected ? selectedFromRequest() : [];
@@ -410,7 +423,6 @@ function selectSubscription(id: number) {
     path: route.path,
     query
   });
-  loadResults();
 }
 
 function startNew() {
@@ -470,9 +482,10 @@ async function saveSubscription() {
       markets: form.markets || [],
       ipTypes: form.ipTypes || []
     });
+    if (!sessionViewCurrent()) return;
     editing.value = false;
     activeView.value = "all";
-    await loadSubscriptions(response.data.id);
+    await loadSubscriptions(response.data.id, true);
     await loadResults();
     if (response.data.warning) ElMessage.warning(response.data.warning);
     else ElMessage.success("寻找条件已保存，推荐已更新");
@@ -486,40 +499,61 @@ async function saveSubscription() {
 }
 
 async function toggleSubscription(item: RecommendationSubscription) {
+  if (conversationBusy.value || attachmentReading.value || saving.value) return;
+  saving.value = true;
   try {
-    await saveRecommendationSubscription({
-      ...item,
-      domain: "ip",
-      active: !item.active
-    });
-    await loadSubscriptions(item.id);
+    const response = await setRecommendationSubscriptionActive(
+      "ip",
+      item.id,
+      !item.active
+    );
+    if (!sessionViewCurrent()) return;
+    sessionStore.upsert({ ...item, active: !item.active });
     ElMessage.success(item.active ? "已暂停每周推荐" : "已恢复每周推荐");
+    if (response.data.warning) ElMessage.warning(response.data.warning);
   } catch (error) {
     ElMessage.error(
       error instanceof Error ? error.message : "更新提醒状态失败"
     );
+  } finally {
+    saving.value = false;
   }
 }
 
 async function removeSubscription(item: RecommendationSubscription) {
+  if (conversationBusy.value || attachmentReading.value || saving.value) return;
   try {
     await ElMessageBox.confirm(
-      `删除寻找条件「${item.name}」及其推荐历史？`,
-      "删除确认",
-      { type: "warning" }
+      `删除项目会话「${item.name}」及其对话、推荐历史？删除后无法恢复。`,
+      "删除项目会话",
+      {
+        type: "warning",
+        confirmButtonText: "删除会话",
+        cancelButtonText: "取消"
+      }
     );
   } catch {
     return;
   }
+  if (conversationBusy.value || attachmentReading.value || saving.value) return;
+  saving.value = true;
   try {
     await deleteRecommendationSubscription("ip", item.id);
-    await loadSubscriptions();
-    await loadResults();
-    ElMessage.success("寻找条件已删除");
+    if (!sessionViewCurrent()) return;
+    const wasSelected = selectedId.value === item.id;
+    sessionStore.remove(item.id);
+    if (wasSelected) {
+      const next = subscriptions.value[0]?.id;
+      if (next) selectSubscription(next);
+      else startNew();
+    }
+    ElMessage.success("项目会话已删除");
   } catch (error) {
     ElMessage.error(
-      error instanceof Error ? error.message : "删除寻找条件失败"
+      error instanceof Error ? error.message : "删除项目会话失败"
     );
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -599,7 +633,6 @@ async function loadRequestContext() {
       selectedId.value = existing?.id || null;
       if (existing) {
         setForm(existing);
-        await loadResults();
       } else results.value = [];
       editing.value = false;
       expectedLaunch.value = String(item.expectedLaunch || "").slice(0, 10);
@@ -609,15 +642,21 @@ async function loadRequestContext() {
   }
 }
 
+let workspaceReady = false;
 onMounted(async () => {
   try {
     await loadSubscriptions();
-    await loadResults();
+    if (disposed) return;
     await loadRequestContext();
+    if (disposed) return;
+    await loadResults();
+    if (disposed) return;
     if (selectedSubscription.value) setForm(selectedSubscription.value);
     chosenIds.value = selectedFromRequest();
   } catch {
-    ElMessage.error("IP 推荐暂时无法加载，请稍后重试");
+    if (!disposed) ElMessage.error("IP 推荐暂时无法加载，请稍后重试");
+  } finally {
+    workspaceReady = !disposed;
   }
 });
 watch(
@@ -626,9 +665,21 @@ watch(
     ":" +
     String(route.query.resultId || ""),
   async () => {
+    if (!workspaceReady || disposed) return;
     const id = Number(route.query.subscriptionId);
-    if (id > 0 && subscriptions.value.some(item => item.id === id))
+    if (
+      id > 0 &&
+      subscriptions.value.some(item => item.id === id) &&
+      selectedId.value !== id
+    ) {
+      ++conversationSequence;
+      conversationController?.abort();
+      conversationBusy.value = false;
+      composerText.value = "";
+      attachment.value = null;
       selectedId.value = id;
+      setForm(selectedSubscription.value || {});
+    }
     editing.value = false;
     await loadResults();
   }
@@ -887,11 +938,9 @@ async function converse(
         }
       }
     );
-    if (sequence !== conversationSequence || disposed) return;
+    if (sequence !== conversationSequence || !sessionViewCurrent()) return;
     const updated = response.data.subscription;
-    const index = subscriptions.value.findIndex(item => item.id === updated.id);
-    if (index >= 0) subscriptions.value[index] = updated;
-    else subscriptions.value.unshift(updated);
+    sessionStore.upsert(updated);
     selectedId.value = updated.id;
     setForm(updated);
     // Comparisons return the selected subset; preserve the full candidate set.
@@ -1098,13 +1147,13 @@ watch(visibleResults, () => {
 onUnmounted(() => {
   ++conversationSequence;
   conversationController?.abort();
-  sessionStore.$reset();
+  if (sessionStore.ownerKey === sessionOwnerKey) sessionStore.releaseView();
 });
 
 watch(
   () => conversationBusy.value || attachmentReading.value || saving.value,
   busy => {
-    sessionStore.busy = busy;
+    if (sessionStore.ownerKey === sessionOwnerKey) sessionStore.busy = busy;
   },
   { immediate: true, flush: "sync" }
 );
@@ -1114,9 +1163,12 @@ watch(
     if (!request || sessionStore.busy) return;
     if (request.action === "new") startNew();
     else if (request.action === "select") selectSubscription(request.id);
-    else {
+    else if (request.action === "delete") {
+      const item = subscriptions.value.find(value => value.id === request.id);
+      if (item) await removeSubscription(item);
+    } else {
       try {
-        await loadSubscriptions();
+        await loadSubscriptions(undefined, true);
         await loadResults();
       } catch {
         ElMessage.error("项目会话暂时无法加载，请稍后重试");
@@ -1238,8 +1290,8 @@ watch(
         >
           {{
             selectedSubscription.active
-              ? "暂停每周检查新匹配"
-              : "开启每周检查新匹配"
+              ? "暂停每周检查库内新匹配"
+              : "开启每周检查库内新匹配"
           }}
         </button>
       </div>
@@ -2105,8 +2157,8 @@ watch(
       <div v-if="selectedSubscription" class="conversation-management">
         <span>{{
           selectedSubscription.active
-            ? "每周检查新匹配已开启"
-            : "每周检查新匹配已暂停"
+            ? "每周检查库内新匹配已开启"
+            : "每周检查库内新匹配已暂停"
         }}</span
         ><el-button link @click="toggleSubscription(selectedSubscription)">{{
           selectedSubscription.active ? "暂停" : "开启"
