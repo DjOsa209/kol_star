@@ -1226,19 +1226,6 @@ watch(
 <template>
   <div v-loading="loading" class="ip-recommend-page">
     <div class="research-main">
-      <header class="ip-head research-header">
-        <div>
-          <h1>IP AI推荐</h1>
-          <p>通过对话明确合作方向，研究候选并形成初步意向</p>
-        </div>
-        <el-button
-          v-if="showInlineSessions"
-          :disabled="conversationBusy || attachmentReading"
-          @click="startNew"
-        >
-          <Icon :icon="icons.plus" />新建会话
-        </el-button>
-      </header>
       <div class="research-session-bar">
         <label v-if="showInlineSessions" class="session-switch">
           <span>项目会话</span>
@@ -1257,6 +1244,12 @@ watch(
               :value="item.id"
             />
           </el-select>
+          <el-button
+            :disabled="conversationBusy || attachmentReading"
+            @click="startNew"
+          >
+            <Icon :icon="icons.plus" />新建会话
+          </el-button>
         </label>
         <div class="project-context">
           <h2>{{ projectLabel }}</h2>
@@ -2546,7 +2539,6 @@ watch(
   align-items: center;
   justify-content: space-between;
   padding: 16px 0;
-  border-top: 1px solid var(--workspace-line);
 }
 
 .session-switch {
@@ -2567,37 +2559,13 @@ watch(
   max-width: 100%;
 }
 
-.research-header {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.research-header h1 {
-  flex: none;
-  margin: 0;
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 1.3;
-  color: #111914;
-  letter-spacing: -0.025em;
-}
-
-.research-header p {
-  margin: 8px 0 0;
-  font-size: 14px;
-  color: var(--workspace-muted);
-}
-
-.research-header :deep(.el-button > span) {
+.session-switch :deep(.el-button > span) {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
-.research-header svg {
+.session-switch svg {
   width: 16px;
   height: 16px;
 }
@@ -2796,9 +2764,12 @@ watch(
 
 .research-columns {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   grid-template-columns: minmax(0, 1.12fr) minmax(360px, 1fr);
   gap: 0;
   align-items: stretch;
+  height: clamp(560px, calc(100dvh - 330px), 960px);
+  overflow: hidden;
   background: #fff;
   border: 1px solid var(--workspace-line);
   border-radius: 12px;
@@ -2808,14 +2779,21 @@ watch(
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   padding: 24px 28px;
 }
 
 .conversation-body {
+  flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
 }
 
 .conversation-dock {
+  flex: none;
   padding-top: 18px;
   margin-top: auto;
 }
@@ -3401,6 +3379,7 @@ watch(
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   padding: 24px 28px;
   border-left: 1px solid var(--workspace-line);
 }
@@ -3825,6 +3804,7 @@ watch(
 }
 
 .workbench-footer {
+  flex: none;
   padding-top: 12px;
   margin-top: auto;
   border-top: 1px solid #dbe1d3;
@@ -3834,6 +3814,23 @@ watch(
 .compare-workspace,
 .intent-workspace {
   padding-bottom: 12px;
+}
+
+.workbench-heading,
+.workbench-toolbar {
+  flex: none;
+}
+
+.external-workspace,
+.workbench-empty,
+.candidate-workspace,
+.compare-workspace,
+.intent-workspace {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
 }
 
 .intent-preview p {
@@ -4023,7 +4020,9 @@ watch(
 
 @container ip-recommendation (width <= 780px) {
   .research-columns {
+    grid-template-rows: repeat(2, clamp(560px, 75dvh, 760px));
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .cooperation-workbench {
@@ -4055,20 +4054,7 @@ watch(
 }
 
 @container ip-recommendation (width <= 540px) {
-  .research-header {
-    gap: 12px;
-    align-items: flex-start;
-  }
-
-  .research-header h1 {
-    font-size: 24px;
-  }
-
-  .research-header p {
-    font-size: 13px;
-  }
-
-  .research-header :deep(.el-button) {
+  .session-switch :deep(.el-button) {
     flex: none;
   }
 
@@ -4078,6 +4064,7 @@ watch(
   }
 
   .session-switch {
+    flex-wrap: wrap;
     width: 100%;
   }
 
