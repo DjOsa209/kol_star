@@ -8,24 +8,19 @@ import {
   type RecommendationDomain,
   type RecommendationNotification
 } from "@/api/recommendations";
-import { useIPWorkflowNotificationsStore } from "@/store/modules/ipWorkflowNotifications";
-import type { IPWorkflowNotification } from "@/api/ip";
 import BellIcon from "~icons/lucide/bell";
 
 const router = useRouter();
-const workflow = useIPWorkflowNotificationsStore();
 const { t } = useI18n();
 const dropdownRef = ref();
-const activeDomain = ref<RecommendationDomain | "workflow">("creator");
+const activeDomain = ref<RecommendationDomain>("creator");
 const notices = ref<RecommendationNotification[]>([]);
 const unread = ref(0);
 const loading = ref(false);
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
 const visibleNotices = computed(() =>
-  activeDomain.value === "workflow"
-    ? workflow.items.map(item => ({ ...item, domain: "workflow" as const }))
-    : notices.value.filter(item => item.domain === activeDomain.value)
+  notices.value.filter(item => item.domain === activeDomain.value)
 );
 const unreadInActiveDomain = computed(() =>
   visibleNotices.value.filter(item => !item.readAt)
@@ -68,25 +63,7 @@ async function markRead(ids: number[]) {
   unread.value = Math.max(0, unread.value - newlyRead);
 }
 
-async function openNotice(
-  item:
-    | RecommendationNotification
-    | (IPWorkflowNotification & { domain: "workflow" })
-) {
-  if (item.domain === "workflow") {
-    try {
-      if (!item.readAt) await workflow.markRead([item.id]);
-    } finally {
-      dropdownRef.value?.handleClose();
-      if (
-        /^\/business\/ip\/(requests|feedback|marketing)\?id=\d+$/.test(
-          item.targetPath
-        )
-      )
-        router.push(item.targetPath);
-    }
-    return;
-  }
+async function openNotice(item: RecommendationNotification) {
   try {
     if (!item.readAt) await markRead([item.id]);
   } finally {
@@ -105,25 +82,14 @@ async function openNotice(
 
 async function markDomainRead() {
   try {
-    const ids = unreadInActiveDomain.value.map(item => item.id);
-    if (activeDomain.value === "workflow") await workflow.markRead(ids);
-    else await markRead(ids);
+    await markRead(unreadInActiveDomain.value.map(item => item.id));
   } catch {
     // Keep the unread marker when the server rejects the update.
   }
 }
 
 function onVisibleChange(visible: boolean) {
-  if (visible) {
-    if (
-      /^\/business\/ip\/(requests|feedback|marketing)/.test(
-        router.currentRoute.value.path
-      )
-    )
-      activeDomain.value = "workflow";
-    refresh(true);
-    if (workflow.owner) void workflow.refresh().catch(() => {});
-  }
+  if (visible) refresh(true);
 }
 
 function formatTime(value: string) {
@@ -135,11 +101,9 @@ function formatTime(value: string) {
 function openDomain() {
   dropdownRef.value?.handleClose();
   router.push(
-    activeDomain.value === "workflow"
-      ? "/business/ip/requests"
-      : activeDomain.value === "ip"
-        ? "/business/ip/recommendations"
-        : "/business/assistant"
+    activeDomain.value === "ip"
+      ? "/business/ip/recommendations"
+      : "/business/assistant"
   );
 }
 
@@ -159,15 +123,8 @@ onUnmounted(() => {
     placement="bottom-end"
     @visible-change="onVisibleChange"
   >
-    <span
-      class="dropdown-badge navbar-bg-hover select-none mr-1.75"
-      aria-label="消息提醒"
-    >
-      <el-badge
-        :value="unread + workflow.unread"
-        :max="99"
-        :hidden="unread + workflow.unread === 0"
-      >
+    <span class="dropdown-badge navbar-bg-hover select-none mr-1.75">
+      <el-badge :value="unread" :max="99" :hidden="unread === 0">
         <span class="header-notice-icon"
           ><IconifyIconOffline :icon="BellIcon"
         /></span>
@@ -176,13 +133,9 @@ onUnmounted(() => {
     <template #dropdown>
       <el-dropdown-menu class="recommendation-notice-menu">
         <div class="notice-head">
-          <strong>消息提醒</strong>
+          <strong>推荐提醒</strong><small>每周更新</small>
         </div>
         <el-tabs v-model="activeDomain" stretch class="notice-tabs">
-          <el-tab-pane
-            name="workflow"
-            :label="`IP需求 ${workflow.unread || ''}`"
-          />
           <el-tab-pane
             name="creator"
             :label="`${t('menus.creatorRecommendations')} ${creatorCount || ''}`"
@@ -195,14 +148,12 @@ onUnmounted(() => {
         <el-scrollbar max-height="350px" class="notice-scroll">
           <el-empty
             v-if="!visibleNotices.length"
-            :description="
-              activeDomain === 'workflow' ? '暂无需求提醒' : '暂无新推荐提醒'
-            "
+            description="暂无新推荐提醒"
             :image-size="60"
           />
           <button
             v-for="item in visibleNotices"
-            :key="`${item.domain}-${item.id}`"
+            :key="item.id"
             class="notice-item"
             :class="{ unread: !item.readAt }"
             type="button"
@@ -219,9 +170,9 @@ onUnmounted(() => {
           <el-button size="small" text @click.stop="markDomainRead">{{
             t("buttons.pureMarkAsRead")
           }}</el-button>
-          <el-button size="small" text @click.stop="openDomain">{{
-            activeDomain === "workflow" ? "查看需求 →" : "查看推荐 →"
-          }}</el-button>
+          <el-button size="small" text @click.stop="openDomain"
+            >查看推荐 →</el-button
+          >
         </div>
       </el-dropdown-menu>
     </template>

@@ -1072,12 +1072,7 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if item.Submit {
-		if err := enqueueIPWorkflowNotices(r.Context(), tx, ipWorkflowRequest{ID: id, ProjectName: item.ProjectName, Brief: item.Brief, CreatorID: int64(userID)}, "submitted", now); err != nil {
-			writeDBError(w, err)
-			return
-		}
-	}
+
 	if err := tx.Commit(); err != nil {
 		writeDBError(w, err)
 		return
@@ -1153,7 +1148,8 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	requestStatus, workflowItem, err := scanIPWorkflowRequest(tx.QueryRowContext(r.Context(), "select status,project_name,coalesce(brief,''),created_by from biz_ip_requests where id=? for update", input.RequestID), input.RequestID)
+	var requestStatus string
+	err = tx.QueryRowContext(r.Context(), "select status from biz_ip_requests where id=? for update", input.RequestID).Scan(&requestStatus)
 	if err != nil {
 		writeDBError(w, err)
 		return
@@ -1241,10 +1237,7 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		now := time.Now().In(ipTimeZone)
-		if err := enqueueIPWorkflowNotices(r.Context(), tx, workflowItem, "ip_reviewed", now); err != nil {
-			writeDBError(w, err)
-			return
-		}
+
 		if _, err := tx.ExecContext(r.Context(), "update biz_ip_requests set status='ip_reviewed',ip_reviewed_at=? where id=?", now.Format("2006-01-02 15:04:05"), input.RequestID); err != nil {
 			writeDBError(w, err)
 			return
@@ -1256,110 +1249,6 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 	if !input.SaveDraft {
 		a.notifyIPStageAsync(input.RequestID, "ip_reviewed")
-	}
-	writeOK(w, nil)
-}
-
-func (a *app) ipRequestMarketing(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		RequestID         int64          `json:"requestId"`
-		SaveDraft         bool           `json:"saveDraft"`
-		MarketHeat        string         `json:"marketHeat"`
-		FanAudience       string         `json:"fanAudience"`
-		CommercialValue   string         `json:"commercialValue"`
-		MarketingRisks    string         `json:"marketingRisks"`
-		MarketingChannels []string       `json:"marketingChannels"`
-		MarketingComments string         `json:"marketingComments"`
-		MarketingProfile  map[string]any `json:"marketingProfile"`
-	}
-	if !readIPJSON(w, r, &input) {
-		return
-	}
-	if input.RequestID <= 0 || (!input.SaveDraft && strings.TrimSpace(input.MarketingComments) == "") {
-		writeError(w, http.StatusBadRequest, 400, "请填写营销补充意见")
-		return
-	}
-	tx, err := a.DB().BeginTx(r.Context(), nil)
-	if err != nil {
-		writeDBError(w, err)
-		return
-	}
-	defer tx.Rollback()
-	requestStatus, workflowItem, err := scanIPWorkflowRequest(tx.QueryRowContext(r.Context(), "select status,project_name,coalesce(brief,''),created_by from biz_ip_requests where id=? for update", input.RequestID), input.RequestID)
-	if err != nil {
-		writeDBError(w, err)
-		return
-	}
-	if requestStatus != "ip_reviewed" {
-		writeError(w, 409, 409, "需求未处于待营销补充状态")
-		return
-	}
-	if !input.SaveDraft {
-		opinions, _ := input.MarketingProfile["candidates"].(map[string]any)
-		rows, err := tx.QueryContext(r.Context(), "select ip_id from biz_ip_request_candidates where request_id=?", input.RequestID)
-		if err != nil {
-			writeDBError(w, err)
-			return
-		}
-		defer rows.Close()
-		candidateCount := 0
-		for rows.Next() {
-			candidateCount++
-			var ipID int64
-			if err := rows.Scan(&ipID); err != nil {
-				writeDBError(w, err)
-				return
-			}
-			entry, _ := opinions[strconv.FormatInt(ipID, 10)].(map[string]any)
-			for _, key := range []string{"marketHeat", "fanAudience", "commercialValue", "marketingRisks", "recentTrend", "socialFollowers", "ugcForecast", "audienceMatch", "prOpinion"} {
-				if ipMapText(entry, key) == "" {
-					writeError(w, http.StatusBadRequest, 400, "请补齐每个IP的IMC、品牌运营、用户运营和PR意见")
-					return
-				}
-			}
-		}
-		if err := rows.Err(); err != nil {
-			writeDBError(w, err)
-			return
-		}
-		rows.Close()
-		if candidateCount == 0 {
-			writeError(w, 400, 400, "请先完成意向IP评估")
-			return
-		}
-	}
-	now := time.Now().In(ipTimeZone)
-	var completedAt any
-	if !input.SaveDraft {
-		completedAt = now.Format("2006-01-02 15:04:05")
-	}
-	status := "marketing_reviewed"
-	if input.SaveDraft {
-		status = "ip_reviewed"
-	}
-	result, err := tx.ExecContext(r.Context(), `update biz_ip_requests set market_heat=?,fan_audience=?,commercial_value=?,marketing_risks=?,marketing_channels=?,marketing_comments=?,marketing_profile=?,status=?,marketing_reviewed_at=? where id=? and status='ip_reviewed'`,
-		input.MarketHeat, input.FanAudience, input.CommercialValue, input.MarketingRisks, ipJSON(input.MarketingChannels), input.MarketingComments, ipJSON(input.MarketingProfile), status, completedAt, input.RequestID)
-	if err != nil {
-		writeDBError(w, err)
-		return
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		writeError(w, http.StatusConflict, 409, "需求未处于待营销补充状态")
-		return
-	}
-	if !input.SaveDraft {
-		if err := enqueueIPWorkflowNotices(r.Context(), tx, workflowItem, "marketing_reviewed", now); err != nil {
-			writeDBError(w, err)
-			return
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		writeDBError(w, err)
-		return
-	}
-	if !input.SaveDraft {
-		a.notifyIPStageAsync(input.RequestID, "marketing_reviewed")
 	}
 	writeOK(w, nil)
 }

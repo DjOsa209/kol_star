@@ -24,7 +24,6 @@ import {
   useResizeObserver
 } from "@pureadmin/utils";
 
-import IPWorkflowPopup from "./components/lay-notice/IPWorkflowPopup.vue";
 import LayTag from "./components/lay-tag/index.vue";
 import LayNavbar from "./components/lay-navbar/index.vue";
 import LayContent from "./components/lay-content/index.vue";
@@ -200,7 +199,6 @@ const LayHeader = defineComponent({
       </el-scrollbar>
     </div>
     <!-- 系统设置 -->
-    <IPWorkflowPopup />
     <LaySetting />
   </div>
 </template>

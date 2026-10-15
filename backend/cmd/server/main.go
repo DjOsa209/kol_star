@@ -256,9 +256,6 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/ip/resources/file/delete", a.requireMenu("/business/ip/resources", a.ipFileDelete))
 	mux.HandleFunc("POST /business/ip/resources/import/preview", a.requireMenu("/business/ip/resources", a.ipImportPreview))
 	mux.HandleFunc("POST /business/ip/resources/import", a.requireMenu("/business/ip/resources", a.ipImport))
-	ipWorkflowMenus := []string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}
-	mux.HandleFunc("GET /business/ip/requests/notifications", a.requireAnyMenu(ipWorkflowMenus, a.ipWorkflowNotifications))
-	mux.HandleFunc("POST /business/ip/requests/notifications/read", a.requireAnyMenu(ipWorkflowMenus, a.ipWorkflowNotificationsRead))
 	mux.HandleFunc("POST /business/ip/requests/list", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipRequestsList))
 	mux.HandleFunc("POST /business/ip/requests/save", a.requireMenu("/business/ip/requests", a.ipRequestSave))
 	mux.HandleFunc("GET /business/ip/colleagues", a.requireAnyMenu([]string{"/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing"}, a.ipColleagues))

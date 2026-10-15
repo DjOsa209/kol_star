@@ -147,7 +147,9 @@ export const submitIPFeedback = (data: object) =>
     data
   });
 export const submitIPMarketing = (data: object) =>
-  http.request<Result<null>>("post", "/business/ip/requests/marketing", {
+  http.request<
+    Result<{ status: string; functionKey: string; version: number }>
+  >("post", "/business/ip/requests/marketing", {
     data
   });
 
@@ -187,25 +189,3 @@ export interface IPStageDeadline {
   overdueWorkdays: number;
   warning?: string;
 }
-export interface IPWorkflowNotification {
-  id: number;
-  requestId: number;
-  stage: "submitted" | "ip_reviewed" | "marketing_reviewed";
-  projectName: string;
-  title: string;
-  description: string;
-  targetPath: string;
-  readAt: string | null;
-  createdAt: string;
-}
-export const listIPWorkflowNotifications = () =>
-  http.request<Result<{ list: IPWorkflowNotification[]; unread: number }>>(
-    "get",
-    "/business/ip/requests/notifications"
-  );
-export const markIPWorkflowNotificationsRead = (ids: number[]) =>
-  http.request<Result<{ updated: number }>>(
-    "post",
-    "/business/ip/requests/notifications/read",
-    { data: { ids } }
-  );

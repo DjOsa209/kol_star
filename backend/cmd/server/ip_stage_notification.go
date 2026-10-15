@@ -33,13 +33,13 @@ type ipDirectoryRecipient struct {
 var ipStageRecipientKeys = map[string][]string{
 	"submitted":          {"ipMarketing"},
 	"ip_reviewed":        {"imc", "brand", "user", "media", "pr"},
-	"marketing_reviewed": {"product"},
+	"marketing_reviewed": {},
 }
 
 var ipStageNotificationTitles = map[string]string{
 	"submitted":          "新的 IP 需求待初步反馈",
 	"ip_reviewed":        "IP 组已完成初步反馈，请补充营销意见",
-	"marketing_reviewed": "营销意见已补充，请查看 IP 需求",
+	"marketing_reviewed": "各职能意见已补充完整，请查看 IP 需求",
 }
 
 // notifyIPStageAsync must only be called after a stage transition has committed.

@@ -40,7 +40,6 @@ var operationActions = map[string]string{
 	"/business/ip/requests/save":                     "保存 IP 需求",
 	"/business/ip/requests/feedback":                 "提交 IP 反馈",
 	"/business/ip/requests/marketing":                "补充营销意见",
-	"/business/ip/requests/notifications/read":       "标记 IP 需求通知已读",
 	"/business/resources/create":                     "新增资源",
 	"/business/resources/update":                     "更新资源",
 	"/business/resources/delete":                     "删除资源",

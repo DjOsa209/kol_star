@@ -315,11 +315,70 @@ const marketingFields = [
   },
   {
     key: "cpmValue",
-    label: "媒体投放 · CPM价值",
+    label: "媒介投放 · CPM价值",
     hint: "预估ROI及投放成本对比（选填）"
   },
   { key: "prOpinion", label: "PR · 舆情判断", hint: "舆论风险与公关建议" }
 ];
+const marketingFunctions = [
+  {
+    key: "imc",
+    label: "IMC",
+    fields: [
+      "marketHeat",
+      "fanAudience",
+      "commercialValue",
+      "marketingRisks",
+      "recentTrend",
+      "socialFollowers",
+      "brandValue"
+    ]
+  },
+  { key: "brand", label: "品牌运营", fields: ["ugcForecast"] },
+  { key: "user", label: "用户运营", fields: ["audienceMatch"] },
+  { key: "media", label: "媒介投放", fields: ["cpmValue"] },
+  { key: "pr", label: "PR", fields: ["prOpinion"] }
+];
+const marketingFunctionKey = ref("");
+const marketingFunctionDrafts = ref<
+  Record<string, { comments: string; channels: string[] }>
+>({});
+const selectedMarketingFunction = computed(() =>
+  marketingFunctions.find(item => item.key === marketingFunctionKey.value)
+);
+const marketingFunctionStates = computed(() =>
+  objectValue(objectValue(detail.value?.request.marketingProfile).functions)
+);
+function marketingFunctionSubmitted(key: string) {
+  return (
+    Boolean(objectValue(marketingFunctionStates.value[key]).submittedAt) ||
+    (detail.value?.request.status === "marketing_reviewed" &&
+      !Object.keys(marketingFunctionStates.value).length)
+  );
+}
+const submittedMarketingCount = computed(
+  () =>
+    marketingFunctions.filter(item => marketingFunctionSubmitted(item.key))
+      .length
+);
+const canEditMarketingFunction = computed(
+  () =>
+    canMarketing.value &&
+    !!selectedMarketingFunction.value &&
+    !marketingFunctionSubmitted(marketingFunctionKey.value)
+);
+const selectedMarketingFields = computed(() =>
+  marketingFields.filter(field =>
+    selectedMarketingFunction.value?.fields.includes(field.key)
+  )
+);
+const legacyMarketingComments = computed(() => {
+  const saved = objectValue(detail.value?.request.marketingProfile);
+  return (
+    saved.legacyMarketingComments ||
+    (!saved.functions ? detail.value?.request.marketingComments : "")
+  );
+});
 const requiredMarketingFields = new Set([
   "marketHeat",
   "fanAudience",
@@ -711,6 +770,8 @@ function openRecommendationsFromDetail() {
 async function loadDetail(id: number) {
   loading.value = true;
   try {
+    if (Number(detail.value?.request.id) !== id)
+      marketingFunctionKey.value = "";
     detail.value = (await getIPRequest(id)).data;
     void loadIPImages(detail.value.candidates, "ipId");
     feedback.value = detail.value.candidates.map(row => ({
@@ -732,6 +793,19 @@ async function loadDetail(id: number) {
     if (detail.value.request.status === "submitted") await loadResources();
     const item = detail.value.request;
     const savedOpinions = objectValue(item.marketingProfile);
+    const functions = objectValue(savedOpinions.functions);
+    marketingFunctionDrafts.value = Object.fromEntries(
+      marketingFunctions.map(item => {
+        const state = objectValue(functions[item.key]);
+        return [
+          item.key,
+          {
+            comments: String(state.comments || ""),
+            channels: arrayValue(state.channels)
+          }
+        ];
+      })
+    );
     marketingCandidates.value = objectValue(savedOpinions.candidates);
     for (const row of detail.value.candidates) {
       marketingCandidates.value[String(row.ipId)] ||= {};
@@ -1189,36 +1263,83 @@ async function sendFeedback(saveDraft = false) {
   }
 }
 async function sendMarketing(saveDraft = false) {
-  if (!detail.value) return;
-  if (!saveDraft && !marketing.value.marketingComments.trim()) {
-    ElMessage.warning("请填写营销补充意见");
+  if (!detail.value || !selectedMarketingFunction.value) {
+    ElMessage.warning("请选择本次填写的职能");
+    return;
+  }
+  if (!canEditMarketingFunction.value) return;
+  const role = selectedMarketingFunction.value;
+  const draft = marketingFunctionDrafts.value[role.key];
+  if (!saveDraft && !draft.comments.trim()) {
+    ElMessage.warning(`请填写${role.label}的补充意见`);
     return;
   }
   if (
     !saveDraft &&
     detail.value.candidates.some(candidate =>
-      [...requiredMarketingFields].some(
-        key => !marketingCandidates.value[String(candidate.ipId)]?.[key]?.trim()
+      role.fields.some(
+        key =>
+          requiredMarketingFields.has(key) &&
+          !String(
+            marketingCandidates.value[String(candidate.ipId)]?.[key] || ""
+          ).trim()
       )
     )
   ) {
-    ElMessage.warning("请补齐每个意向IP的IMC、品牌运营、用户运营和PR意见");
+    ElMessage.warning(`请补齐每个意向IP的${role.label}意见，无需填写其他职能`);
     return;
   }
   saving.value = true;
   try {
-    await submitIPMarketing({
+    const result = await submitIPMarketing({
       requestId: Number(detail.value.request.id),
+      functionKey: role.key,
+      version:
+        Number(objectValue(marketingFunctionStates.value[role.key]).version) ||
+        0,
       saveDraft,
-      ...marketing.value,
-      marketingProfile: {
-        ...marketing.value.marketingProfile,
-        candidates: marketingCandidates.value
-      }
+      comments: draft.comments,
+      channels: draft.channels,
+      candidates: Object.fromEntries(
+        detail.value.candidates.map(candidate => [
+          String(candidate.ipId),
+          Object.fromEntries(
+            role.fields.map(key => [
+              key,
+              marketingCandidates.value[String(candidate.ipId)]?.[key] || ""
+            ])
+          )
+        ])
+      ),
+      ...(role.key === "imc"
+        ? {
+            summary: {
+              marketHeat: marketing.value.marketHeat,
+              fanAudience: marketing.value.fanAudience,
+              commercialValue: marketing.value.commercialValue,
+              marketingRisks: marketing.value.marketingRisks
+            }
+          }
+        : {})
     });
-    ElMessage.success(saveDraft ? "营销意见草稿已保存" : "营销意见已提交");
-    if (!saveDraft) window.dispatchEvent(new Event("ip-workflow-updated"));
+    ElMessage.success(
+      saveDraft
+        ? `${role.label}意见草稿已保存`
+        : result.data.status === "marketing_reviewed"
+          ? "各职能意见已全部提交"
+          : `${role.label}意见已提交，其他职能可继续补充`
+    );
     await loadDetail(Number(detail.value.request.id));
+  } catch (error) {
+    const response = (error as any)?.response;
+    if (Number(response?.status) === 409)
+      ElMessage.warning("该职能意见已被更新，请刷新后重试");
+    else
+      ElMessage.error(
+        Number(response?.status) === 400
+          ? response.data?.message || "请检查本职能意见"
+          : "意见未保存，请稍后重试"
+      );
   } finally {
     saving.value = false;
   }
@@ -1448,19 +1569,28 @@ onUnmounted(() => {
               <label
                 data-validation-key="projectName"
                 :class="validationClass('projectName')"
-                >项目名称 *<el-input
+                ><span class="ip-field-label"
+                  >项目名称
+                  <span class="ip-required" aria-hidden="true">*</span></span
+                ><el-input
                   v-model="form.projectName"
                   placeholder="请输入项目名称" /></label
               ><label
                 data-validation-key="department"
                 :class="validationClass('department')"
-                >需求发起部门 *<el-input
+                ><span class="ip-field-label"
+                  >需求发起部门
+                  <span class="ip-required" aria-hidden="true">*</span></span
+                ><el-input
                   v-model="form.department"
                   placeholder="例如：产品组" /></label
               ><label
                 data-validation-key="markets"
                 :class="validationClass('markets')"
-                >目标市场 *<el-select
+                ><span class="ip-field-label"
+                  >目标市场
+                  <span class="ip-required" aria-hidden="true">*</span></span
+                ><el-select
                   v-model="form.markets"
                   multiple
                   filterable
@@ -1481,7 +1611,10 @@ onUnmounted(() => {
               ><label
                 data-validation-key="budget"
                 :class="validationClass('budget')"
-                >授权费用预算 *
+                ><span class="ip-field-label"
+                  >授权费用预算
+                  <span class="ip-required" aria-hidden="true">*</span></span
+                >
                 <div class="ip-budget">
                   <el-select v-model="form.budgetCurrency"
                     ><el-option label="CNY ¥" value="CNY" /><el-option
@@ -1506,7 +1639,10 @@ onUnmounted(() => {
               ><label
                 data-validation-key="goal"
                 :class="validationClass('goal')"
-                >合作目标 *<el-select v-model="form.goal" placeholder="请选择"
+                ><span class="ip-field-label"
+                  >合作目标
+                  <span class="ip-required" aria-hidden="true">*</span></span
+                ><el-select v-model="form.goal" placeholder="请选择"
                   ><el-option
                     v-for="goal in goals"
                     :key="goal"
@@ -1516,7 +1652,10 @@ onUnmounted(() => {
                 class="ip-span"
                 data-validation-key="description"
                 :class="validationClass('description')"
-                >项目背景与需求说明 *<el-input
+                ><span class="ip-field-label"
+                  >项目背景与需求说明
+                  <span class="ip-required" aria-hidden="true">*</span></span
+                ><el-input
                   v-model="form.description"
                   type="textarea"
                   :rows="3"
@@ -1603,7 +1742,12 @@ onUnmounted(() => {
                   <label
                     :data-validation-key="`candidate-${id}-reason`"
                     :class="validationClass(`candidate-${id}-reason`)"
-                    >选择理由 *<el-input
+                    ><span class="ip-field-label"
+                      >选择理由
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input
                       v-model="form.brief.candidateEvaluations[id].reason"
                       placeholder="商业潜力、品牌调性或话题契合"
                   /></label>
@@ -1612,7 +1756,12 @@ onUnmounted(() => {
                     :class="
                       validationClass(`candidate-${id}-productEvaluation`)
                     "
-                    >产品维度评估 *<el-input
+                    ><span class="ip-field-label"
+                      >产品维度评估
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input
                       v-model="
                         form.brief.candidateEvaluations[id].productEvaluation
                       "
@@ -1622,7 +1771,12 @@ onUnmounted(() => {
                     class="ip-span"
                     :data-validation-key="`candidate-${id}-technicalFit`"
                     :class="validationClass(`candidate-${id}-technicalFit`)"
-                    >技术匹配程度 *<el-input
+                    ><span class="ip-field-label"
+                      >技术匹配程度
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input
                       v-model="form.brief.candidateEvaluations[id].technicalFit"
                       placeholder="视觉惊喜度、开发及本地化难度"
                   /></label>
@@ -1665,18 +1819,33 @@ onUnmounted(() => {
                   <label
                     :data-validation-key="`external-${index}-name`"
                     :class="validationClass(`external-${index}-name`)"
-                    >IP名称 *<el-input v-model="item.name"
+                    ><span class="ip-field-label"
+                      >IP名称
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input v-model="item.name"
                   /></label>
                   <label
                     :data-validation-key="`external-${index}-rightsOwner`"
                     :class="validationClass(`external-${index}-rightsOwner`)"
-                    >版权方 *<el-input v-model="item.rightsOwner"
+                    ><span class="ip-field-label"
+                      >版权方
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input v-model="item.rightsOwner"
                   /></label>
                   <label
                     class="ip-span"
                     :data-validation-key="`external-${index}-imageUrl`"
                     :class="validationClass(`external-${index}-imageUrl`)"
-                    >IP形象示意链接 *<el-input
+                    ><span class="ip-field-label"
+                      >IP形象示意链接
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input
                       v-model="item.imageUrl"
                       placeholder="https://..."
                       @input="brokenExternalImageUrls[index] = false"
@@ -1710,7 +1879,12 @@ onUnmounted(() => {
                     class="ip-span"
                     :data-validation-key="`external-${index}-reason`"
                     :class="validationClass(`external-${index}-reason`)"
-                    >选择理由 *<el-input v-model="item.reason"
+                    ><span class="ip-field-label"
+                      >选择理由
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input v-model="item.reason"
                   /></label>
                   <label
                     class="ip-span"
@@ -1718,7 +1892,12 @@ onUnmounted(() => {
                     :class="
                       validationClass(`external-${index}-productEvaluation`)
                     "
-                    >产品维度评估 *<el-input
+                    ><span class="ip-field-label"
+                      >产品维度评估
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input
                       v-model="item.productEvaluation"
                       placeholder="市场认知、用户重叠、机型适配"
                   /></label>
@@ -1726,7 +1905,12 @@ onUnmounted(() => {
                     class="ip-span"
                     :data-validation-key="`external-${index}-technicalFit`"
                     :class="validationClass(`external-${index}-technicalFit`)"
-                    >技术匹配程度 *<el-input
+                    ><span class="ip-field-label"
+                      >技术匹配程度
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input
                       v-model="item.technicalFit"
                       placeholder="视觉、开发和本地化难度"
                   /></label>
@@ -1740,7 +1924,11 @@ onUnmounted(() => {
                 <template #title>
                   <div>
                     <h2>补充项目资料</h2>
-                    <p>带 * 的项目资料与各环节对接人提交时必填。</p>
+                    <p>
+                      带
+                      <span class="ip-required" aria-hidden="true">*</span>
+                      的项目资料与各环节对接人提交时必填。
+                    </p>
                   </div>
                 </template>
                 <div class="ip-form-grid">
@@ -1751,8 +1939,15 @@ onUnmounted(() => {
                     :data-validation-key="`brief-${field.key}`"
                     :class="validationClass(`brief-${field.key}`)"
                   >
-                    {{ field.label }}{{ field.required ? " *" : ""
-                    }}<el-input
+                    <span class="ip-field-label"
+                      >{{ field.label
+                      }}<span
+                        v-if="field.required"
+                        class="ip-required"
+                        aria-hidden="true"
+                        >*</span
+                      ></span
+                    ><el-input
                       v-model="form.brief[field.key]"
                       :placeholder="field.hint"
                     />
@@ -1786,7 +1981,12 @@ onUnmounted(() => {
                     :data-validation-key="`contact-${stage.key}`"
                     :class="validationClass(`contact-${stage.key}`)"
                   >
-                    {{ stage.label }} *
+                    <span class="ip-field-label"
+                      >{{ stage.label }}
+                      <span class="ip-required" aria-hidden="true"
+                        >*</span
+                      ></span
+                    >
                     <el-autocomplete
                       v-model="form.brief.contactsByStage[stage.key].name"
                       :fetch-suggestions="
@@ -2080,7 +2280,10 @@ onUnmounted(() => {
               </div>
               <div class="ip-form-grid">
                 <label
-                  >可行性判断 *<el-select
+                  ><span class="ip-field-label"
+                    >可行性判断
+                    <span class="ip-required" aria-hidden="true">*</span></span
+                  ><el-select
                     v-model="item.feasibility"
                     :disabled="!canFeedback"
                     ><el-option label="可行" value="可行" /><el-option
@@ -2089,7 +2292,10 @@ onUnmounted(() => {
                       label="不可行"
                       value="不可行" /></el-select></label
                 ><label
-                  >推荐意见 *<el-select
+                  ><span class="ip-field-label"
+                    >推荐意见
+                    <span class="ip-required" aria-hidden="true">*</span></span
+                  ><el-select
                     v-model="item.recommendation"
                     :disabled="!canFeedback"
                     ><el-option label="优先合作" value="优先合作" /><el-option
@@ -2098,7 +2304,10 @@ onUnmounted(() => {
                       label="暂不合作"
                       value="暂不合作" /></el-select></label
                 ><label
-                  >优先级 *<el-select
+                  ><span class="ip-field-label"
+                    >优先级
+                    <span class="ip-required" aria-hidden="true">*</span></span
+                  ><el-select
                     v-model="item.priorityOrder"
                     :disabled="!canFeedback"
                     ><el-option label="T0 · 最高优先级" :value="0" /><el-option
@@ -2107,7 +2316,10 @@ onUnmounted(() => {
                       label="T2 · 后续考虑"
                       :value="2" /></el-select></label
                 ><label class="ip-span"
-                  >理由说明 *<el-input
+                  ><span class="ip-field-label"
+                    >理由说明
+                    <span class="ip-required" aria-hidden="true">*</span></span
+                  ><el-input
                     v-model="item.reason"
                     type="textarea"
                     :rows="2"
@@ -2122,9 +2334,11 @@ onUnmounted(() => {
                 >
                   <div class="ip-score-grid">
                     <label v-for="field in scoreFields" :key="field.key">
-                      {{ field.label }} * · 权重
-                      {{ Math.round(field.weight * 100) }}%
-                      <el-input-number
+                      <span class="ip-field-label"
+                        >{{ field.label }}
+                        <span class="ip-required" aria-hidden="true">*</span> ·
+                        权重 {{ Math.round(field.weight * 100) }}% </span
+                      ><el-input-number
                         v-model="item.assessment.scoreDimensions[field.key]"
                         :min="0"
                         :max="100"
@@ -2139,10 +2353,15 @@ onUnmounted(() => {
                       :key="field.key"
                       class="ip-span"
                     >
-                      {{ field.label
-                      }}{{
-                        requiredAssessmentFields.has(field.key) ? " *" : ""
-                      }}
+                      <span class="ip-field-label"
+                        >{{ field.label
+                        }}<span
+                          v-if="requiredAssessmentFields.has(field.key)"
+                          class="ip-required"
+                          aria-hidden="true"
+                          >*</span
+                        ></span
+                      >
                       <el-input
                         v-model="item.assessment[field.key]"
                         :disabled="!canFeedback"
@@ -2166,125 +2385,193 @@ onUnmounted(() => {
             </div>
           </div>
           <div v-if="menuKind !== 'feedback'" class="ip-card">
-            <h2>营销评估与建议</h2>
-            <div
-              v-if="
-                canMarketing || detail.request.status === 'marketing_reviewed'
-              "
-              class="ip-marketing-grid"
-            >
-              <label class="ip-metric-row">
-                <span
-                  ><strong>市场热度</strong
-                  ><small>综合社媒讨论度、搜索趋势及同类案例表现</small></span
-                >
-                <el-input
-                  v-model="marketing.marketHeat"
-                  :disabled="!canMarketing"
-                  placeholder="填写热度等级与依据"
-                />
-              </label>
-              <label class="ip-metric-row">
-                <span
-                  ><strong>粉丝受众</strong
-                  ><small>核心受众画像及匹配度分析</small></span
-                >
-                <el-input
-                  v-model="marketing.fanAudience"
-                  type="textarea"
-                  :rows="2"
-                  :disabled="!canMarketing"
-                />
-              </label>
-              <label class="ip-metric-row">
-                <span
-                  ><strong>商业价值</strong
-                  ><small>基于过往合作案例与转化潜力评估</small></span
-                >
-                <el-input
-                  v-model="marketing.commercialValue"
-                  :disabled="!canMarketing"
-                  placeholder="填写商业价值与预算判断"
-                />
-              </label>
-              <label class="ip-metric-row ip-metric-risk">
-                <span
-                  ><strong>风险与提醒</strong
-                  ><small>潜在风险点及应对建议</small></span
-                >
-                <el-input
-                  v-model="marketing.marketingRisks"
-                  type="textarea"
-                  :rows="2"
-                  :disabled="!canMarketing"
-                />
-              </label>
-              <label class="ip-channel-row">
-                <strong>推荐传播方向</strong>
-                <el-checkbox-group
-                  v-model="marketing.marketingChannels"
-                  :disabled="!canMarketing"
-                  ><el-checkbox
-                    v-for="channel in channels"
-                    :key="channel"
-                    :value="channel"
-                    >{{ channel }}</el-checkbox
-                  ></el-checkbox-group
-                >
-              </label>
-              <label class="ip-channel-row">
-                <strong>补充意见 *</strong>
-                <el-input
-                  v-model="marketing.marketingComments"
-                  type="textarea"
-                  :rows="3"
-                  :disabled="!canMarketing"
-                  placeholder="填写营销补充意见"
-                />
-              </label>
+            <div class="ip-marketing-heading">
+              <h2>营销评估与建议</h2>
+              <span
+                >已提交 {{ submittedMarketingCount }} /
+                {{ marketingFunctions.length }} 个职能</span
+              >
             </div>
+            <p class="ip-marketing-guidance">
+              各职能独立填写、独立提交，只需完成自己负责的意见。全部职能提交后，通过飞书提醒需求发起人；营销环节共用
+              5 个工作日反馈期限。
+            </p>
             <template
               v-if="
                 canMarketing || detail.request.status === 'marketing_reviewed'
               "
             >
-              <div
-                v-for="candidate in detail.candidates"
-                :key="candidate.ipId"
-                class="ip-candidate"
+              <el-radio-group
+                v-model="marketingFunctionKey"
+                aria-label="本次填写或查看的职能"
+                :disabled="saving"
+                class="ip-marketing-functions"
               >
-                <h3>{{ candidate.name }} · 分IP意见</h3>
-                <div class="ip-form-grid">
-                  <label
-                    v-for="field in marketingFields"
-                    :key="field.key"
-                    class="ip-span"
+                <el-radio-button
+                  v-for="item in marketingFunctions"
+                  :key="item.key"
+                  :value="item.key"
+                >
+                  {{ item.label }} ·
+                  {{
+                    marketingFunctionSubmitted(item.key) ? "已提交" : "待提交"
+                  }}
+                </el-radio-button>
+              </el-radio-group>
+              <template v-if="selectedMarketingFunction">
+                <div class="ip-marketing-function-meta">
+                  <strong>{{ selectedMarketingFunction.label }}意见</strong>
+                  <span
+                    >对接人：{{
+                      requestContacts[marketingFunctionKey]?.name || "待补充"
+                    }}</span
                   >
-                    {{ field.label
-                    }}{{ requiredMarketingFields.has(field.key) ? " *" : ""
-                    }}<el-input
-                      v-model="
-                        marketingCandidates[String(candidate.ipId)][field.key]
-                      "
-                      :disabled="!canMarketing"
-                      :placeholder="field.hint"
+                  <span
+                    v-if="
+                      objectValue(marketingFunctionStates[marketingFunctionKey])
+                        .submittedAt
+                    "
+                    >已于
+                    {{
+                      requestDate(
+                        objectValue(
+                          marketingFunctionStates[marketingFunctionKey]
+                        ).submittedAt,
+                        true
+                      )
+                    }}
+                    提交</span
+                  >
+                </div>
+                <p
+                  v-if="marketingFunctionSubmitted(marketingFunctionKey)"
+                  class="ip-marketing-guidance"
+                >
+                  本职能已提交，以下为已保存内容。
+                </p>
+                <div
+                  v-if="marketingFunctionKey === 'imc'"
+                  class="ip-marketing-grid"
+                >
+                  <label
+                    v-for="field in [
+                      { key: 'marketHeat', label: '项目整体市场热度' },
+                      { key: 'fanAudience', label: '项目整体粉丝受众' },
+                      { key: 'commercialValue', label: '项目整体商业价值' },
+                      { key: 'marketingRisks', label: '项目整体风险与提醒' }
+                    ]"
+                    :key="field.key"
+                    class="ip-channel-row"
+                  >
+                    <strong>{{ field.label }}（选填）</strong>
+                    <el-input
+                      v-model="marketing[field.key]"
+                      :disabled="!canEditMarketingFunction || saving"
                     />
                   </label>
                 </div>
-              </div>
+                <div
+                  v-for="candidate in detail.candidates"
+                  :key="candidate.ipId"
+                  class="ip-candidate"
+                >
+                  <h3>
+                    {{ candidate.name }} ·
+                    {{ selectedMarketingFunction.label }}意见
+                  </h3>
+                  <div class="ip-form-grid">
+                    <label
+                      v-for="field in selectedMarketingFields"
+                      :key="field.key"
+                      class="ip-span"
+                    >
+                      <span class="ip-field-label"
+                        >{{ field.label
+                        }}<span
+                          v-if="requiredMarketingFields.has(field.key)"
+                          class="ip-required"
+                          aria-hidden="true"
+                          >*</span
+                        ></span
+                      >
+                      <el-input
+                        v-model="
+                          marketingCandidates[String(candidate.ipId)][field.key]
+                        "
+                        :disabled="!canEditMarketingFunction || saving"
+                        :placeholder="field.hint"
+                        :aria-required="requiredMarketingFields.has(field.key)"
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div class="ip-marketing-grid">
+                  <label class="ip-channel-row">
+                    <strong
+                      >{{
+                        selectedMarketingFunction.label
+                      }}推荐传播方向（选填）</strong
+                    >
+                    <el-checkbox-group
+                      v-model="
+                        marketingFunctionDrafts[marketingFunctionKey].channels
+                      "
+                      :disabled="!canEditMarketingFunction || saving"
+                    >
+                      <el-checkbox
+                        v-for="channel in channels"
+                        :key="channel"
+                        :value="channel"
+                        >{{ channel }}</el-checkbox
+                      >
+                    </el-checkbox-group>
+                  </label>
+                  <label class="ip-channel-row">
+                    <span class="ip-field-label"
+                      ><strong
+                        >{{ selectedMarketingFunction.label }}补充意见<span
+                          class="ip-required"
+                          aria-hidden="true"
+                          >*</span
+                        ></strong
+                      ></span
+                    >
+                    <el-input
+                      v-model="
+                        marketingFunctionDrafts[marketingFunctionKey].comments
+                      "
+                      type="textarea"
+                      :rows="3"
+                      :disabled="!canEditMarketingFunction || saving"
+                      :placeholder="`填写${selectedMarketingFunction.label}意见；无需填写其他职能内容`"
+                      aria-required="true"
+                    />
+                  </label>
+                </div>
+                <div v-if="canEditMarketingFunction" class="ip-bottom">
+                  <el-button :loading="saving" @click="sendMarketing(true)"
+                    >保存本职能草稿</el-button
+                  >
+                  <el-button
+                    class="ip-primary"
+                    :loading="saving"
+                    @click="sendMarketing(false)"
+                    >提交{{ selectedMarketingFunction.label }}意见</el-button
+                  >
+                </div>
+              </template>
+              <p v-else class="ip-marketing-guidance">
+                请先选择你负责的职能，查看或填写对应意见。
+              </p>
+              <section
+                v-if="legacyMarketingComments"
+                class="ip-marketing-legacy"
+              >
+                <h3>历史营销补充意见</h3>
+                <RequestText :text="String(legacyMarketingComments)" />
+              </section>
             </template>
-            <p v-else>待IP组提交初步反馈后，由营销团队补充意见。</p>
-            <div v-if="canMarketing" class="ip-bottom">
-              <el-button :loading="saving" @click="sendMarketing(true)"
-                >保存意见草稿</el-button
-              >
-              <el-button
-                class="ip-primary"
-                :loading="saving"
-                @click="sendMarketing(false)"
-                >提交营销意见</el-button
-              >
-            </div>
+            <p v-else>待IP组提交初步反馈后，由各职能伙伴补充意见。</p>
           </div>
         </div>
         <div class="ip-stack">
@@ -3377,5 +3664,53 @@ dl.ip-detail-contact-list {
   .ip-deadline-summary {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+</style>
+
+<style scoped lang="scss">
+.ip-required {
+  margin-left: 4px;
+  color: #d03030;
+}
+
+.ip-marketing-heading,
+.ip-marketing-function-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: baseline;
+}
+
+.ip-marketing-heading {
+  justify-content: space-between;
+}
+
+.ip-marketing-heading span,
+.ip-marketing-function-meta span,
+.ip-marketing-guidance {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--el-text-color-regular);
+}
+
+.ip-marketing-functions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 24px;
+}
+
+.ip-marketing-functions :deep(.el-radio-button__inner) {
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.ip-marketing-function-meta {
+  margin-bottom: 16px;
+}
+
+.ip-marketing-legacy {
+  margin-top: 24px;
 }
 </style>

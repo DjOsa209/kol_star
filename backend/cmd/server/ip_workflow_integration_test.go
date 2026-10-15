@@ -77,8 +77,19 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 		}
 		return id, "Bearer " + newLoginTokenResponse(int(id), now, now, sid)["accessToken"].(string)
 	}
-	creator, creatorToken := addUser("_creator")
+	_, creatorToken := addUser("_creator")
 	reviewer, reviewerToken := addUser("_reviewer")
+	partners := map[string]struct {
+		id    int64
+		token string
+	}{}
+	for _, function := range ipMarketingFunctions {
+		id, token := addUser("_" + function.Key)
+		partners[function.Key] = struct {
+			id    int64
+			token string
+		}{id, token}
+	}
 	request := func(handler http.HandlerFunc, method, path string, body any, token string) (int, map[string]any) {
 		raw, _ := json.Marshal(body)
 		req := httptest.NewRequest(method, path, bytes.NewReader(raw))
@@ -133,10 +144,6 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 	if deadlines["ip"].(map[string]any)["dueAt"] != "2026-10-20T23:59:59+08:00" {
 		t.Fatalf("wrong actual DB deadline: %v", deadlines)
 	}
-	var stageNoticeCount int
-	if err := db.QueryRow("select count(*) from biz_ip_workflow_notifications where request_id=? and stage='submitted' and user_id=?", requestID, reviewer).Scan(&stageNoticeCount); err != nil || stageNoticeCount != 1 {
-		t.Fatalf("IP recipient count=%d err=%v", stageNoticeCount, err)
-	}
 	var before string
 	if err := db.QueryRow("select date_format(submitted_at,'%Y-%m-%d %H:%i:%s') from biz_ip_requests where id=?", requestID).Scan(&before); err != nil {
 		t.Fatal(err)
@@ -152,82 +159,119 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 	feedback["saveDraft"] = false
 	code, result = request(a.ipRequestFeedback, "POST", "/", feedback, reviewerToken)
 	expectOK(code, result)
-	if err := db.QueryRow("select count(*) from biz_ip_workflow_notifications where request_id=? and stage='ip_reviewed' and user_id=?", requestID, reviewer).Scan(&stageNoticeCount); err != nil || stageNoticeCount != 1 {
-		t.Fatalf("repeated marketing roles were not deduplicated: %d err=%v", stageNoticeCount, err)
-	}
 	_, err = db.Exec("update biz_ip_requests set ip_reviewed_at='2026-10-15 15:00:00' where id=?", requestID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	opinion := map[string]any{}
-	for _, key := range []string{"marketHeat", "fanAudience", "commercialValue", "marketingRisks", "recentTrend", "socialFollowers", "ugcForecast", "audienceMatch", "prOpinion"} {
-		opinion[key] = "已评估"
+	makeOpinion := func(key string, draft bool, version int64) ipMarketingInput {
+		function, _ := ipMarketingFunctionByKey(key)
+		fields := map[string]string{}
+		for _, field := range function.Required {
+			fields[field] = function.Label + "已评估"
+		}
+		return ipMarketingInput{RequestID: requestID, FunctionKey: key, Version: version, SaveDraft: draft, Comments: function.Label + "的独立意见", Candidates: map[string]map[string]string{strconv.FormatInt(ipID, 10): fields}}
 	}
-	marketing := map[string]any{"requestId": requestID, "saveDraft": true, "marketingComments": "齐全", "marketingProfile": map[string]any{"candidates": map[string]any{strconv.FormatInt(ipID, 10): opinion}}}
-	code, result = request(a.ipRequestMarketing, "POST", "/", marketing, reviewerToken)
+	imc := makeOpinion("imc", true, 0)
+	code, result = request(a.ipRequestMarketing, "POST", "/", imc, partners["imc"].token)
 	expectOK(code, result)
-	var count int
-	if err := db.QueryRow("select count(*) from biz_ip_workflow_notifications where request_id=? and stage='marketing_reviewed'", requestID).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("draft completion notification: %d %v", count, err)
+	var completed any
+	if err := db.QueryRow("select marketing_reviewed_at from biz_ip_requests where id=?", requestID).Scan(&completed); err != nil || completed != nil {
+		t.Fatalf("draft prematurely completed: %v %v", completed, err)
 	}
-	// Missing a required opinion cannot complete or notify.
-	marketing["saveDraft"] = false
-	delete(opinion, "prOpinion")
-	code, _ = request(a.ipRequestMarketing, "POST", "/", marketing, reviewerToken)
-	if code != 400 {
-		t.Fatalf("incomplete marketing HTTP %d", code)
+	imc.SaveDraft = false
+	imc.Version = 1
+	code, result = request(a.ipRequestMarketing, "POST", "/", imc, partners["imc"].token)
+	expectOK(code, result)
+	if result["data"].(map[string]any)["status"] != "ip_reviewed" {
+		t.Fatal("IMC alone completed marketing")
 	}
-	opinion["prOpinion"] = "已评估"
-	// Concurrent submit: exactly one transition succeeds and only the creator gets one completion notice.
+	// Three colleagues submit different functions concurrently, from their own stale page snapshots.
 	var wg sync.WaitGroup
-	statuses := make(chan int, 2)
+	statuses := make(chan int, 3)
+	for _, key := range []string{"brand", "user", "media"} {
+		wg.Add(1)
+		go func(key string) {
+			defer wg.Done()
+			code, _ := request(a.ipRequestMarketing, "POST", "/", makeOpinion(key, false, 0), partners[key].token)
+			statuses <- code
+		}(key)
+	}
+	wg.Wait()
+	close(statuses)
+	for code := range statuses {
+		if code != 200 {
+			t.Fatalf("concurrent independent function HTTP %d", code)
+		}
+	}
+	var raw, statusNow string
+	if err := db.QueryRow("select marketing_profile,status,marketing_reviewed_at from biz_ip_requests where id=?", requestID).Scan(&raw, &statusNow, &completed); err != nil {
+		t.Fatal(err)
+	}
+	var profile map[string]any
+	if err := json.Unmarshal([]byte(raw), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if statusNow != "ip_reviewed" || completed != nil {
+		t.Fatalf("completed without PR: %s %v", statusNow, completed)
+	}
+	for _, key := range []string{"imc", "brand", "user", "media"} {
+		state := ipMarketingState(profile, key)
+		if state.SubmittedBy != int(partners[key].id) || state.SubmittedAt == "" {
+			t.Fatalf("lost independent %s state: %+v", key, state)
+		}
+	}
+	values := profile["candidates"].(map[string]any)[strconv.FormatInt(ipID, 10)].(map[string]any)
+	if values["marketHeat"] != "IMC已评估" || values["ugcForecast"] != "品牌运营已评估" || values["audienceMatch"] != "用户运营已评估" {
+		t.Fatalf("concurrent writes clobbered colleagues: %v", values)
+	}
+	code, _ = request(a.ipRequestMarketing, "POST", "/", makeOpinion("imc", true, 0), partners["imc"].token)
+	if code != 409 {
+		t.Fatalf("stale submitted function HTTP %d", code)
+	}
+	missing := makeOpinion("pr", false, 0)
+	missing.Candidates = nil
+	code, _ = request(a.ipRequestMarketing, "POST", "/", missing, partners["pr"].token)
+	if code != 400 {
+		t.Fatalf("missing own PR opinion HTTP %d", code)
+	}
+	// Only the fifth completed function can transition the request, even if double-clicked.
+	finalStatuses := make(chan int, 2)
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			code, _ := request(a.ipRequestMarketing, "POST", "/", marketing, reviewerToken)
-			statuses <- code
+			code, _ := request(a.ipRequestMarketing, "POST", "/", makeOpinion("pr", false, 0), partners["pr"].token)
+			finalStatuses <- code
 		}()
 	}
 	wg.Wait()
-	close(statuses)
-	ok, conflict := 0, 0
-	for code := range statuses {
+	close(finalStatuses)
+	successes, conflicts := 0, 0
+	for code := range finalStatuses {
 		if code == 200 {
-			ok++
+			successes++
 		}
 		if code == 409 {
-			conflict++
+			conflicts++
 		}
 	}
-	if ok != 1 || conflict != 1 {
-		t.Fatalf("concurrent outcomes success=%d conflict=%d", ok, conflict)
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("completion success=%d conflict=%d", successes, conflicts)
 	}
-	if err := db.QueryRow("select count(*) from biz_ip_workflow_notifications where request_id=? and stage='marketing_reviewed' and user_id=?", requestID, creator).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("creator completion count=%d err=%v", count, err)
+	if err := db.QueryRow("select status,marketing_reviewed_at,marketing_profile from biz_ip_requests where id=?", requestID).Scan(&statusNow, &completed, &raw); err != nil {
+		t.Fatal(err)
 	}
-	code, result = request(a.ipWorkflowNotifications, "GET", "/", nil, creatorToken)
-	expectOK(code, result)
-	items := result["data"].(map[string]any)["list"].([]any)
-	if len(items) != 1 {
-		t.Fatalf("creator notices: %v", items)
+	json.Unmarshal([]byte(raw), &profile)
+	if statusNow != "marketing_reviewed" || completed == nil || !ipMarketingAllSubmitted(profile) {
+		t.Fatalf("final completion missing: %s %v", statusNow, completed)
 	}
-	noticeID := int64(items[0].(map[string]any)["id"].(float64))
-	code, result = request(a.ipWorkflowNotificationsRead, "POST", "/", map[string]any{"ids": []int64{noticeID}}, reviewerToken)
-	expectOK(code, result)
-	if result["data"].(map[string]any)["updated"] != float64(0) {
-		t.Fatal("another user acknowledged creator notice")
-	}
-	code, result = request(a.ipWorkflowNotificationsRead, "POST", "/", map[string]any{"ids": []int64{noticeID}}, creatorToken)
-	expectOK(code, result)
-	code, result = request(a.ipWorkflowNotifications, "GET", "/", nil, creatorToken)
-	expectOK(code, result)
-	if result["data"].(map[string]any)["unread"] != float64(0) {
-		t.Fatalf("acknowledgement not persisted: %v", result)
+	var stationNotices int
+	if err := db.QueryRow("select count(*) from biz_ip_workflow_notifications where request_id=?", requestID).Scan(&stationNotices); err != nil || stationNotices != 0 {
+		t.Fatalf("unexpected station reminder: %d %v", stationNotices, err)
 	}
 	var after string
 	if err := db.QueryRowContext(ctx, "select date_format(submitted_at,'%Y-%m-%d %H:%i:%s') from biz_ip_requests where id=?", requestID).Scan(&after); err != nil || after != before {
 		t.Fatalf("submission clock changed: %s -> %s err=%v", before, after, err)
 	}
-	t.Log("PASS: draft clocks, holiday DDL, sequential stages, incomplete rejection, concurrent completion, owner-only notification, durable acknowledgement")
+	t.Log("PASS: working-day DDL, five independent colleagues, scoped validation, concurrent merge, stale-write rejection, final-only completion and no station popup")
 }
