@@ -714,6 +714,7 @@ const activeCandidateId = ref<number | null>(null);
 const expectedLaunch = ref("");
 const historyOpen = ref(false);
 const conditionsOpen = ref(false);
+const stageLabels = ["需求理解", "条件确认", "候选研究", "比较决策"];
 const attachmentReading = ref(false);
 const attachment = ref<{ name: string; text: string } | null>(null);
 const canSendMessage = computed(
@@ -1227,7 +1228,7 @@ watch(
   <div v-loading="loading" class="ip-recommend-page">
     <div class="research-main">
       <div class="research-session-bar">
-        <label v-if="showInlineSessions" class="session-switch">
+        <div v-if="showInlineSessions" class="session-switch">
           <span>项目会话</span>
           <el-select
             class="project-session-select"
@@ -1250,78 +1251,85 @@ watch(
           >
             <Icon :icon="icons.plus" />新建会话
           </el-button>
-        </label>
-        <div class="project-context">
-          <h2>{{ projectLabel }}</h2>
-          <p>
-            {{ criteria.goal || "合作目标待确认"
-            }}<template v-if="criteria.markets?.length">
-              · {{ criteria.markets.join(" / ") }}</template
-            ><template v-if="expectedLaunch">
-              · 预计上线 {{ expectedLaunch }}</template
+        </div>
+        <h2 v-else class="project-title" :title="projectLabel">
+          {{ projectLabel }}
+        </h2>
+        <div class="research-tools">
+          <el-dropdown
+            trigger="click"
+            :disabled="conversationBusy"
+            @command="value => selectStage(Number(value))"
+          >
+            <button
+              type="button"
+              class="quiet-button stage-switch"
+              :disabled="conversationBusy"
+              :aria-label="`研究阶段：${stageLabels[currentStage]}`"
             >
-            <router-link
-              v-if="requestId"
-              :to="{ path: '/business/ip/requests', query: { id: requestId } }"
-              >查看原始提需 <Icon :icon="icons.arrow"
-            /></router-link>
-          </p>
+              <span class="stage-indicator" aria-hidden="true" />{{
+                stageLabels[currentStage]
+              }}<Icon icon="ri:arrow-down-s-line" />
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu aria-label="推荐研究阶段">
+                <el-dropdown-item
+                  v-for="(label, index) in stageLabels"
+                  :key="label"
+                  :command="index"
+                  :aria-current="currentStage === index ? 'step' : undefined"
+                  :disabled="
+                    index > 1 &&
+                    !visibleResults.length &&
+                    !latestWebSearch?.candidates?.length
+                  "
+                >
+                  {{ label
+                  }}<Icon v-if="currentStage === index" :icon="icons.check" />
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <button
+            type="button"
+            class="quiet-button conditions-toggle"
+            :aria-expanded="conditionsOpen"
+            aria-controls="research-criteria"
+            @click="conditionsOpen = !conditionsOpen"
+          >
+            <Icon :icon="icons.file" />需求条件<Icon
+              :icon="
+                conditionsOpen ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'
+              "
+            />
+          </button>
         </div>
       </div>
-      <nav class="research-stages" aria-label="推荐研究阶段">
-        <button
-          v-for="(label, index) in [
-            '需求理解',
-            '条件确认',
-            '候选研究',
-            '比较决策'
-          ]"
-          :key="label"
-          type="button"
-          :class="{
-            complete: currentStage > index,
-            'stage-current': currentStage === index
-          }"
-          :aria-current="currentStage === index ? 'step' : undefined"
-          :disabled="
-            conversationBusy ||
-            (index > 1 &&
-              !visibleResults.length &&
-              !latestWebSearch?.candidates?.length)
-          "
-          @click="selectStage(index)"
-        >
-          <span class="stage-dot"
-            ><Icon v-if="currentStage > index" :icon="icons.check" /></span
-          >{{ label }}
-        </button>
-      </nav>
-      <div class="research-context">
-        <button
-          type="button"
-          class="context-title"
-          :aria-expanded="conditionsOpen"
-          @click="conditionsOpen = !conditionsOpen"
-        >
-          <Icon :icon="icons.file" />需求与已确认条件
-        </button>
-        <span>{{ criteriaText }}</span>
-        <button
-          type="button"
-          class="quiet-button"
-          :disabled="conversationBusy"
-          @click="showConditions"
-        >
-          <Icon :icon="icons.edit" />编辑
-        </button>
+      <div
+        v-if="conditionsOpen"
+        id="research-criteria"
+        class="expanded-criteria"
+      >
+        <div class="criteria-summary">
+          <span
+            >{{ criteria.goal || "合作目标待确认" }} · {{ criteriaText }}</span
+          >
+          <button
+            type="button"
+            class="quiet-button"
+            :disabled="conversationBusy"
+            @click="showConditions"
+          >
+            <Icon :icon="icons.edit" />编辑条件
+          </button>
+        </div>
+        <span v-if="expectedLaunch">预计上线：{{ expectedLaunch }}</span>
         <router-link
           v-if="requestId"
           :to="{ path: '/business/ip/requests', query: { id: requestId } }"
           class="context-link"
-          ><Icon :icon="icons.external" />关联提需</router-link
+          ><Icon :icon="icons.external" />查看原始提需</router-link
         >
-      </div>
-      <div v-if="conditionsOpen" class="expanded-criteria">
         <p>{{ criteria.query || "尚未填写项目需求" }}</p>
         <span v-if="criteria.audience">目标受众：{{ criteria.audience }}</span>
         <span v-if="criteria.product">关联产品：{{ criteria.product }}</span>
@@ -2535,14 +2543,16 @@ watch(
 
 .research-session-bar {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 0;
+  min-width: 0;
+  padding-bottom: 12px;
 }
 
 .session-switch {
   display: flex;
+  flex: 1;
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -2550,13 +2560,15 @@ watch(
   color: var(--workspace-muted);
 }
 
-.session-switch > span {
+.session-switch > span,
+.session-switch :deep(.el-button) {
   flex: none;
 }
 
 .project-session-select {
-  width: 280px;
-  max-width: 100%;
+  flex: 1;
+  min-width: 120px;
+  max-width: 280px;
 }
 
 .session-switch :deep(.el-button > span) {
@@ -2570,144 +2582,37 @@ watch(
   height: 16px;
 }
 
-.project-context {
+.project-title {
+  flex: 1;
   min-width: 0;
-  max-width: 58%;
-  margin-left: auto;
-  text-align: right;
-}
-
-.project-context h2 {
   margin: 0;
-  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
-.project-context p {
-  margin: 6px 0 2px;
-  font-size: 12px;
-  color: var(--workspace-muted);
-}
-
-.project-context a {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  margin-left: 16px;
-  font-size: 12px;
-}
-
-.research-stages {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px;
-  padding: 4px 16px 14px;
-}
-
-.research-stages button {
-  position: relative;
+.research-tools {
   display: flex;
-  gap: 12px;
-  align-items: center;
-  min-width: 0;
-  min-height: 36px;
-  padding: 0;
-  font-size: 13px;
-  background: none;
-  border: 0;
-}
-
-.research-stages button::after {
-  flex: 1;
-  height: 1px;
-  margin-left: 8px;
-  content: "";
-  background: var(--workspace-line);
-}
-
-.research-stages button:last-child::after {
-  display: none;
-}
-
-.stage-dot {
-  display: grid;
   flex: none;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  color: #18201c;
-  border: 1px solid #919b8c;
+  gap: 16px;
+  align-items: center;
+}
+
+.stage-switch,
+.conditions-toggle {
+  font-size: 13px;
+}
+
+.stage-indicator {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--workspace-accent);
+  border: 1px solid #526350;
   border-radius: 50%;
-}
-
-.stage-dot svg {
-  width: 14px;
-  height: 14px;
-}
-
-.complete .stage-dot {
-  width: 20px;
-  height: 20px;
-  background: #e9f8bb;
-  border: 0;
-}
-
-.stage-current {
-  font-weight: 600;
-}
-
-.stage-current .stage-dot {
-  background: var(--workspace-accent);
-  border: 2px solid #18201c;
-}
-
-.stage-current::before {
-  position: absolute;
-  bottom: -6px;
-  left: 0;
-  width: 110px;
-  max-width: 100%;
-  height: 2px;
-  content: "";
-  background: var(--workspace-accent);
-}
-
-.research-context {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 20px;
-  align-items: center;
-  padding: 12px 8px;
-  margin-bottom: 8px;
-  border-top: 1px solid var(--workspace-line);
-  border-bottom: 1px solid var(--workspace-line);
-}
-
-.context-title {
-  display: inline-flex;
-  flex: none;
-  gap: 12px;
-  align-items: center;
-  padding: 0;
-  font-size: 13px;
-  font-weight: 600;
-  background: none;
-  border: 0;
-}
-
-.context-title svg {
-  width: 20px;
-  height: 20px;
-}
-
-.research-context > span {
-  flex: 1;
-  min-width: 180px;
-  font-size: 12px;
-  color: #4d5b50;
-  overflow-wrap: anywhere;
 }
 
 .quiet-button {
@@ -2743,8 +2648,13 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 12px 24px;
-  padding: 0 12px 24px;
+  max-height: 240px;
+  padding: 12px 0;
+  margin-bottom: 12px;
+  overflow: auto;
   font-size: 13px;
+  border-top: 1px solid var(--workspace-line);
+  border-bottom: 1px solid var(--workspace-line);
 }
 
 .expanded-criteria p {
@@ -2755,11 +2665,28 @@ watch(
   white-space: pre-wrap;
 }
 
-.expanded-criteria button {
+.expanded-criteria button:not(.quiet-button) {
   padding: 0;
   color: #526b30;
   background: none;
   border: 0;
+}
+
+.criteria-summary {
+  display: flex;
+  flex: 0 0 100%;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.criteria-summary > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.criteria-summary .quiet-button {
+  flex: none;
 }
 
 .research-columns {
@@ -2768,7 +2695,7 @@ watch(
   grid-template-columns: minmax(0, 1.12fr) minmax(360px, 1fr);
   gap: 0;
   align-items: stretch;
-  height: clamp(560px, calc(100dvh - 330px), 960px);
+  height: clamp(560px, calc(100dvh - 240px), 960px);
   overflow: hidden;
   background: #fff;
   border: 1px solid var(--workspace-line);
@@ -3266,6 +3193,7 @@ watch(
 }
 
 @media (pointer: coarse) {
+  .research-tools .quiet-button,
   .composer-actions .web-search-toggle {
     min-height: 44px;
   }
@@ -4029,94 +3957,33 @@ watch(
     border-top: 1px solid var(--workspace-line);
     border-left: 0;
   }
-
-  .research-session-bar {
-    align-items: flex-start;
-  }
-
-  .project-session-select {
-    width: 220px;
-  }
-
-  .research-stages {
-    gap: 16px;
-    padding-inline: 0;
-  }
-
-  .research-stages button {
-    gap: 6px;
-    font-size: 12px;
-  }
-
-  .research-stages button::after {
-    display: none;
-  }
 }
 
 @container ip-recommendation (width <= 540px) {
-  .session-switch :deep(.el-button) {
-    flex: none;
-  }
-
   .research-session-bar {
-    flex-direction: column;
-    gap: 14px;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .session-switch {
-    flex-wrap: wrap;
-    width: 100%;
+    flex-basis: 100%;
+    gap: 8px;
+  }
+
+  .session-switch > span {
+    display: none;
   }
 
   .project-session-select {
-    flex: 1;
-    width: auto;
+    max-width: none;
   }
 
-  .project-context {
-    max-width: 100%;
-    margin-left: 0;
-    text-align: left;
-  }
-
-  .project-context h2 {
-    font-size: 15px;
-  }
-
-  .project-context a {
-    display: flex;
-    margin-top: 6px;
-    margin-left: 0;
-  }
-
-  .project-context p {
-    font-size: 11px;
-  }
-
-  .research-stages {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .research-tools {
     gap: 12px;
-    padding-bottom: 22px;
   }
 
-  .research-context {
-    gap: 10px;
-    padding: 16px 0;
-    margin-bottom: 16px;
-  }
-
-  .research-context > span {
-    flex-basis: 100%;
-    font-size: 11px;
-  }
-
-  .context-title {
-    font-size: 12px;
-  }
-
-  .context-title svg {
-    width: 17px;
-    height: 17px;
+  .research-tools .quiet-button {
+    min-height: 44px;
   }
 
   .conversation-welcome {
