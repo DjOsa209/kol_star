@@ -57,6 +57,71 @@ assert.equal(hook.ipText("游戏"), "Gaming");
 selected.value = "zh";
 assert.equal(hook.ipText("游戏"), "游戏");
 selected.value = "en";
+// Exercise the component formatter and its translation wrapper, including percentages.
+const resourceScript = parse(
+  fs.readFileSync(
+    path.join(root, "src/views/business/ip/resources/index.vue"),
+    "utf8"
+  )
+).descriptor.scriptSetup.content;
+const resourceAST = ts.createSourceFile(
+  "resources.ts",
+  resourceScript,
+  ts.ScriptTarget.Latest,
+  true
+);
+const marketFormatter = [
+  "arrayValue",
+  "penetrationValues",
+  "marketCoverageText"
+]
+  .map(name =>
+    resourceAST.statements
+      .find(node => ts.isFunctionDeclaration(node) && node.name?.text === name)
+      .getText(resourceAST)
+  )
+  .join("\n");
+const marketRuntime = { ipText, JSON, Object, Number };
+vm.createContext(marketRuntime);
+vm.runInContext(
+  ts.transpileModule(marketFormatter, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText,
+  marketRuntime
+);
+const marketFixture = {
+  markets: ["全球", "中国", "东南亚", "南亚"],
+  marketPenetrations: { 全球: 80, 中国: 80, 东南亚: 80, 南亚: 80 }
+};
+const originalMarkets = JSON.stringify(marketFixture);
+const displayedMarkets = item => ipText(marketRuntime.marketCoverageText(item));
+assert.equal(
+  displayedMarkets(marketFixture),
+  "Global 80% / China 80% / Southeast Asia 80% / South Asia 80%",
+  "Market labels with percentages must translate in English"
+);
+assert.equal(
+  displayedMarkets({
+    markets: '["中国","东南亚","自定义市场"]',
+    marketPenetrations: '{"中国":0,"东南亚":12.5}'
+  }),
+  "China 0% / Southeast Asia 12.5% / 自定义市场"
+);
+selected.value = "zh";
+assert.equal(
+  displayedMarkets(marketFixture),
+  "全球 80% / 中国 80% / 东南亚 80% / 南亚 80%"
+);
+selected.value = "en";
+assert.equal(
+  displayedMarkets(marketFixture),
+  "Global 80% / China 80% / Southeast Asia 80% / South Asia 80%"
+);
+assert.equal(
+  JSON.stringify(marketFixture),
+  originalMarkets,
+  "Display formatting must preserve canonical market names and penetration keys"
+);
 const book = XLSX.readFile(
   path.join(root, "public/IP-import-template.en.xlsx")
 );

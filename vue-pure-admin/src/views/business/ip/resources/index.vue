@@ -284,8 +284,8 @@ function marketCoverageText(item: any) {
   return arrayValue(item.markets)
     .map(market =>
       penetrations[market] === undefined
-        ? market
-        : `${market} ${penetrations[market]}%`
+        ? ipText(market)
+        : `${ipText(market)} ${penetrations[market]}%`
     )
     .join(" / ");
 }
