@@ -70,7 +70,7 @@ panel:
 menus:
   ipOperations: IP Operations
   ipLibrary: IP Library
-  ipRecommendations: IP AI Recommendations
+  ipRecommendations: AI IP
   ipRequests: IP Requests
   ipFeedback: Initial IP Feedback
   ipMarketing: Marketing Feedback

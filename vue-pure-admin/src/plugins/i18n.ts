@@ -45,7 +45,7 @@ const dynamicRouteLabels: Record<string, string> = {
   资源运营: "Resource Operations",
   智能资源助手: "Resource Intelligence Assistant",
   全球资源库: "Global Resource Library",
-  "IP AI推荐": "IP AI Recommendations",
+  "IP AI推荐": "AI IP",
   标签体系: "Tag Taxonomy",
   项目合作: "Project Collaboration",
   Brief模板库: "Brief Template Library",
