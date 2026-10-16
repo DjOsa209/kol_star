@@ -299,6 +299,7 @@ small,
 .research-summary,
 .candidate-heading {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: baseline;
   justify-content: space-between;
@@ -338,7 +339,7 @@ input {
 
 dl {
   display: grid;
-  grid-template-columns: 60px minmax(0, 1fr);
+  grid-template-columns: minmax(100px, 30%) minmax(0, 1fr);
   gap: 10px 14px;
   margin: 18px 0;
 }

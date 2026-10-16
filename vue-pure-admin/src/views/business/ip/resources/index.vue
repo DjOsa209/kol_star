@@ -1137,7 +1137,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-loading="loading" class="ip-page">
+  <div
+    v-loading="loading"
+    class="ip-page"
+    :lang="locale === 'en' ? 'en' : 'zh-CN'"
+  >
     <div class="ip-head">
       <div>
         <div v-if="mode !== 'list'" class="ip-eyebrow">
@@ -1237,6 +1241,7 @@ onUnmounted(() => {
           />
           <el-select
             v-model="filter.ipType"
+            popper-class="ip-option-popper"
             :placeholder="ipText('全部类型')"
             clearable
             ><el-option
@@ -1247,6 +1252,7 @@ onUnmounted(() => {
           /></el-select>
           <el-select
             v-model="filter.status"
+            popper-class="ip-option-popper"
             :placeholder="ipText('合作状态')"
             clearable
             ><el-option
@@ -1257,6 +1263,7 @@ onUnmounted(() => {
           /></el-select>
           <el-select
             v-model="filter.market"
+            popper-class="ip-option-popper"
             :placeholder="ipText('目标市场')"
             clearable
             filterable
@@ -1284,6 +1291,7 @@ onUnmounted(() => {
         <div v-if="advancedFilters" class="ip-filter ip-advanced-filter">
           <el-select
             v-model="filter.completeness"
+            popper-class="ip-option-popper"
             :placeholder="ipText('资料完成度')"
             clearable
           >
@@ -1299,6 +1307,7 @@ onUnmounted(() => {
           />
         </div>
         <el-table
+          class="ip-resource-table"
           :data="rows"
           :empty-text="ipText('暂无IP，点击右上角新增')"
           stripe
@@ -1385,7 +1394,7 @@ onUnmounted(() => {
             :label="ipText('最近更新')"
             min-width="145"
           />
-          <el-table-column :label="ipText('操作')" width="100"
+          <el-table-column :label="ipText('操作')" width="130" fixed="right"
             ><template #default="scope"
               ><el-button
                 link
@@ -1408,6 +1417,7 @@ onUnmounted(() => {
       </div>
       <el-drawer
         v-model="drawerVisible"
+        :lang="locale === 'en' ? 'en' : 'zh-CN'"
         :title="ipText('IP档案')"
         size="420px"
         class="ip-resource-drawer"
@@ -1738,6 +1748,7 @@ onUnmounted(() => {
                   >{{ ipText("IP类型 *")
                   }}<el-select
                     v-model="form.ipType"
+                    popper-class="ip-option-popper"
                     :placeholder="ipText('请选择')"
                     ><el-option
                       v-for="type in formTypes"
@@ -1761,6 +1772,7 @@ onUnmounted(() => {
                   <strong>{{ ipText("覆盖市场 *") }}</strong>
                   <el-select
                     v-model="form.markets"
+                    popper-class="ip-option-popper"
                     multiple
                     filterable
                     allow-create
@@ -1811,7 +1823,9 @@ onUnmounted(() => {
                 </div>
                 <label
                   >{{ ipText("合作状态")
-                  }}<el-select v-model="form.cooperationStatus"
+                  }}<el-select
+                    v-model="form.cooperationStatus"
+                    popper-class="ip-option-popper"
                     ><el-option
                       v-for="status in statuses"
                       :key="status"
@@ -1840,7 +1854,9 @@ onUnmounted(() => {
                 <label
                   >{{ ipText("基础权益价格范围（参考）") }}
                   <div class="ip-money">
-                    <el-select v-model="form.currency"
+                    <el-select
+                      v-model="form.currency"
+                      popper-class="ip-option-popper"
                       ><el-option label="CNY ¥" value="CNY" /><el-option
                         label="USD $"
                         value="USD" /><el-option
@@ -2194,6 +2210,8 @@ onUnmounted(() => {
     </template>
     <el-dialog
       v-model="previewVisible"
+      class="ip-preview-dialog"
+      :lang="locale === 'en' ? 'en' : 'zh-CN'"
       :title="ipText('PDF预览')"
       width="80%"
       top="5vh"
@@ -2288,8 +2306,10 @@ onUnmounted(() => {
 }
 
 .ip-page {
+  min-width: 0;
   min-height: calc(100vh - 150px);
   padding: 16px 28px 36px;
+  container: ip-resources / inline-size;
   color: #17191d;
   background: #f8f8f6;
 }
@@ -2306,7 +2326,24 @@ onUnmounted(() => {
 }
 
 .ip-head {
+  flex-wrap: wrap;
   margin-bottom: 14px;
+}
+
+.ip-head > div:first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.ip-actions,
+.ip-card-head,
+.ip-bottom {
+  flex-wrap: wrap;
+}
+
+.ip-actions :deep(.el-button + .el-button),
+.ip-bottom :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .ip-head h1 {
@@ -2363,7 +2400,7 @@ onUnmounted(() => {
 
 .ip-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 16px;
   margin-bottom: 18px;
 }
@@ -2405,11 +2442,32 @@ onUnmounted(() => {
 }
 
 .ip-filter .el-input {
-  max-width: 350px;
+  flex: 2 1 280px;
+  min-width: 0;
 }
 
 .ip-filter .el-select {
-  width: 170px;
+  flex: 1 1 190px;
+  width: auto;
+  min-width: 0;
+  max-width: 300px;
+}
+
+.ip-filter :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.ip-filter :deep(.el-date-editor) {
+  flex: 1 1 280px;
+  max-width: 100%;
+}
+
+.ip-resource-table .ip-muted {
+  display: block;
+}
+
+.ip-resource-table :deep(.cell > .el-button) {
+  padding-inline: 4px;
 }
 
 .ip-advanced-filter {
@@ -2576,7 +2634,7 @@ onUnmounted(() => {
 
 .ip-dl {
   display: grid;
-  grid-template-columns: 100px 1fr;
+  grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1.2fr);
   gap: 14px;
 }
 
@@ -2776,7 +2834,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   font-weight: 600;
+  line-height: 1.5;
 }
 
 .ip-attachment-field {
@@ -2818,6 +2878,11 @@ onUnmounted(() => {
 
 .ip-basic-grid label.ip-span > .el-textarea {
   width: 100%;
+}
+
+.ip-page:lang(en) .ip-basic-grid label {
+  display: flex;
+  align-items: stretch;
 }
 
 .ip-market-field {
@@ -2879,6 +2944,7 @@ onUnmounted(() => {
 
 .ip-money {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -2889,7 +2955,8 @@ onUnmounted(() => {
 }
 
 .ip-money .el-input-number {
-  width: 100%;
+  flex: 1 1 100px;
+  width: auto;
   min-width: 0;
 }
 
@@ -2898,6 +2965,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   width: max-content;
+  max-width: 100%;
   padding: 9px 14px;
   font-weight: 600;
   color: #536d00;
@@ -3074,7 +3142,47 @@ onUnmounted(() => {
   }
 }
 
+@container ip-resources (width <= 850px) {
+  .ip-detail-grid,
+  .ip-import-top,
+  .ip-import-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container ip-resources (width <= 580px) {
+  .ip-form-grid,
+  .ip-case-form,
+  .ip-hero,
+  .ip-batch-upload {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ip-basic-grid label {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .ip-head h1 {
+    font-size: 26px;
+  }
+}
+
 @media (width <= 700px) {
+  .ip-money {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .ip-money .el-select {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .ip-money .el-input-number {
+    width: 100%;
+  }
+
   .ip-market-penetrations {
     grid-template-columns: 1fr;
   }
@@ -3104,6 +3212,7 @@ onUnmounted(() => {
 
   .ip-filter .el-input,
   .ip-filter .el-select {
+    flex-basis: 100%;
     width: 100%;
     max-width: none;
   }

@@ -1,0 +1,146 @@
+// Shared content sizing for IP workflows, including teleported editors/popovers.
+:is(
+  .ip-page,
+  .ip-request-page,
+  .ip-recommend-page,
+  .ip-workspace-dialog,
+  .ip-colleague-dialog,
+  .ip-resource-drawer,
+  .ip-preview-dialog
+) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+
+  :is(h1, h2, h3, h4, p, dt, dd, label) {
+    min-width: 0;
+    word-break: normal;
+  }
+
+  .el-button {
+    flex-shrink: 0;
+    max-width: 100%;
+    height: auto;
+    min-height: var(--el-component-size);
+    line-height: 1.5;
+    white-space: normal;
+  }
+
+  .el-button > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  :is(.el-checkbox-group, .el-radio-group) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    min-width: 0;
+  }
+
+  :is(.el-checkbox, .el-radio) {
+    max-width: 100%;
+    height: auto;
+    min-height: 32px;
+    margin-right: 0;
+    line-height: 1.5;
+    white-space: normal;
+  }
+
+  .ip-form-grid :is(label.el-checkbox, label.el-radio) {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  :is(.el-checkbox__label, .el-radio__label, .el-radio-button__inner) {
+    min-width: 0;
+    line-height: 1.5;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .el-radio-button {
+    max-width: 100%;
+  }
+
+  .el-select__wrapper {
+    height: auto;
+  }
+
+  .el-select__placeholder:not(.is-transparent) {
+    position: static;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    transform: none;
+  }
+
+  .el-tag {
+    max-width: 100%;
+    height: auto;
+    min-height: 24px;
+    padding-block: 3px;
+    white-space: normal;
+  }
+
+  .el-tag__content {
+    min-width: 0;
+    line-height: 1.4;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .el-collapse-item__header {
+    height: auto;
+    min-height: 48px;
+    padding-block: 8px;
+    line-height: 1.5;
+  }
+
+  .el-table .cell {
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .el-table .el-scrollbar__bar.is-horizontal {
+    height: 8px;
+    opacity: 1;
+  }
+}
+
+:is(.ip-workspace-dialog, .ip-colleague-dialog, .ip-preview-dialog) {
+  max-width: calc(100vw - 32px);
+}
+
+.ip-resource-drawer {
+  max-width: 100vw;
+}
+
+.ip-option-popper {
+  max-width: calc(100vw - 24px);
+
+  .el-select-dropdown__item {
+    height: auto;
+    min-height: 34px;
+    padding-block: 7px;
+    line-height: 1.5;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
+
+@media (width <= 760px) {
+  .ip-workspace-dialog .condition-editor .editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ip-workspace-dialog .condition-editor .editor-footer {
+    align-items: stretch;
+  }
+
+  .ip-workspace-dialog .condition-editor .editor-footer > span {
+    max-width: none;
+  }
+}

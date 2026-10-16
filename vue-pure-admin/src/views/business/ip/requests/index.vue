@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useIPLocale } from "@/utils/ipI18n";
-const { ipText } = useIPLocale();
+const { ipText, locale } = useIPLocale();
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -1528,6 +1528,7 @@ onUnmounted(() => {
   <div
     v-loading="loading"
     class="ip-request-page"
+    :lang="locale === 'en' ? 'en' : 'zh-CN'"
     :class="{ 'ip-detail-page': mode === 'detail' }"
   >
     <div class="ip-header">
@@ -1780,6 +1781,7 @@ onUnmounted(() => {
                   <span class="ip-required" aria-hidden="true">*</span></span
                 ><el-select
                   v-model="form.markets"
+                  popper-class="ip-option-popper"
                   multiple
                   filterable
                   allow-create
@@ -1805,7 +1807,9 @@ onUnmounted(() => {
                   <span class="ip-required" aria-hidden="true">*</span></span
                 >
                 <div class="ip-budget">
-                  <el-select v-model="form.budgetCurrency"
+                  <el-select
+                    v-model="form.budgetCurrency"
+                    popper-class="ip-option-popper"
                     ><el-option label="CNY ¥" value="CNY" /><el-option
                       label="USD $"
                       value="USD" /><el-option
@@ -1831,7 +1835,10 @@ onUnmounted(() => {
                 ><span class="ip-field-label"
                   >{{ ipText("合作目标") }}
                   <span class="ip-required" aria-hidden="true">*</span></span
-                ><el-select v-model="form.goal" :placeholder="ipText('请选择')"
+                ><el-select
+                  v-model="form.goal"
+                  popper-class="ip-option-popper"
+                  :placeholder="ipText('请选择')"
                   ><el-option
                     v-for="goal in goals"
                     :key="goal"
@@ -1898,6 +1905,7 @@ onUnmounted(() => {
             </div>
             <el-select
               v-model="form.candidateIds"
+              popper-class="ip-option-popper"
               :disabled="candidateSelectionLocked"
               multiple
               filterable
@@ -2506,6 +2514,7 @@ onUnmounted(() => {
             <div v-if="canFeedback" class="ip-add-candidate">
               <el-select
                 v-model="addCandidateID"
+                popper-class="ip-option-popper"
                 filterable
                 :placeholder="ipText('从IP资源库补充评估对象')"
                 ><el-option
@@ -2573,6 +2582,7 @@ onUnmounted(() => {
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-select
                     v-model="item.feasibility"
+                    popper-class="ip-option-popper"
                     :disabled="!canFeedback"
                     ><el-option
                       :label="ipText('可行')"
@@ -2587,6 +2597,7 @@ onUnmounted(() => {
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-select
                     v-model="item.recommendation"
+                    popper-class="ip-option-popper"
                     :disabled="!canFeedback"
                     ><el-option
                       :label="ipText('优先合作')"
@@ -2601,6 +2612,7 @@ onUnmounted(() => {
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-select
                     v-model="item.priorityOrder"
+                    popper-class="ip-option-popper"
                     :disabled="!canFeedback"
                     ><el-option
                       :label="ipText('T0 · 最高优先级')"
@@ -2990,6 +3002,8 @@ onUnmounted(() => {
     </template>
     <el-dialog
       v-model="colleaguePickerOpen"
+      class="ip-colleague-dialog"
+      :lang="locale === 'en' ? 'en' : 'zh-CN'"
       :title="ipText('搜索同事')"
       width="640px"
       @closed="colleaguePickerRequest++"
@@ -3063,8 +3077,10 @@ onUnmounted(() => {
 }
 
 .ip-request-page {
+  min-width: 0;
   min-height: calc(100vh - 150px);
   padding: 16px 28px 36px;
+  container: ip-requests / inline-size;
   color: #161a1d;
   background: #f8f8f6;
 }
@@ -3082,7 +3098,29 @@ onUnmounted(() => {
 }
 
 .ip-header {
+  flex-wrap: wrap;
   margin-bottom: 14px;
+}
+
+.ip-header > div:first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.ip-card-head,
+.ip-search,
+.ip-bottom,
+.ip-add-candidate {
+  flex-wrap: wrap;
+}
+
+.ip-card-head > :first-child {
+  min-width: 0;
+}
+
+.ip-bottom :deep(.el-button + .el-button),
+.ip-detail-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .ip-header h1 {
@@ -3203,13 +3241,16 @@ onUnmounted(() => {
   display: inline-flex;
   gap: 10px;
   align-items: center;
+  min-width: 0;
   font-weight: 600;
+  line-height: 1.5;
   color: #a3a8a8;
 }
 
 .ip-steps b,
 .ip-timeline b {
   display: inline-grid;
+  flex: none;
   place-items: center;
   width: 28px;
   height: 28px;
@@ -3304,7 +3345,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   font-weight: 600;
+  line-height: 1.5;
 }
 
 .ip-invalid-field {
@@ -3408,6 +3451,7 @@ onUnmounted(() => {
 
 .ip-budget {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -3418,6 +3462,7 @@ onUnmounted(() => {
 }
 
 .ip-budget .el-input-number {
+  flex: 1 1 100px;
   width: 100%;
   min-width: 0;
 }
@@ -3461,6 +3506,7 @@ onUnmounted(() => {
 }
 
 .ip-selected-main > div {
+  flex: 1;
   min-width: 0;
 }
 
@@ -3472,6 +3518,11 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   align-items: center;
+  min-width: 0;
+}
+
+.ip-candidate-identity > div,
+.ip-feedback-summary > div {
   min-width: 0;
 }
 
@@ -3497,7 +3548,7 @@ onUnmounted(() => {
 
 .ip-card dl {
   display: grid;
-  grid-template-columns: 100px 1fr;
+  grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1.2fr);
   gap: 16px;
 }
 
@@ -3759,6 +3810,13 @@ dl.ip-detail-contact-list {
   color: #647e00;
 }
 
+.ip-request-page:lang(en) .ip-detail-facts > div,
+.ip-request-page:lang(en) .ip-detail-contact-list > div,
+.ip-request-page:lang(en) .ip-detail-summary > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
 .ip-score {
   margin-left: auto;
   font-size: 18px;
@@ -3780,8 +3838,10 @@ dl.ip-detail-contact-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.5;
 }
 
 .ip-score-grid .el-input-number {
@@ -3799,12 +3859,14 @@ dl.ip-detail-contact-list {
 
 .ip-weight-row {
   display: flex;
+  gap: 16px;
   justify-content: space-between;
   padding: 14px 0;
   border-bottom: 1px solid #edf0ec;
 }
 
 .ip-weight-row strong {
+  flex: none;
   font-size: 17px;
 }
 
@@ -3944,7 +4006,71 @@ dl.ip-detail-contact-list {
   }
 }
 
+@container ip-requests (width <= 850px) {
+  .ip-grid,
+  .ip-detail-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ip-detail-contacts {
+    padding: 20px 0 0;
+    border-top: 1px solid #eceee9;
+    border-left: 0;
+  }
+
+  .ip-detail-timeline,
+  .ip-score-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container ip-requests (width <= 580px) {
+  .ip-form-grid,
+  .ip-contact-grid,
+  .ip-selected,
+  .ip-score-grid,
+  .ip-metric-row,
+  .ip-detail-body,
+  dl.ip-detail-facts,
+  dl.ip-detail-contact-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ip-candidate .ip-card-head {
+    align-items: flex-start;
+  }
+
+  .ip-candidate-identity {
+    flex-basis: 100%;
+  }
+
+  .ip-add-candidate .el-select,
+  .ip-search .el-input {
+    width: 100%;
+    max-width: none;
+  }
+
+  .ip-detail-summary > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
 @media (width <= 700px) {
+  .ip-budget {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .ip-budget .el-select {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .ip-budget .el-input-number {
+    width: 100%;
+  }
+
   .ip-request-page {
     padding: 16px;
   }

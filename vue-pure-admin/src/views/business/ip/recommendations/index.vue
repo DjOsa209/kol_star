@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { canonicalIPOption } from "@/utils/ipI18n";
 import { useIPLocale } from "@/utils/ipI18n";
-const { ipText } = useIPLocale();
+const { ipText, locale } = useIPLocale();
 
 import {
   computed,
@@ -1247,12 +1247,17 @@ watch(
 </script>
 
 <template>
-  <div v-loading="loading" class="ip-recommend-page">
+  <div
+    v-loading="loading"
+    class="ip-recommend-page"
+    :lang="locale === 'en' ? 'en' : 'zh-CN'"
+  >
     <div class="research-main">
       <div class="research-session-bar">
         <div v-if="showInlineSessions" class="session-switch">
           <span>{{ ipText("项目会话") }}</span>
           <el-select
+            popper-class="ip-option-popper"
             class="project-session-select"
             :model-value="selectedId || 0"
             :disabled="conversationBusy || attachmentReading"
@@ -2150,6 +2155,7 @@ watch(
     </div>
     <el-dialog
       v-model="editing"
+      :lang="locale === 'en' ? 'en' : 'zh-CN'"
       class="ip-workspace-dialog"
       :title="ipText('需求与推荐条件')"
       width="680px"
@@ -2168,6 +2174,7 @@ watch(
               >{{ ipText("合作目标")
               }}<el-select
                 v-model="form.goal"
+                popper-class="ip-option-popper"
                 clearable
                 :placeholder="ipText('请选择合作目标')"
                 ><el-option
@@ -2192,6 +2199,7 @@ watch(
               >{{ ipText("目标市场")
               }}<el-select
                 v-model="form.markets"
+                popper-class="ip-option-popper"
                 multiple
                 filterable
                 :placeholder="ipText('可选择多个市场')"
@@ -2205,6 +2213,7 @@ watch(
               >{{ ipText("IP 类型")
               }}<el-select
                 v-model="form.ipTypes"
+                popper-class="ip-option-popper"
                 multiple
                 filterable
                 :placeholder="ipText('不限类型')"
@@ -2223,7 +2232,9 @@ watch(
             <label class="span-2"
               >{{ ipText("授权费用预算") }}
               <div class="budget">
-                <el-select v-model="form.budgetCurrency"
+                <el-select
+                  v-model="form.budgetCurrency"
+                  popper-class="ip-option-popper"
                   ><el-option label="CNY ¥" value="CNY" /><el-option
                     label="USD $"
                     value="USD" /><el-option
@@ -2247,6 +2258,7 @@ watch(
             >{{ ipText("排除的IP类型")
             }}<el-select
               v-model="form.excludedIPTypes"
+              popper-class="ip-option-popper"
               multiple
               clearable
               :placeholder="ipText('选择明确不考虑的类型')"
@@ -2304,6 +2316,7 @@ watch(
     >
     <el-drawer
       v-model="drawerVisible"
+      :lang="locale === 'en' ? 'en' : 'zh-CN'"
       :title="ipText('IP 档案与授权资料')"
       size="500px"
     >
@@ -2406,6 +2419,7 @@ watch(
     </el-drawer>
     <el-dialog
       v-model="previewVisible"
+      :lang="locale === 'en' ? 'en' : 'zh-CN'"
       class="ip-workspace-dialog"
       :title="ipText(previewFileName)"
       width="80%"
@@ -2690,6 +2704,7 @@ watch(
 .session-switch {
   display: flex;
   flex: 1;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -2888,14 +2903,18 @@ watch(
   display: flex;
   gap: 8px;
   align-items: center;
+  max-width: 100%;
   min-height: 40px;
   padding: 10px 14px;
+  text-align: left;
+  overflow-wrap: anywhere;
   background: #fff;
   border: 1px solid var(--workspace-line);
   border-radius: 8px;
 }
 
 .entry-actions svg {
+  flex: none;
   width: 18px;
   height: 18px;
 }
@@ -2990,6 +3009,7 @@ watch(
 
 .assistant-identity {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   padding-left: 0;
@@ -3087,7 +3107,7 @@ watch(
 
 .judgment-basis dl > div {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: minmax(100px, 30%) minmax(0, 1fr);
   border-bottom: 1px solid var(--workspace-line);
 }
 
@@ -3114,7 +3134,8 @@ watch(
 }
 
 .round-adjustments strong {
-  flex: none;
+  flex: 0 1 140px;
+  min-width: 0;
   font-weight: 500;
 }
 
@@ -3159,9 +3180,13 @@ watch(
 }
 
 .follow-up-actions button {
+  max-width: 100%;
   min-height: 34px;
   padding: 5px 12px;
   font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  overflow-wrap: anywhere;
   background: transparent;
   border: 1px solid #dce1d7;
   border-radius: 8px;
@@ -3249,6 +3274,7 @@ watch(
 
 .composer-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   margin-top: 10px;
@@ -3266,6 +3292,7 @@ watch(
 }
 
 .composer-actions svg {
+  flex: none;
   width: 18px;
   height: 18px;
 }
@@ -3456,6 +3483,7 @@ watch(
 
 .workbench-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   justify-content: space-between;
@@ -3463,11 +3491,15 @@ watch(
 
 .workbench-tabs {
   display: flex;
-  gap: 24px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   margin: 8px 0 14px;
 }
 
 .workbench-tabs button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
   min-height: 36px;
   padding: 0 4px 8px;
   font-size: 13px;
@@ -3478,7 +3510,7 @@ watch(
 }
 
 .workbench-tabs b {
-  margin-left: 8px;
+  margin-left: 0;
   font-weight: 400;
 }
 
@@ -3653,7 +3685,7 @@ watch(
 
 .candidate-details dl > div {
   display: grid;
-  grid-template-columns: 80px minmax(0, 1fr);
+  grid-template-columns: minmax(100px, 30%) minmax(0, 1fr);
   gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid #dbe1d3;
@@ -3673,11 +3705,14 @@ watch(
   gap: 12px;
   align-items: center;
   justify-content: center;
+  max-width: 100%;
   min-height: 44px;
   padding: 10px 20px;
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.5;
   color: #172000 !important;
+  white-space: normal;
   background: var(--workspace-accent);
   border: 0;
   border-radius: 8px;
@@ -3744,6 +3779,7 @@ watch(
 
 .comparison-table {
   width: 100%;
+  min-width: 480px;
   font-size: 12px;
   line-height: 1.7;
   table-layout: fixed;
@@ -3751,7 +3787,7 @@ watch(
 }
 
 .comparison-table th {
-  width: 80px;
+  width: 120px;
   font-weight: 400;
   text-align: left;
 }
@@ -4003,6 +4039,7 @@ watch(
 }
 
 .condition-editor .budget .el-select {
+  flex: none;
   width: 100px;
 }
 
@@ -4033,6 +4070,18 @@ watch(
   color: #687068;
 }
 
+.condition-editor .editor-footer > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.condition-editor .editor-footer :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
 .condition-editor .primary-button {
   color: #172000;
   background: #caff00;
@@ -4051,6 +4100,23 @@ watch(
 
 :global(.ip-workspace-dialog) {
   max-width: calc(100vw - 32px);
+}
+
+@media (width <= 760px) {
+  .condition-editor .budget {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .condition-editor .budget .el-select {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .condition-editor .budget .el-input-number {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 @container ip-recommendation (width <= 1050px) {
@@ -4143,7 +4209,7 @@ watch(
   }
 
   .judgment-basis dl > div {
-    grid-template-columns: 76px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .judgment-basis dt,
@@ -4153,7 +4219,12 @@ watch(
   }
 
   .round-adjustments {
+    flex-wrap: wrap;
     gap: 12px;
+  }
+
+  .round-adjustments strong {
+    flex-basis: 100%;
   }
 
   .follow-up-actions {
@@ -4196,7 +4267,7 @@ watch(
   }
 
   .comparison-table th {
-    width: 60px;
+    width: 110px;
   }
 
   .comparison-table th,

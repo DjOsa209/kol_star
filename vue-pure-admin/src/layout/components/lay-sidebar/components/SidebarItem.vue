@@ -42,6 +42,9 @@ const props = defineProps({
 const getNoDropdownStyle = computed((): CSSProperties => {
   return {
     width: "100%",
+    height: wrapIPTitle.value ? "auto" : undefined,
+    minHeight: wrapIPTitle.value ? "48px" : undefined,
+    paddingRight: wrapIPTitle.value ? "12px" : undefined,
     display: "flex",
     alignItems: "center"
   };
@@ -50,6 +53,7 @@ const getNoDropdownStyle = computed((): CSSProperties => {
 const getSubMenuIconStyle = computed((): CSSProperties => {
   return {
     display: "flex",
+    height: wrapIPTitle.value ? "auto" : undefined,
     justifyContent: "center",
     alignItems: "center",
     margin:
@@ -86,7 +90,13 @@ const expandCloseIcon = computed(() => {
   };
 });
 
-const onlyOneChild: menuType = ref(null);
+const onlyOneChild = ref<menuType | null>(null);
+const wrapIPTitle = computed(
+  () =>
+    layout.value !== "horizontal" &&
+    !isCollapse.value &&
+    resolvePath(onlyOneChild.value?.path || "").startsWith("/business/ip/")
+);
 
 function hasOneShowingChild(children: menuType[] = [], parent: menuType) {
   const showingChildren = children.filter((item: any) => {
@@ -129,7 +139,10 @@ function resolvePath(routePath) {
   >
     <el-menu-item
       :index="resolvePath(onlyOneChild.path)"
-      :class="{ 'submenu-title-noDropdown': !isNest }"
+      :class="{
+        'submenu-title-noDropdown': !isNest,
+        'ip-navigation-item': wrapIPTitle
+      }"
       :style="getNoDropdownStyle"
       v-bind="attrs"
     >
@@ -165,8 +178,15 @@ function resolvePath(routePath) {
       </el-text>
 
       <template #title>
-        <div :style="getDivStyle">
+        <div
+          :style="
+            wrapIPTitle
+              ? [getDivStyle, { height: 'auto', lineHeight: '1.5' }]
+              : getDivStyle
+          "
+        >
           <ReText
+            v-if="!wrapIPTitle"
             :tippyProps="{
               offset: [0, -10],
               theme: tooltipEffect
@@ -175,6 +195,12 @@ function resolvePath(routePath) {
           >
             {{ transformI18n(onlyOneChild.meta.title) }}
           </ReText>
+          <span
+            v-else
+            class="ip-navigation-label"
+            style="height: auto; line-height: 1.5"
+            >{{ transformI18n(onlyOneChild.meta.title) }}</span
+          >
           <SidebarExtraIcon :extraIcon="onlyOneChild.meta.extraIcon" />
         </div>
       </template>
@@ -227,3 +253,20 @@ function resolvePath(routePath) {
     />
   </el-sub-menu>
 </template>
+
+<style scoped>
+.ip-navigation-item {
+  height: auto;
+  min-height: 48px;
+  padding-block: 8px;
+}
+
+.ip-navigation-label {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.5;
+  word-break: normal;
+  overflow-wrap: normal;
+  white-space: normal;
+}
+</style>

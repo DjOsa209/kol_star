@@ -266,13 +266,21 @@ function openSession(id: number | null) {
 }
 
 .session-item strong {
-  display: block;
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   font-size: 13px;
   font-weight: 400;
   line-height: 1.6;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+.session-new > span {
+  min-width: 0;
+  line-height: 1.5;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .ip-menu-sessions .selected,
