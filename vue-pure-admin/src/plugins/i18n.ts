@@ -37,11 +37,11 @@ export const localesConfigs = {
 // Dynamic routes are returned by the backend with their source-language title.
 // Keep these labels here so menus and browser titles also follow the language switch.
 const dynamicRouteLabels: Record<string, string> = {
-  IP运营: "IP Operations",
-  IP资源库: "IP Library",
-  IP需求管理: "IP Request Management",
-  初步意向IP反馈: "Initial IP Feedback",
-  营销意见补充: "Marketing Feedback",
+  IP运营: "IP operations",
+  IP资源库: "IP library",
+  IP需求管理: "IP requests",
+  初步意向IP反馈: "IP review",
+  营销意见补充: "Marketing review",
   资源运营: "Resource Operations",
   智能资源助手: "Resource Intelligence Assistant",
   全球资源库: "Global Resource Library",

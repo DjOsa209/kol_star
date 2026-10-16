@@ -16,6 +16,9 @@ const backendCatalog = JSON.parse(
     "utf8"
   )
 );
+const legacyCatalog = JSON.parse(
+  fs.readFileSync(path.join(root, "src/locales/ip.en.legacy.json"), "utf8")
+);
 assert.deepEqual(
   catalog,
   backendCatalog,
@@ -38,6 +41,7 @@ vm.runInNewContext(output, {
     if (name === "@/plugins/i18n")
       return { i18n: { global: { locale: selected } } };
     if (name === "@/locales/ip.en.json") return catalog;
+    if (name === "@/locales/ip.en.legacy.json") return legacyCatalog;
     throw new Error(name);
   }
 });
@@ -45,7 +49,7 @@ const { ipText, useIPLocale, canonicalIPOption, canonicalIPImportHeader } =
   moduleValue.exports;
 assert.equal(ipText("游戏"), "Gaming");
 assert.equal(canonicalIPOption("Gaming"), "游戏");
-assert.equal(ipText("已提交 {0} / 5 个职能", [3]), "3 / 5 functions submitted");
+assert.equal(ipText("已提交 {0} / 5 个职能", [3]), "3 / 5 teams submitted");
 assert.equal(ipText("测试项目 · GT Opus"), "测试项目 · GT Opus");
 assert.equal(ipText("{0} 前", ["2026-10-21 23:59"]), "By 2026-10-21 23:59");
 const hook = useIPLocale();
@@ -72,6 +76,23 @@ assert.equal(
   "渗透率3（%）"
 );
 assert.equal(canonicalIPOption(ipText("可合作")), "可合作");
+for (const label of ["Offline Events", "In-person events"])
+  assert.equal(canonicalIPOption(label), "线下活动");
+for (const [label, expected] of Object.entries(legacyCatalog)) {
+  if (expected === "线下活动") continue;
+  assert.equal(canonicalIPImportHeader(label), expected);
+}
+for (const source of [
+  "基础权益价格下限",
+  "基础权益价格上限",
+  "IP形象与风格",
+  "主要年龄",
+  "消费力评价",
+  "历史销售转化力",
+  "IP展示与合作表现",
+  "历史合作名称"
+])
+  assert.equal(canonicalIPImportHeader(ipText(source)), source);
 for (const [key, value] of Object.entries(catalog)) {
   assert.ok(value.trim(), `Empty translation: ${key}`);
   assert.ok(!/[\u3400-\u9fff]/.test(value), `Untranslated copy: ${key}`);

@@ -1,8 +1,16 @@
 import { useI18n } from "vue-i18n";
 import { i18n } from "@/plugins/i18n";
 import english from "@/locales/ip.en.json";
+import legacyEnglish from "@/locales/ip.en.legacy.json";
 
 const catalog: Record<string, string> = english;
+// Accept earlier English templates without keeping their wording in the interface.
+const legacyTerms = new Map(
+  Object.entries(legacyEnglish).map(([label, source]) => [
+    label.toLowerCase(),
+    source
+  ])
+);
 const regexSpecial = new Set([
   ".",
   "*",
@@ -150,6 +158,8 @@ const canonicalOptions = new Set([
 ]);
 export function canonicalIPOption(value: string): string {
   const normalized = value.trim();
+  const legacy = legacyTerms.get(normalized.toLowerCase());
+  if (legacy && canonicalOptions.has(legacy)) return legacy;
   return (
     [...canonicalOptions].find(
       source => catalog[source]?.toLowerCase() === normalized.toLowerCase()
@@ -197,6 +207,8 @@ export function canonicalIPImportHeader(value: string): string {
     source => catalog[source]?.toLowerCase() === value.trim().toLowerCase()
   );
   if (supported) return supported;
+  const legacy = legacyTerms.get(value.trim().toLowerCase());
+  if (legacy) return legacy;
 
   const direct = Object.entries(catalog).find(
     ([, english]) => english.toLowerCase() === value.trim().toLowerCase()

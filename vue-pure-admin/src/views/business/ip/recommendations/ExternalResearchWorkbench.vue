@@ -105,7 +105,7 @@ function toggle(id: string) {
       <template v-else>
         <div class="research-summary">
           <h3>{{ ipText("具体候选 ·") }} {{ ipText(candidates.length) }}</h3>
-          <span>{{ ipText(research.rounds || 0) }} {{ ipText("轮研究") }}</span>
+          <span>{{ ipText("{0} 轮研究", [research.rounds || 0]) }}</span>
         </div>
         <p v-if="research.phase === 'partial'" class="muted" role="status">
           {{ ipText("本轮研究未全部完成，以下保留已核对的候选。") }}

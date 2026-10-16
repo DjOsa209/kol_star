@@ -255,9 +255,9 @@ func ipEnglishCandidate(s recommendationSubscription, c recommendationCandidate)
 			if len(s.Markets) > 0 {
 				coverage = "Library coverage: " + strings.Join(ipEnglishList(s.Markets), ", ") + "; licensed territories require verification"
 			}
-			a.Basis = []ipRecommendationBasis{{"Request fit", c.Reason}, {"IP type", ipEnglishText(recommendationString(c.Resource["ipType"]))}, {"Regional conditions", coverage}}
+			a.Basis = []ipRecommendationBasis{{"Fit with your brief", c.Reason}, {"IP type", ipEnglishText(recommendationString(c.Resource["ipType"]))}, {"Market requirements", coverage}}
 			a.EntryPoints = c.Scenarios
-			a.Pending = []string{"Territorial rights and permitted use of assets", "Pricing, availability and rights-holder resources"}
+			a.Pending = []string{"Territorial rights and permitted use of assets", "Pricing, availability, and rights holder support"}
 			c.Assessment = &a
 		}
 	} else {

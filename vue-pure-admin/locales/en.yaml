@@ -1,79 +1,79 @@
 buttons:
-  pureAccountSettings: Account
-  pureLoginOut: LoginOut
-  pureLogin: Login
-  pureOpenSystemSet: Open System Configs
+  pureAccountSettings: Account settings
+  pureLoginOut: Sign out
+  pureLogin: Sign in
+  pureOpenSystemSet: Open settings
   pureReload: Reload
-  pureCloseCurrentTab: Close CurrentTab
-  pureCloseLeftTabs: Close LeftTabs
-  pureCloseRightTabs: Close RightTabs
-  pureCloseOtherTabs: Close OtherTabs
-  pureCloseAllTabs: Close AllTabs
-  pureContentFullScreen: Content FullScreen
-  pureContentExitFullScreen: Content ExitFullScreen
+  pureCloseCurrentTab: Close tab
+  pureCloseLeftTabs: Close tabs to the left
+  pureCloseRightTabs: Close tabs to the right
+  pureCloseOtherTabs: Close other tabs
+  pureCloseAllTabs: Close all tabs
+  pureContentFullScreen: Enter full screen
+  pureContentExitFullScreen: Exit full screen
   pureClickCollapse: Collapse
   pureClickExpand: Expand
   pureConfirm: Confirm
   pureSwitch: Switch
   pureClose: Close
-  pureBackTop: BackTop
-  pureOpenText: Open
-  pureCloseText: Close
-  pureWatchMore: Watch More
-  pureMarkAsRead: Mark As Read
+  pureBackTop: Back to top
+  pureOpenText: On
+  pureCloseText: Off
+  pureWatchMore: View more
+  pureMarkAsRead: Mark as read
 search:
   pureTotal: Total
   pureHistory: History
-  pureCollect: Collect
-  pureDragSort: （Drag Sort）
-  pureEmpty: Empty
-  purePlaceholder: Search Menu
+  pureCollect: Favorites
+  pureDragSort: Drag to reorder
+  pureEmpty: No results
+  purePlaceholder: Search menus
 panel:
-  pureSystemSet: System Configs
-  pureCloseSystemSet: Close System Configs
-  pureClearCacheAndToLogin: Clear cache and return to login page
-  pureClearCache: Clear Cache
-  pureThemeMode: Theme Mode
+  pureSystemSet: Settings
+  pureCloseSystemSet: Close settings
+  pureClearCacheAndToLogin: Clear cache and sign out
+  pureClearCache: Clear cache
+  pureThemeMode: Appearance
   pureThemeModeLight: Light
-  pureThemeModeLightTip: Set sail freshly and light up the comfortable work interface
+  pureThemeModeLightTip: Use a light theme
   pureThemeModeDark: Dark
-  pureThemeModeDarkTip: Moonlight Overture, indulge in the tranquility and elegance of the night
-  pureThemeModeSystem: Auto
-  pureThemeModeSystemTip: Synchronize time, the interface naturally responds to morning and dusk
-  pureThemeColor: Theme Color
-  pureMenuLayout: Menu Layout
-  pureVerticalTip: The menu on the left is familiar and friendly
-  pureHorizontalTip: Top menu, concise overview
-  pureMixTip: Mixed menu, flexible
-  pureStretch: Stretch Page
+  pureThemeModeDarkTip: Use a dark theme
+  pureThemeModeSystem: System
+  pureThemeModeSystemTip: Match your system appearance
+  pureThemeColor: Accent color
+  pureMenuLayout: Navigation layout
+  pureVerticalTip: Side navigation
+  pureHorizontalTip: Top navigation
+  pureMixTip: Top and side navigation
+  pureStretch: Content width
   pureStretchFixed: Fixed
-  pureStretchFixedTip: Compact pages make it easy to find the information you need
+  pureStretchFixedTip: Use a fixed content width
   pureStretchCustom: Custom
-  pureStretchCustomTip: Minimum 1280, maximum 1600
-  pureTagsStyle: Tags Style
+  pureStretchCustomTip: Minimum 1280px, maximum 1600px
+  pureTagsStyle: Tab style
   pureTagsStyleSmart: Smart
-  pureTagsStyleSmartTip: Smart tags add fun and brilliance
+  pureTagsStyleSmartTip: Rounded tabs
   pureTagsStyleCard: Card
-  pureTagsStyleCardTip: Card tags for efficient browsing
+  pureTagsStyleCardTip: Card-style tabs
   pureTagsStyleChrome: Chrome
-  pureTagsStyleChromeTip: Chrome style is classic and elegant
-  pureFullScreenWatermark: FullScreen Watermark
+  pureTagsStyleChromeTip: Browser-style tabs
+  pureFullScreenWatermark: Page watermark
   pureEnableWatermark: Watermark
   pureWatermarkText: Text
   pureWatermarkTextPlaceholder: Please enter text
-  pureInterfaceDisplay: Interface Display
-  pureGreyModel: Grey Model
-  pureWeakModel: Weak Model
-  pureHiddenTags: Hidden Tags
-  pureHiddenFooter: Hidden Footer
-  pureMultiTagsCache: MultiTags Cache
+  pureInterfaceDisplay: Display options
+  pureGreyModel: Grayscale
+  pureWeakModel: Color vision mode
+  pureHiddenTags: Hide tab bar
+  pureHiddenFooter: Hide footer
+  pureMultiTagsCache: Remember open tabs
 menus:
-  ipOperations: IP Operations
-  ipLibrary: IP Library
+  ipOperations: IP operations
+  ipLibrary: IP library
   ipRecommendations: AI IP
-  ipRequests: IP Requests
-  ipFeedback: Initial IP Feedback
-  ipMarketing: Marketing Feedback
+  ipRequests: IP requests
+  ipFeedback: IP review
+  ipMarketing: Marketing review
   businessOperations: Resource Operations
   businessAssistant: Resource Intelligence Assistant
   creatorRecommendations: Creator/Media AI Recommendations
@@ -91,16 +91,16 @@ menus:
   pureLogin: Login
   pureEmpty: Empty Page
   pureTable: Table
-  pureSysManagement: System Manage
-  pureUser: User Manage
-  pureRole: Role Manage
-  pureSystemMenu: Menu Manage
-  pureDept: Dept Manage
-  pureSysMonitor: System Monitor
-  pureOnlineUser: Online User
-  pureLoginLog: Login Log
-  pureOperationLog: Operation Log
-  pureSystemLog: System Log
+  pureSysManagement: Administration
+  pureUser: Users
+  pureRole: Roles
+  pureSystemMenu: Menus
+  pureDept: Departments
+  pureSysMonitor: Monitoring
+  pureOnlineUser: Online users
+  pureLoginLog: Sign-in logs
+  pureOperationLog: Activity logs
+  pureSystemLog: System logs
   pureCodeMirror: CodeMirror
   pureMarkdown: Markdown
   pureEditor: Editor
@@ -217,11 +217,11 @@ menus:
 status:
   pureLoad: Loading...
   pureMessage: Message
-  pureNotify: Notify
-  pureTodo: Todo
-  pureNoMessage: No Message
-  pureNoNotify: No Notify
-  pureNoTodo: No Todo
+  pureNotify: Notifications
+  pureTodo: To do
+  pureNoMessage: No messages
+  pureNoNotify: No notifications
+  pureNoTodo: Nothing to do
 login:
   pureUsername: Username
   purePassword: Password
@@ -270,15 +270,15 @@ tableBar:
   pureLarge: Large
   pureDefault: Default
   pureSmall: Small
-  pureColumnSettings: ColumnSettings
+  pureColumnSettings: Column settings
   pureCollapse: Collapse
   pureExpand: Expand
   pureRefresh: Refresh
   pureDensity: Density
-  pureColumnDisplay: ColumnDisplay
+  pureColumnDisplay: Visible columns
   pureReset: Reset
-  pureExitFullScreen: ExitFullScreen
-  pureFullScreen: FullScreen
-  purePinLeft: Pin Left
-  purePinRight: Pin Right
+  pureExitFullScreen: Exit full screen
+  pureFullScreen: Enter full screen
+  purePinLeft: Pin left
+  purePinRight: Pin right
   pureUnpin: Unpin
