@@ -89,8 +89,11 @@ func (a *app) sendIPStageNotifications(ctx context.Context, cfg Config, requestI
 	}
 	ids := ipStageContactIDs(brief, creatorID, stage)
 	directoryRecipients := ipStageDirectoryRecipients(brief, stage)
+	if ipMapText(brief, "notificationLanguage") == "en" {
+		ctx = context.WithValue(ctx, ipLanguageKey{}, "en")
+	}
 	directory := newUACDirectoryClient(cfg.SSO, nil)
-	message := ipStageFeishuMessage(cfg, requestID, projectName, stage)
+	message := ipStageFeishuMessage(cfg, requestID, projectName, stage, ipLanguage(ctx))
 	if stage == "submitted" || stage == "ip_reviewed" {
 		calendar, err := newWorkCalendar(cfg.WorkCalendar)
 		if err != nil {
@@ -101,11 +104,15 @@ func (a *app) sendIPStageNotifications(ctx context.Context, cfg Config, requestI
 			start, label, days = ipStageTime(ipReviewedAt), "营销意见", 5
 		}
 		deadline := calendar.stageDeadline(label, days, start, time.Time{}, true, false, time.Now())
-		message += fmt.Sprintf("\n反馈周期：%d个工作日（次日起算，含法定调休）", days)
+		message += fmt.Sprintf(ipLocaleText(ctx, "\n反馈周期：%d个工作日（次日起算，含法定调休）"), days)
 		if deadline.DueAt != "" {
-			message += "\n最晚反馈：" + ipStageTime(deadline.DueAt).Format("2006-01-02 15:04") + "（北京时间）"
+			if ipLanguage(ctx) == "en" {
+				message += "\nFeedback due: " + ipStageTime(deadline.DueAt).Format("2006-01-02 15:04") + " (Beijing time)"
+			} else {
+				message += "\n最晚反馈：" + ipStageTime(deadline.DueAt).Format("2006-01-02 15:04") + "（北京时间）"
+			}
 		} else {
-			message += "\n" + deadline.Warning
+			message += "\n" + ipLocaleText(ctx, deadline.Warning)
 		}
 	}
 	sentEmails := map[string]bool{}
@@ -212,8 +219,12 @@ func ipStageDirectoryRecipients(brief map[string]any, stage string) []ipDirector
 	return recipients
 }
 
-func ipStageFeishuMessage(cfg Config, requestID int64, projectName, stage string) string {
+func ipStageFeishuMessage(cfg Config, requestID int64, projectName, stage string, languages ...string) string {
 	lines := []string{"XMP IP 需求提醒", ipStageNotificationTitles[stage], "项目：" + strings.TrimSpace(projectName)}
+	english := len(languages) > 0 && languages[0] == "en"
+	if english {
+		lines = []string{"XMP IP Request Notification", ipEnglishText(ipStageNotificationTitles[stage]), "Project: " + strings.TrimSpace(projectName)}
+	}
 	frontendURL := strings.TrimSpace(cfg.Feishu.FrontendURL)
 	if frontendURL == "" {
 		frontendURL = strings.TrimSpace(cfg.SSO.FrontendURL)
@@ -226,7 +237,11 @@ func ipStageFeishuMessage(cfg Config, requestID int64, projectName, stage string
 			path = "/business/ip/marketing"
 		}
 		parsed.Fragment = fmt.Sprintf("%s?id=%d", path, requestID)
-		lines = append(lines, "查看需求："+parsed.String())
+		if english {
+			lines = append(lines, "View request: "+parsed.String())
+		} else {
+			lines = append(lines, "查看需求："+parsed.String())
+		}
 	}
 	return strings.Join(lines, "\n")
 }

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText } = useIPLocale();
+
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useAppStoreHook } from "@/store/modules/app";
@@ -31,13 +34,17 @@ function openSession(id: number | null) {
     v-if="visible"
     class="ip-menu-sessions"
     :class="{ collapsed }"
-    aria-label="项目会话"
+    :aria-label="ipText('项目会话')"
   >
-    <el-tooltip v-if="collapsed" content="展开项目会话" placement="right">
+    <el-tooltip
+      v-if="collapsed"
+      :content="ipText('展开项目会话')"
+      placement="right"
+    >
       <button
         type="button"
         class="session-expand"
-        aria-label="展开项目会话"
+        :aria-label="ipText('展开项目会话')"
         @click="useAppStoreHook().toggleSideBar()"
       >
         <IconifyIconOffline :icon="Chat" />
@@ -45,29 +52,29 @@ function openSession(id: number | null) {
     </el-tooltip>
     <template v-else>
       <div class="session-heading">
-        <h2>项目会话</h2>
-        <span>{{ sessions.subscriptions.length }}</span>
+        <h2>{{ ipText("项目会话") }}</h2>
+        <span>{{ ipText(sessions.subscriptions.length) }}</span>
       </div>
       <p v-if="!sessions.loaded" class="session-empty" role="status">
-        正在加载会话…
+        {{ ipText("正在加载会话…") }}
       </p>
       <div
         v-else-if="sessions.loadError && !sessions.subscriptions.length"
         class="session-empty"
       >
-        <p>会话暂时无法加载</p>
+        <p>{{ ipText("会话暂时无法加载") }}</p>
         <button
           type="button"
           :disabled="sessions.busy"
           @click="sessions.navigate({ action: 'reload' })"
         >
-          重新加载
+          {{ ipText("重新加载") }}
         </button>
       </div>
       <p v-else-if="!sessions.subscriptions.length" class="session-empty">
-        新建会话，开始项目研究。
+        {{ ipText("新建会话，开始项目研究。") }}
       </p>
-      <nav v-else class="session-list" aria-label="项目会话列表">
+      <nav v-else class="session-list" :aria-label="ipText('项目会话列表')">
         <div
           v-for="item in sessions.subscriptions"
           :key="item.id"
@@ -98,7 +105,7 @@ function openSession(id: number | null) {
             <button
               type="button"
               class="session-more"
-              :aria-label="`${item.name}的更多操作`"
+              :aria-label="ipText('{0}的更多操作', [item.name])"
               :aria-expanded="moreMenuId === item.id"
               :disabled="sessions.busy"
             >
@@ -106,9 +113,9 @@ function openSession(id: number | null) {
             </button>
             <template #dropdown>
               <el-dropdown-menu
-                ><el-dropdown-item command="delete" :disabled="sessions.busy"
-                  >删除会话</el-dropdown-item
-                ></el-dropdown-menu
+                ><el-dropdown-item command="delete" :disabled="sessions.busy">{{
+                  ipText("删除会话")
+                }}</el-dropdown-item></el-dropdown-menu
               >
             </template>
           </el-dropdown>
@@ -121,13 +128,13 @@ function openSession(id: number | null) {
         class="session-empty"
         role="status"
       >
-        会话更新失败，已保留现有列表
+        {{ ipText("会话更新失败，已保留现有列表") }}
         <button
           type="button"
           :disabled="sessions.busy"
           @click="sessions.navigate({ action: 'reload' })"
         >
-          重试
+          {{ ipText("重试") }}
         </button>
       </p>
       <button
@@ -137,10 +144,10 @@ function openSession(id: number | null) {
         :disabled="sessions.busy"
         @click="openSession(null)"
       >
-        <IconifyIconOffline :icon="Plus" /><span>新建会话</span>
+        <IconifyIconOffline :icon="Plus" /><span>{{ ipText("新建会话") }}</span>
       </button>
       <p v-if="sessions.busy" class="session-empty" role="status">
-        当前操作完成后可切换会话
+        {{ ipText("当前操作完成后可切换会话") }}
       </p>
     </template>
   </section>

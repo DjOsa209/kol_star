@@ -66,7 +66,7 @@ func recommendationUnsupportedClaim(value string) bool {
 }
 
 func recommendationValidAIAdvice(advice string, c recommendationCandidate) bool {
-	if len([]rune(advice)) < 30 || !strings.Contains(advice, "适用场景：") || !strings.Contains(advice, "匹配原因：") || recommendationUnsupportedClaim(advice) {
+	if len([]rune(advice)) < 30 || !(strings.Contains(advice, "适用场景：") || strings.Contains(strings.ToLower(advice), "use case:")) || !(strings.Contains(advice, "匹配原因：") || strings.Contains(strings.ToLower(advice), "why it fits:")) || recommendationUnsupportedClaim(advice) {
 		return false
 	}
 	status := recommendationString(c.Resource["cooperationStatus"])

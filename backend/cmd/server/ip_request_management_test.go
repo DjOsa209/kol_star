@@ -30,6 +30,7 @@ func TestIPRequestEditPreservesCompletedWorkflow(t *testing.T) {
 			defer db.Close()
 			a := newApp(db, Config{})
 			brief := ipTestBrief()
+			brief["notificationLanguage"] = "zh"
 			brief["candidateEvaluations"] = map[string]any{"91": map[string]any{"reason": "原选择理由"}}
 			expectIPTestSession(mock)
 			mock.ExpectBegin()

@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { canonicalIPOption } from "@/utils/ipI18n";
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText } = useIPLocale();
+
 import {
   computed,
   nextTick,
@@ -103,9 +107,15 @@ const previewDownloadPercent = computed(() =>
 );
 const previewDownloadText = computed(() =>
   previewTotal.value > 0
-    ? `正在下载 PDF · ${formatBytes(previewDownloaded.value)} / ${formatBytes(previewTotal.value)}（${previewDownloadPercent.value}%）`
+    ? ipText("正在下载 PDF · {0} / {1}（{2}%）", [
+        formatBytes(previewDownloaded.value),
+        formatBytes(previewTotal.value),
+        previewDownloadPercent.value
+      ])
     : previewDownloaded.value > 0
-      ? `正在下载 PDF · 已下载 ${formatBytes(previewDownloaded.value)}`
+      ? ipText("正在下载 PDF · 已下载 {0}", [
+          formatBytes(previewDownloaded.value)
+        ])
       : "正在连接并下载 PDF…"
 );
 const markets = [
@@ -178,13 +188,20 @@ function normalizeIPTypes(value: unknown): string[] {
   const selected = new Set<string>();
   for (const raw of parseTextArray(value)) {
     if (ipTypes.includes(raw)) selected.add(raw);
-    if (/体育|赛事/.test(raw)) selected.add("体育");
-    if (/动漫|动画/.test(raw)) selected.add("动画");
-    if (/影视/.test(raw)) selected.add("影视");
-    if (/音乐|演唱会|活动/.test(raw)) selected.add("线下活动");
-    if (/游戏/.test(raw)) selected.add("游戏");
-    if (/电竞/.test(raw)) selected.add("游戏");
-    if (/文化|艺术/.test(raw)) selected.add("文化艺术");
+    if (ipTypes.includes(canonicalIPOption(raw)))
+      selected.add(canonicalIPOption(raw));
+    if (/体育|赛事|\b(?:sports?|tournaments?)\b/i.test(raw))
+      selected.add("体育");
+    if (/动漫|动画|\b(?:animation|anime|cartoons?)\b/i.test(raw))
+      selected.add("动画");
+    if (/影视|\b(?:films?|movies?|television)\b/i.test(raw))
+      selected.add("影视");
+    if (/音乐|演唱会|活动|\b(?:music|concerts?|offline events?)\b/i.test(raw))
+      selected.add("线下活动");
+    if (/游戏|\b(?:gaming|video games?)\b/i.test(raw)) selected.add("游戏");
+    if (/电竞|\besports?\b/i.test(raw)) selected.add("游戏");
+    if (/文化|艺术|\b(?:arts?|design|culture)\b/i.test(raw))
+      selected.add("文化艺术");
   }
   return [...selected];
 }
@@ -218,8 +235,9 @@ function priceText(resource: Record<string, any>) {
   const symbol = code === "USD" ? "$" : code === "EUR" ? "€" : "¥";
   if (min != null && max != null)
     return `${symbol}${Number(min).toLocaleString()}–${symbol}${Number(max).toLocaleString()}`;
-  if (min != null) return `${symbol}${Number(min).toLocaleString()} 起`;
-  return `${symbol}${Number(max).toLocaleString()} 以内`;
+  if (min != null)
+    return ipText("{0}{1} 起", [symbol, Number(min).toLocaleString()]);
+  return ipText("{0}{1} 以内", [symbol, Number(max).toLocaleString()]);
 }
 
 function riskItems(value: RecommendationResult["risks"]): string[] {
@@ -269,7 +287,7 @@ async function openResourceDrawer(id: number) {
       );
   } catch {
     drawerVisible.value = false;
-    ElMessage.error("IP 档案加载失败，请稍后重试");
+    ElMessage.error(ipText("IP 档案加载失败，请稍后重试"));
   } finally {
     drawerLoading.value = false;
   }
@@ -380,7 +398,11 @@ async function loadResults() {
   } catch (error) {
     if (sequence === resultsRequestSequence)
       ElMessage.error(
-        error instanceof Error ? error.message : "候选暂时无法加载，请重试"
+        ipText(
+          error instanceof Error
+            ? error.message
+            : ipText("候选暂时无法加载，请重试")
+        )
       );
   } finally {
     if (sequence === resultsRequestSequence) loading.value = false;
@@ -463,7 +485,7 @@ function editSubscription(item: RecommendationSubscription) {
 
 async function saveSubscription() {
   if (!form.name.trim() || !form.query.trim()) {
-    ElMessage.warning("请填写寻找条件名称与需求描述");
+    ElMessage.warning(ipText("请填写寻找条件名称与需求描述"));
     return;
   }
   if (
@@ -471,7 +493,7 @@ async function saveSubscription() {
     form.budgetMax != null &&
     form.budgetMin > form.budgetMax
   ) {
-    ElMessage.warning("最低预算不能大于最高预算");
+    ElMessage.warning(ipText("最低预算不能大于最高预算"));
     return;
   }
   saving.value = true;
@@ -488,11 +510,13 @@ async function saveSubscription() {
     activeView.value = "all";
     await loadSubscriptions(response.data.id, true);
     await loadResults();
-    if (response.data.warning) ElMessage.warning(response.data.warning);
-    else ElMessage.success("寻找条件已保存，推荐已更新");
+    if (response.data.warning) ElMessage.warning(ipText(response.data.warning));
+    else ElMessage.success(ipText("寻找条件已保存，推荐已更新"));
   } catch (error) {
     ElMessage.error(
-      error instanceof Error ? error.message : "保存寻找条件失败"
+      ipText(
+        error instanceof Error ? error.message : ipText("保存寻找条件失败")
+      )
     );
   } finally {
     saving.value = false;
@@ -510,11 +534,15 @@ async function toggleSubscription(item: RecommendationSubscription) {
     );
     if (!sessionViewCurrent()) return;
     sessionStore.upsert({ ...item, active: !item.active });
-    ElMessage.success(item.active ? "已暂停每周推荐" : "已恢复每周推荐");
-    if (response.data.warning) ElMessage.warning(response.data.warning);
+    ElMessage.success(
+      ipText(item.active ? ipText("已暂停每周推荐") : ipText("已恢复每周推荐"))
+    );
+    if (response.data.warning) ElMessage.warning(ipText(response.data.warning));
   } catch (error) {
     ElMessage.error(
-      error instanceof Error ? error.message : "更新提醒状态失败"
+      ipText(
+        error instanceof Error ? error.message : ipText("更新提醒状态失败")
+      )
     );
   } finally {
     saving.value = false;
@@ -525,12 +553,14 @@ async function removeSubscription(item: RecommendationSubscription) {
   if (conversationBusy.value || attachmentReading.value || saving.value) return;
   try {
     await ElMessageBox.confirm(
-      `删除项目会话「${item.name}」及其对话、推荐历史？删除后无法恢复。`,
-      "删除项目会话",
+      ipText("删除项目会话「{0}」及其对话、推荐历史？删除后无法恢复。", [
+        item.name
+      ]),
+      ipText("删除项目会话"),
       {
         type: "warning",
-        confirmButtonText: "删除会话",
-        cancelButtonText: "取消"
+        confirmButtonText: ipText("删除会话"),
+        cancelButtonText: ipText("取消")
       }
     );
   } catch {
@@ -548,10 +578,12 @@ async function removeSubscription(item: RecommendationSubscription) {
       if (next) selectSubscription(next);
       else startNew();
     }
-    ElMessage.success("项目会话已删除");
+    ElMessage.success(ipText("项目会话已删除"));
   } catch (error) {
     ElMessage.error(
-      error instanceof Error ? error.message : "删除项目会话失败"
+      ipText(
+        error instanceof Error ? error.message : ipText("删除项目会话失败")
+      )
     );
   } finally {
     saving.value = false;
@@ -567,10 +599,16 @@ async function feedback(
     item.feedback = value;
     item.isNew = false;
     ElMessage.success(
-      value === "interested" ? "已标记感兴趣" : "已减少类似推荐"
+      ipText(
+        value === "interested"
+          ? ipText("已标记感兴趣")
+          : ipText("已减少类似推荐")
+      )
     );
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "保存反馈失败");
+    ElMessage.error(
+      ipText(error instanceof Error ? error.message : ipText("保存反馈失败"))
+    );
   }
 }
 
@@ -618,7 +656,9 @@ async function loadRequestContext() {
       const brief = parseObject(item.brief);
       currentRequestName.value = item.projectName || "";
       setForm({
-        name: item.projectName ? `${item.projectName} · IP寻找` : "IP寻找",
+        name: item.projectName
+          ? ipText("{0} · IP寻找", [item.projectName])
+          : "IP寻找",
         query: item.description || "",
         markets: parseTextArray(item.markets),
         ipTypes: brief.targetIPType ? [String(brief.targetIPType)] : [],
@@ -638,7 +678,7 @@ async function loadRequestContext() {
       editing.value = false;
       expectedLaunch.value = String(item.expectedLaunch || "").slice(0, 10);
     } catch {
-      ElMessage.warning("未能读取关联需求，请手动填写寻找条件");
+      ElMessage.warning(ipText("未能读取关联需求，请手动填写寻找条件"));
     }
   }
 }
@@ -655,7 +695,7 @@ onMounted(async () => {
     if (selectedSubscription.value) setForm(selectedSubscription.value);
     chosenIds.value = selectedFromRequest();
   } catch {
-    if (!disposed) ElMessage.error("IP 推荐暂时无法加载，请稍后重试");
+    if (!disposed) ElMessage.error(ipText("IP 推荐暂时无法加载，请稍后重试"));
   } finally {
     workspaceReady = !disposed;
   }
@@ -778,7 +818,7 @@ const presentation = computed<IPRecommendationPresentation | null>(() => {
   return {
     headline:
       item.assessment?.verdict ||
-      `进一步评估「${item.resourceName}」与当前需求的合作适配`,
+      ipText("进一步评估「{0}」与当前需求的合作适配", [item.resourceName]),
     explanation: item.assessment?.fit || item.advice || item.reason,
     basis: item.assessment?.basis || [
       { label: "筛选依据", value: item.reason },
@@ -812,10 +852,13 @@ const criteriaText = computed(() =>
     criteria.value.markets?.join(" / "),
     criteria.value.ipTypes?.join(" / "),
     criteria.value.excludedIPTypes?.length
-      ? `排除${criteria.value.excludedIPTypes.join(" / ")}`
+      ? ipText("排除{0}", [criteria.value.excludedIPTypes.join(" / ")])
       : "",
     criteria.value.budgetMax
-      ? `授权预算 ${criteria.value.budgetCurrency} ${criteria.value.budgetMax.toLocaleString()}`
+      ? ipText("授权预算 {0} {1}", [
+          criteria.value.budgetCurrency,
+          criteria.value.budgetMax.toLocaleString()
+        ])
       : "预算待确认"
   ]
     .filter(Boolean)
@@ -823,7 +866,9 @@ const criteriaText = computed(() =>
 );
 const projectLabel = computed(
   () =>
-    selectedSubscription.value?.name || currentRequestName.value || "新合作研究"
+    selectedSubscription.value?.name ||
+    currentRequestName.value ||
+    ipText("新合作研究")
 );
 const comparisonFields = [
   { key: "fit", label: "需求契合" },
@@ -857,7 +902,8 @@ function showConditions() {
 function toggleCompare(item: RecommendationResult) {
   if (compareIds.value.includes(item.resourceId))
     compareIds.value = compareIds.value.filter(id => id !== item.resourceId);
-  else if (compareIds.value.length >= 3) ElMessage.info("最多同时对比 3 个 IP");
+  else if (compareIds.value.length >= 3)
+    ElMessage.info(ipText("最多同时对比 3 个 IP"));
   else compareIds.value = [...compareIds.value, item.resourceId];
 }
 async function converse(
@@ -866,16 +912,16 @@ async function converse(
 ) {
   if (conversationBusy.value || attachmentReading.value) return;
   if (action === "search" && (!text || [...text].length > 200)) {
-    ElMessage.info("请填写 200 字以内的公开搜索关键词");
+    ElMessage.info(ipText("请填写 200 字以内的公开搜索关键词"));
     return;
   }
   if (!text && !criteria.value.query && !attachment.value) {
-    ElMessage.info("请先描述项目需求");
+    ElMessage.info(ipText("请先描述项目需求"));
     return;
   }
   if (action === "compare" && comparison.value.length < 2) {
     workbenchTab.value = "candidates";
-    ElMessage.info("请先选择 2 至 3 个候选 IP");
+    ElMessage.info(ipText("请先选择 2 至 3 个候选 IP"));
     return;
   }
   const sequence = ++conversationSequence;
@@ -994,14 +1040,16 @@ function sendMessage() {
   if (attachment.value) return converse("recommend", text);
   if (
     visibleResults.value.length &&
-    /^(为什么|为何|解释|说明|说说)|推荐依据|判断依据|推荐理由|适配原因/.test(
+    /^(为什么|为何|解释|说明|说说|why\b|explain\b|tell me why\b|what makes\b)|推荐依据|判断依据|推荐理由|适配原因/i.test(
       text
     )
   )
     return converse("discuss", text);
   if (
     comparison.value.length >= 2 &&
-    /(?:比较|对比).*(?:这|它们|两个|选中|候选)/.test(text)
+    /(?:比较|对比).*(?:这|它们|两个|选中|候选)|(?:compare|comparison).*(?:these|those|them|two|selected|candidates)/i.test(
+      text
+    )
   )
     return converse("compare", text);
   return converse("recommend", text);
@@ -1021,7 +1069,7 @@ function followUp(text: string) {
   void converse(
     webSearchMode.value || presentation.value?.webSearch
       ? "search"
-      : text.startsWith("为什么")
+      : /^(为什么|为何|why\b|explain\b|what makes\b)/i.test(text)
         ? "discuss"
         : "recommend",
     text
@@ -1033,7 +1081,7 @@ function queueIntent(item: RecommendationResult) {
     return;
   }
   if (chosenIds.value.length >= 5) {
-    ElMessage.info("初步意向最多选择 5 个 IP");
+    ElMessage.info(ipText("初步意向最多选择 5 个 IP"));
     return;
   }
   chosenIds.value = [...chosenIds.value, item.resourceId];
@@ -1048,7 +1096,7 @@ function confirmIntent() {
   if (!chosenIds.value.length) return;
   if (selectionKey.value) {
     localStorage.setItem(selectionKey.value, JSON.stringify(chosenIds.value));
-    ElMessage.success("已同步到当前提需草稿，请返回需求页保存");
+    ElMessage.success(ipText("已同步到当前提需草稿，请返回需求页保存"));
     return;
   }
   router.push({
@@ -1067,7 +1115,7 @@ async function readAttachment(event: Event) {
   if (!file) return;
   input.value = "";
   if (file.size > 15 * 1024 * 1024) {
-    ElMessage.warning("需求资料请控制在 15MB 以内");
+    ElMessage.warning(ipText("需求资料请控制在 15MB 以内"));
     return;
   }
   attachmentReading.value = true;
@@ -1090,7 +1138,7 @@ async function readAttachment(event: Event) {
       const ready = new Promise<void>((resolve, reject) => {
         const timer = window.setTimeout(() => {
           stop();
-          reject(new Error("PDF 读取超时，请换用文本资料"));
+          reject(new Error(ipText("PDF 读取超时，请换用文本资料")));
         }, 20000);
         const stop = watch(
           [attachmentPdf, pdfReadError],
@@ -1106,7 +1154,7 @@ async function readAttachment(event: Event) {
       pdfSource.value = { data: new Uint8Array(await file.arrayBuffer()) };
       await ready;
       const document = attachmentPdf.value;
-      if (!document) throw new Error("PDF 正文未能读取");
+      if (!document) throw new Error(ipText("PDF 正文未能读取"));
       const pages = [];
       for (let page = 1; page <= Math.min(document.numPages, 12); page++) {
         const content = await (await document.getPage(page)).getTextContent();
@@ -1115,14 +1163,18 @@ async function readAttachment(event: Event) {
         );
       }
       text = pages.join("\n");
-    } else throw new Error("请上传 PDF、TXT、Markdown 或表格资料");
+    } else throw new Error(ipText("请上传 PDF、TXT、Markdown 或表格资料"));
     if (!text.trim())
-      throw new Error("未能提取正文；扫描版 PDF 请先转为文本或直接粘贴需求");
+      throw new Error(
+        ipText("未能提取正文；扫描版 PDF 请先转为文本或直接粘贴需求")
+      );
     attachment.value = { name: file.name, text: text.slice(0, 3800) };
     if (text.length > 3800)
-      ElMessage.info("资料已读取，将使用前 3800 字作为需求补充");
+      ElMessage.info(ipText("资料已读取，将使用前 3800 字作为需求补充"));
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "资料读取失败");
+    ElMessage.error(
+      ipText(error instanceof Error ? error.message : ipText("资料读取失败"))
+    );
   } finally {
     attachmentReading.value = false;
     pdfSource.value = undefined;
@@ -1187,7 +1239,7 @@ watch(
         await loadSubscriptions(undefined, true);
         await loadResults();
       } catch {
-        ElMessage.error("项目会话暂时无法加载，请稍后重试");
+        ElMessage.error(ipText("项目会话暂时无法加载，请稍后重试"));
       }
     }
   }
@@ -1199,15 +1251,15 @@ watch(
     <div class="research-main">
       <div class="research-session-bar">
         <div v-if="showInlineSessions" class="session-switch">
-          <span>项目会话</span>
+          <span>{{ ipText("项目会话") }}</span>
           <el-select
             class="project-session-select"
             :model-value="selectedId || 0"
             :disabled="conversationBusy || attachmentReading"
-            aria-label="选择项目会话"
+            :aria-label="ipText('选择项目会话')"
             @change="value => (value ? selectSubscription(value) : startNew())"
           >
-            <el-option label="新合作研究" :value="0" />
+            <el-option :label="ipText('新合作研究')" :value="0" />
             <el-option
               v-for="item in subscriptions"
               :key="item.id"
@@ -1219,10 +1271,10 @@ watch(
             :disabled="conversationBusy || attachmentReading"
             @click="startNew"
           >
-            <Icon :icon="icons.plus" />新建会话
+            <Icon :icon="icons.plus" />{{ ipText("新建会话") }}
           </el-button>
         </div>
-        <h2 v-else class="project-title" :title="projectLabel">
+        <h2 v-else class="project-title" :title="ipText(projectLabel)">
           {{ projectLabel }}
         </h2>
         <div class="research-tools">
@@ -1233,7 +1285,8 @@ watch(
             aria-controls="research-criteria"
             @click="conditionsOpen = !conditionsOpen"
           >
-            <Icon :icon="icons.file" />需求条件<Icon
+            <Icon :icon="icons.file" />{{ ipText("需求条件")
+            }}<Icon
               :icon="
                 conditionsOpen ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'
               "
@@ -1248,7 +1301,8 @@ watch(
       >
         <div class="criteria-summary">
           <span
-            >{{ criteria.goal || "合作目标待确认" }} · {{ criteriaText }}</span
+            >{{ ipText(criteria.goal || ipText("合作目标待确认")) }} ·
+            {{ ipText(criteriaText) }}</span
           >
           <button
             type="button"
@@ -1256,19 +1310,27 @@ watch(
             :disabled="conversationBusy"
             @click="showConditions"
           >
-            <Icon :icon="icons.edit" />编辑条件
+            <Icon :icon="icons.edit" />{{ ipText("编辑条件") }}
           </button>
         </div>
-        <span v-if="expectedLaunch">预计上线：{{ expectedLaunch }}</span>
+        <span v-if="expectedLaunch"
+          >{{ ipText("预计上线：") }}{{ ipText(expectedLaunch) }}</span
+        >
         <router-link
           v-if="requestId"
           :to="{ path: '/business/ip/requests', query: { id: requestId } }"
           class="context-link"
-          ><Icon :icon="icons.external" />查看原始提需</router-link
+          ><Icon :icon="icons.external" />{{
+            ipText("查看原始提需")
+          }}</router-link
         >
-        <p>{{ criteria.query || "尚未填写项目需求" }}</p>
-        <span v-if="criteria.audience">目标受众：{{ criteria.audience }}</span>
-        <span v-if="criteria.product">关联产品：{{ criteria.product }}</span>
+        <p>{{ ipText(criteria.query || ipText("尚未填写项目需求")) }}</p>
+        <span v-if="criteria.audience"
+          >{{ ipText("目标受众：") }}{{ criteria.audience }}</span
+        >
+        <span v-if="criteria.product"
+          >{{ ipText("关联产品：") }}{{ ipText(criteria.product) }}</span
+        >
         <button
           v-if="selectedSubscription"
           type="button"
@@ -1276,38 +1338,50 @@ watch(
           @click="toggleSubscription(selectedSubscription)"
         >
           {{
-            selectedSubscription.active
-              ? "暂停每周检查库内新匹配"
-              : "开启每周检查库内新匹配"
+            ipText(
+              selectedSubscription.active
+                ? ipText("暂停每周检查库内新匹配")
+                : ipText("开启每周检查库内新匹配")
+            )
           }}
         </button>
       </div>
       <div class="research-columns">
-        <section class="conversation-panel" aria-label="项目研究对话">
+        <section
+          class="conversation-panel"
+          :aria-label="ipText('项目研究对话')"
+        >
           <div class="conversation-body">
             <template v-if="!presentation && !conversationBusy">
               <div class="conversation-welcome">
                 <Icon :icon="icons.spark" />
-                <h2>这次想寻找怎样的合作 IP？</h2>
+                <h2>{{ ipText("这次想寻找怎样的合作 IP？") }}</h2>
                 <p>
-                  描述项目方向，或带入已有提需与资料。我们会一起确认偏好，再寻找值得进一步评估的候选。
+                  {{
+                    ipText(
+                      "描述项目方向，或带入已有提需与资料。我们会一起确认偏好，再寻找值得进一步评估的候选。"
+                    )
+                  }}
                 </p>
                 <div class="entry-actions">
                   <button type="button" @click="showConditions">
-                    <Icon :icon="icons.file" />填写 / 关联提需</button
+                    <Icon :icon="icons.file" />{{
+                      ipText("填写 / 关联提需")
+                    }}</button
                   ><button type="button" @click="attachmentInput?.click()">
-                    <Icon :icon="icons.attach" />上传需求资料
+                    <Icon :icon="icons.attach" />{{ ipText("上传需求资料") }}
                   </button>
                 </div>
                 <button
                   type="button"
                   class="welcome-example"
                   @click="
-                    composerText =
+                    composerText = ipText(
                       '为新品寻找合作IP，重点是沉浸体验和设计表达，优先东南亚市场。'
+                    )
                   "
                 >
-                  试试：为新品寻找设计与沉浸体验方向的 IP
+                  {{ ipText("试试：为新品寻找设计与沉浸体验方向的 IP") }}
                   <Icon :icon="icons.arrow" />
                 </button>
               </div>
@@ -1320,9 +1394,13 @@ watch(
               @click="historyOpen = !historyOpen"
             >
               {{
-                historyOpen
-                  ? "收起历史对话"
-                  : `查看历史对话 · ${conversationMessages.length - 2} 条`
+                ipText(
+                  historyOpen
+                    ? ipText("收起历史对话")
+                    : ipText("查看历史对话 · {0} 条", [
+                        conversationMessages.length - 2
+                      ])
+                )
               }}
             </button>
             <div v-if="historyOpen" class="conversation-history">
@@ -1333,22 +1411,24 @@ watch(
               >
                 <small
                   >{{
-                    message.role === "user"
-                      ? "我"
-                      : message.presentation?.source === "ai"
-                        ? "AI推荐助手"
-                        : "规则建议"
+                    ipText(
+                      message.role === "user"
+                        ? ipText("我")
+                        : message.presentation?.source === "ai"
+                          ? ipText("AI推荐助手")
+                          : ipText("规则建议")
+                    )
                   }}
-                  · {{ formatTime(message.createdAt) }}</small
+                  · {{ ipText(formatTime(message.createdAt)) }}</small
                 >
                 <p>{{ message.content }}</p>
               </div>
             </div>
             <div v-if="latestUser" class="user-message">
               <small
-                >我
+                >{{ ipText("我") }}
                 <time>{{
-                  formatTime(latestUser.createdAt).slice(-5)
+                  ipText(formatTime(latestUser.createdAt).slice(-5))
                 }}</time></small
               >
               <p>{{ latestUser.content }}</p>
@@ -1360,21 +1440,25 @@ watch(
             >
               <div class="assistant-identity">
                 <span>{{
-                  presentation.source === "ai"
-                    ? "AI"
-                    : presentation.webSearch
-                      ? "检索"
-                      : "规则"
+                  ipText(
+                    presentation.source === "ai"
+                      ? "AI"
+                      : presentation.webSearch
+                        ? ipText("检索")
+                        : ipText("规则")
+                  )
                 }}</span
                 ><strong>{{
-                  presentation.source === "ai"
-                    ? "AI 推荐助手"
-                    : presentation.webSearch
-                      ? "IP 研究助手"
-                      : "规则合作建议"
+                  ipText(
+                    presentation.source === "ai"
+                      ? ipText("AI 推荐助手")
+                      : presentation.webSearch
+                        ? ipText("IP 研究助手")
+                        : ipText("规则合作建议")
+                  )
                 }}</strong
                 ><time v-if="latestAssistant && !streamingPresentation">{{
-                  formatTime(latestAssistant.createdAt).slice(-5)
+                  ipText(formatTime(latestAssistant.createdAt).slice(-5))
                 }}</time>
               </div>
               <div class="assistant-content">
@@ -1387,7 +1471,8 @@ watch(
                   class="external-evidence"
                 >
                   <h3>
-                    联网来源 · {{ presentation.webSearch.results.length }}
+                    {{ ipText("联网来源 ·") }}
+                    {{ ipText(presentation.webSearch.results.length) }}
                   </h3>
                   <a
                     v-for="source in presentation.webSearch.results.slice(0, 5)"
@@ -1398,7 +1483,9 @@ watch(
                   >
                     {{ source.title }} <Icon :icon="icons.external" />
                   </a>
-                  <small>库外线索尚未入库，授权与报价待核实。</small>
+                  <small>{{
+                    ipText("库外线索尚未入库，授权与报价待核实。")
+                  }}</small>
                 </div>
                 <div v-if="evidenceCandidates.length" class="judgment-sources">
                   <button
@@ -1407,15 +1494,15 @@ watch(
                     type="button"
                     @click="openResourceDrawer(item.resourceId)"
                   >
-                    <Icon :icon="icons.file" />{{ item.resourceName }} ·
-                    库内资料
+                    <Icon :icon="icons.file" />{{ ipText(item.resourceName) }}
+                    {{ ipText("· 库内资料") }}
                   </button>
                 </div>
                 <div v-if="presentation.basis?.length" class="judgment-basis">
-                  <h3>判断依据</h3>
+                  <h3>{{ ipText("判断依据") }}</h3>
                   <dl>
                     <div v-for="row in presentation.basis" :key="row.label">
-                      <dt>{{ row.label }}</dt>
+                      <dt>{{ ipText(row.label) }}</dt>
                       <dd>{{ row.value }}</dd>
                     </div>
                   </dl>
@@ -1424,19 +1511,21 @@ watch(
                   v-if="presentation.questions?.length"
                   class="clarification-questions"
                 >
-                  <h3>还需要确认</h3>
+                  <h3>{{ ipText("还需要确认") }}</h3>
                   <p v-for="question in presentation.questions" :key="question">
-                    {{ question }}
+                    {{ ipText(question) }}
                   </p>
                 </div>
                 <div
                   v-if="presentation.adjustments?.length"
                   class="round-adjustments"
                 >
-                  <strong>本轮调整</strong>
+                  <strong>{{ ipText("本轮调整") }}</strong>
                   <div>
-                    <p>{{ presentation.adjustments.join(" · ") }}</p>
-                    <small>具体授权范围、报价与档期仍需版权方确认。</small>
+                    <p>{{ ipText(presentation.adjustments.join(" · ")) }}</p>
+                    <small>{{
+                      ipText("具体授权范围、报价与档期仍需版权方确认。")
+                    }}</small>
                   </div>
                 </div>
                 <div
@@ -1447,7 +1536,7 @@ watch(
                   "
                   class="external-evidence"
                 >
-                  <h3>公开背景资料</h3>
+                  <h3>{{ ipText("公开背景资料") }}</h3>
                   <template
                     v-for="item in evidenceCandidates"
                     :key="item.resourceId"
@@ -1459,7 +1548,9 @@ watch(
                       rel="noopener noreferrer"
                       >{{ source.title || source.source }}
                       <Icon :icon="icons.external" /></a></template
-                  ><small>用于核对一般背景，授权与报价以版权方确认为准。</small>
+                  ><small>{{
+                    ipText("用于核对一般背景，授权与报价以版权方确认为准。")
+                  }}</small>
                 </div>
               </div>
             </article>
@@ -1468,13 +1559,15 @@ watch(
               class="conversation-progress"
               role="status"
             >
-              <Icon :icon="icons.spark" /><span>{{ streamingStatus }}</span>
+              <Icon :icon="icons.spark" /><span>{{
+                ipText(streamingStatus)
+              }}</span>
               <button
                 type="button"
                 class="quiet-button"
                 @click="stopConversation"
               >
-                停止生成
+                {{ ipText("停止生成") }}
               </button>
             </div>
             <div
@@ -1488,7 +1581,7 @@ watch(
                 :disabled="conversationBusy"
                 @click="followUp(text)"
               >
-                {{ text }}
+                {{ ipText(text) }}
               </button>
             </div>
             <div
@@ -1496,16 +1589,24 @@ watch(
               class="conversation-error"
               role="alert"
             >
-              <p>{{ conversationError }}</p>
-              <button type="button" @click="retryConversation">重试</button>
+              <p>{{ ipText(conversationError) }}</p>
+              <button type="button" @click="retryConversation">
+                {{ ipText("重试") }}
+              </button>
             </div>
           </div>
           <div class="conversation-dock">
             <p class="composer-note">
               {{
-                webSearchMode
-                  ? "联网模式：根据公开 IP 方向、市场与用途改写检索词，预算和附件不用于搜索。"
-                  : "支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。"
+                ipText(
+                  webSearchMode
+                    ? ipText(
+                        "联网模式：根据公开 IP 方向、市场与用途改写检索词，预算和附件不用于搜索。"
+                      )
+                    : ipText(
+                        "支持 PDF、文本与表格资料；AI 建议需结合真实版权资料评估。"
+                      )
+                )
               }}
             </p>
             <div class="conversation-composer">
@@ -1514,11 +1615,13 @@ watch(
                 :disabled="conversationBusy || attachmentReading"
                 :maxlength="webSearchMode ? 200 : 1200"
                 rows="2"
-                aria-label="继续描述或调整项目需求"
+                :aria-label="ipText('继续描述或调整项目需求')"
                 :placeholder="
-                  webSearchMode
-                    ? '输入公开搜索关键词，例如：东南亚艺术 IP 联名…'
-                    : '继续追问，调整偏好，或补充项目资料…'
+                  ipText(
+                    webSearchMode
+                      ? ipText('输入公开搜索关键词，例如：东南亚艺术 IP 联名…')
+                      : ipText('继续追问，调整偏好，或补充项目资料…')
+                  )
                 "
                 @keydown="composerKeydown"
               />
@@ -1526,7 +1629,7 @@ watch(
                 <Icon :icon="icons.file" /><span>{{ attachment.name }}</span
                 ><button
                   type="button"
-                  aria-label="移除资料"
+                  :aria-label="ipText('移除资料')"
                   @click="attachment = null"
                 >
                   <Icon :icon="icons.close" />
@@ -1541,19 +1644,31 @@ watch(
                   @click="attachmentInput?.click()"
                 >
                   <Icon :icon="icons.attach" />{{
-                    attachmentReading ? "正在读取资料…" : "添加资料"
+                    ipText(
+                      attachmentReading
+                        ? ipText("正在读取资料…")
+                        : ipText("添加资料")
+                    )
                   }}
                 </button>
                 <button
                   type="button"
                   :aria-pressed="webSearchMode"
-                  aria-label="联网搜索"
-                  :title="webSearchMode ? '关闭联网搜索' : '开启联网搜索'"
+                  :aria-label="ipText('联网搜索')"
+                  :title="
+                    ipText(
+                      webSearchMode
+                        ? ipText('关闭联网搜索')
+                        : ipText('开启联网搜索')
+                    )
+                  "
                   :disabled="conversationBusy || attachmentReading"
                   class="web-search-toggle"
                   @click="webSearchMode = !webSearchMode"
                 >
-                  <Icon :icon="icons.external" /><span>联网搜索</span>
+                  <Icon :icon="icons.external" /><span>{{
+                    ipText("联网搜索")
+                  }}</span>
                   <svg
                     class="web-search-outline"
                     aria-hidden="true"
@@ -1562,13 +1677,17 @@ watch(
                     <rect x="0.5" y="0.5" rx="6" pathLength="100" />
                   </svg>
                 </button>
-                <span>Ctrl / ⌘ + Enter 发送</span
+                <span>{{ ipText("Ctrl / ⌘ + Enter 发送") }}</span
                 ><button
                   type="button"
                   class="send-message"
                   :disabled="!canSendMessage"
                   :aria-label="
-                    webSearchMode ? '搜索库外资源' : '发送需求或调整偏好'
+                    ipText(
+                      webSearchMode
+                        ? ipText('搜索库外资源')
+                        : ipText('发送需求或调整偏好')
+                    )
                   "
                   @click="sendMessage"
                 >
@@ -1587,17 +1706,17 @@ watch(
         </section>
         <section
           class="cooperation-workbench"
-          aria-label="候选对比与意向工作区"
+          :aria-label="ipText('候选对比与意向工作区')"
         >
           <div class="workbench-heading">
-            <h2>合作工作区</h2>
+            <h2>{{ ipText("合作工作区") }}</h2>
             <button
               v-if="selectedSubscription"
               type="button"
               class="quiet-button"
               :disabled="conversationBusy"
-              aria-label="重新推荐"
-              @click="converse('recommend', '按当前条件重新推荐')"
+              :aria-label="ipText('重新推荐')"
+              @click="converse('recommend', ipText('按当前条件重新推荐'))"
             >
               <Icon :icon="icons.refresh" />
             </button>
@@ -1606,7 +1725,7 @@ watch(
             <div
               class="workbench-tabs"
               role="tablist"
-              aria-label="合作工作区视图"
+              :aria-label="ipText('合作工作区视图')"
             >
               <button
                 id="candidate-tab"
@@ -1617,7 +1736,7 @@ watch(
                 :class="{ active: workbenchTab === 'candidates' }"
                 @click="workbenchTab = 'candidates'"
               >
-                候选 <b>{{ visibleResults.length }}</b>
+                {{ ipText("候选") }} <b>{{ ipText(visibleResults.length) }}</b>
               </button>
               <button
                 id="compare-tab"
@@ -1628,7 +1747,7 @@ watch(
                 :class="{ active: workbenchTab === 'compare' }"
                 @click="workbenchTab = 'compare'"
               >
-                对比 <b>{{ comparison.length }}</b>
+                {{ ipText("对比") }} <b>{{ ipText(comparison.length) }}</b>
               </button>
               <button
                 id="intent-tab"
@@ -1639,7 +1758,7 @@ watch(
                 :class="{ active: workbenchTab === 'intent' }"
                 @click="workbenchTab = 'intent'"
               >
-                意向 <b>{{ chosenIds.length }}</b>
+                {{ ipText("意向") }} <b>{{ ipText(chosenIds.length) }}</b>
               </button>
               <button
                 id="external-tab"
@@ -1650,7 +1769,8 @@ watch(
                 :class="{ active: workbenchTab === 'external' }"
                 @click="workbenchTab = 'external'"
               >
-                库外 <b>{{ latestWebSearch?.candidates?.length || 0 }}</b>
+                {{ ipText("库外") }}
+                <b>{{ ipText(latestWebSearch?.candidates?.length || 0) }}</b>
               </button>
             </div>
             <button
@@ -1661,11 +1781,13 @@ watch(
               @click="
                 converse(
                   'compare',
-                  `比较${comparison.map(item => item.resourceName).join('和')}，哪个更适合这次需求？`
+                  ipText('比较{0}，哪个更适合这次需求？', [
+                    comparison.map(item => item.resourceName).join('和')
+                  ])
                 )
               "
             >
-              AI 对比判断 <Icon :icon="icons.arrow" />
+              {{ ipText("AI 对比判断") }} <Icon :icon="icons.arrow" />
             </button>
           </div>
           <div
@@ -1685,22 +1807,28 @@ watch(
             <Icon :icon="icons.library" />
             <h3>
               {{
-                selectedSubscription
-                  ? "确认条件，开始寻找候选"
-                  : "候选将在这里呈现"
+                ipText(
+                  selectedSubscription
+                    ? ipText("确认条件，开始寻找候选")
+                    : ipText("候选将在这里呈现")
+                )
               }}
             </h3>
             <p>
-              对话用于理解与调整需求，工作区用于查看资料、比较候选和形成意向。
+              {{
+                ipText(
+                  "对话用于理解与调整需求，工作区用于查看资料、比较候选和形成意向。"
+                )
+              }}
             </p>
             <button
               v-if="selectedSubscription"
               type="button"
               class="workspace-primary"
               :disabled="conversationBusy"
-              @click="converse('recommend', '确认当前需求并开始推荐')"
+              @click="converse('recommend', ipText('确认当前需求并开始推荐'))"
             >
-              确认并开始推荐 <Icon :icon="icons.arrow" />
+              {{ ipText("确认并开始推荐") }} <Icon :icon="icons.arrow" />
             </button>
           </div>
           <div
@@ -1711,7 +1839,7 @@ watch(
             class="candidate-workspace"
           >
             <p class="workspace-hint">
-              选择候选查看资料，可同时对比 2 至 3 个 IP。
+              {{ ipText("选择候选查看资料，可同时对比 2 至 3 个 IP。") }}
             </p>
             <article
               v-for="item in visibleResults"
@@ -1725,18 +1853,22 @@ watch(
               <button
                 type="button"
                 class="candidate-select"
-                :aria-label="`查看${item.resourceName}推荐依据`"
+                :aria-label="ipText('查看{0}推荐依据', [item.resourceName])"
                 @click="activeCandidateId = item.resourceId"
               >
                 <img
                   v-if="imageUrls[Number(item.resource?.visualFileId)]"
                   :src="imageUrls[Number(item.resource.visualFileId)]"
-                  :alt="item.resourceName"
+                  :alt="ipText(item.resourceName)"
                 /><span v-else class="visual-empty"
-                  ><Icon :icon="icons.image" /><small>暂无视觉资料</small></span
+                  ><Icon :icon="icons.image" /><small>{{
+                    ipText("暂无视觉资料")
+                  }}</small></span
                 ><span class="candidate-copy"
-                  ><strong>{{ item.resourceName }}</strong
-                  ><small>{{ item.resource?.ipType || "类型待完善" }}</small
+                  ><strong>{{ ipText(item.resourceName) }}</strong
+                  ><small>{{
+                    ipText(item.resource?.ipType || ipText("类型待完善"))
+                  }}</small
                   ><span>{{ item.assessment?.fit || item.reason }}</span></span
                 >
               </button>
@@ -1746,29 +1878,34 @@ watch(
                     type="checkbox"
                     :checked="compareIds.includes(item.resourceId)"
                     @change="toggleCompare(item)"
-                  />加入对比</label
+                  />{{ ipText("加入对比") }}</label
                 ><button
                   type="button"
                   @click="openResourceDrawer(item.resourceId)"
                 >
-                  资料 <Icon :icon="icons.arrow" /></button
+                  {{ ipText("资料") }} <Icon :icon="icons.arrow" /></button
                 ><button
                   type="button"
                   :disabled="conversationBusy"
                   @click="feedback(item, 'not_interested')"
                 >
-                  不感兴趣</button
+                  {{ ipText("不感兴趣") }}</button
                 ><button type="button" @click="queueIntent(item)">
                   {{
-                    chosenIds.includes(item.resourceId)
-                      ? "已加入意向"
-                      : "加入意向"
+                    ipText(
+                      chosenIds.includes(item.resourceId)
+                        ? ipText("已加入意向")
+                        : ipText("加入意向")
+                    )
                   }}
                 </button>
               </div>
             </article>
             <div v-if="currentCandidate" class="candidate-details">
-              <h3>{{ currentCandidate.resourceName }} · 合作方向</h3>
+              <h3>
+                {{ ipText(currentCandidate.resourceName) }}
+                {{ ipText("· 合作方向") }}
+              </h3>
               <p>
                 {{
                   currentCandidate.assessment?.verdict ||
@@ -1778,16 +1915,22 @@ watch(
               </p>
               <dl>
                 <div>
-                  <dt>合作切入</dt>
-                  <dd>{{ comparisonValue(currentCandidate, "entry") }}</dd>
+                  <dt>{{ ipText("合作切入") }}</dt>
+                  <dd>
+                    {{ ipText(comparisonValue(currentCandidate, "entry")) }}
+                  </dd>
                 </div>
                 <div>
-                  <dt>待确认</dt>
-                  <dd>{{ comparisonValue(currentCandidate, "pending") }}</dd>
+                  <dt>{{ ipText("待确认") }}</dt>
+                  <dd>
+                    {{ ipText(comparisonValue(currentCandidate, "pending")) }}
+                  </dd>
                 </div>
                 <div>
-                  <dt>权益参考价</dt>
-                  <dd>{{ priceText(currentCandidate.resource || {}) }}</dd>
+                  <dt>{{ ipText("权益参考价") }}</dt>
+                  <dd>
+                    {{ ipText(priceText(currentCandidate.resource || {})) }}
+                  </dd>
                 </div>
               </dl>
             </div>
@@ -1798,11 +1941,14 @@ watch(
               @click="
                 converse(
                   'compare',
-                  `比较${comparison.map(item => item.resourceName).join('和')}，哪个更适合这次需求？`
+                  ipText('比较{0}，哪个更适合这次需求？', [
+                    comparison.map(item => item.resourceName).join('和')
+                  ])
                 )
               "
             >
-              对比已选 {{ comparison.length }} 个 <Icon :icon="icons.arrow" />
+              {{ ipText("对比已选") }} {{ ipText(comparison.length) }}
+              {{ ipText("个") }} <Icon :icon="icons.arrow" />
             </button>
           </div>
           <div
@@ -1825,34 +1971,38 @@ watch(
                     <img
                       v-if="imageUrls[Number(item.resource?.visualFileId)]"
                       :src="imageUrls[Number(item.resource.visualFileId)]"
-                      :alt="item.resourceName"
+                      :alt="ipText(item.resourceName)"
                     /><span v-else class="visual-empty"
-                      ><Icon :icon="icons.image" /><small
-                        >暂无视觉资料</small
-                      ></span
-                    ><strong>{{ item.resourceName }}</strong
-                    ><small>{{ item.resource?.ipType || "类型待完善" }}</small>
+                      ><Icon :icon="icons.image" /><small>{{
+                        ipText("暂无视觉资料")
+                      }}</small></span
+                    ><strong>{{ ipText(item.resourceName) }}</strong
+                    ><small>{{
+                      ipText(item.resource?.ipType || ipText("类型待完善"))
+                    }}</small>
                   </button>
                 </div>
               </div>
               <div class="comparison-table-wrap">
                 <table class="comparison-table">
                   <caption class="sr-only">
-                    按当前需求比较候选 IP
+                    {{
+                      ipText("按当前需求比较候选 IP")
+                    }}
                   </caption>
                   <thead class="sr-only">
                     <tr>
-                      <th>对比维度</th>
+                      <th>{{ ipText("对比维度") }}</th>
                       <th v-for="item in comparison" :key="item.resourceId">
-                        {{ item.resourceName }}
+                        {{ ipText(item.resourceName) }}
                       </th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="field in comparisonFields" :key="field.key">
-                      <th scope="row">{{ field.label }}</th>
+                      <th scope="row">{{ ipText(field.label) }}</th>
                       <td v-for="item in comparison" :key="item.resourceId">
-                        {{ comparisonValue(item, field.key) }}
+                        {{ ipText(comparisonValue(item, field.key)) }}
                       </td>
                     </tr>
                   </tbody>
@@ -1860,9 +2010,9 @@ watch(
               </div>
             </template>
             <div v-else class="comparison-empty">
-              <p>请先选择至少 2 个候选进行对比。</p>
+              <p>{{ ipText("请先选择至少 2 个候选进行对比。") }}</p>
               <button type="button" @click="workbenchTab = 'candidates'">
-                选择候选 <Icon :icon="icons.arrow" />
+                {{ ipText("选择候选") }} <Icon :icon="icons.arrow" />
               </button>
             </div>
             <div
@@ -1873,7 +2023,7 @@ watch(
               "
               class="other-candidates"
             >
-              <h3>其他候选</h3>
+              <h3>{{ ipText("其他候选") }}</h3>
               <button
                 v-for="item in visibleResults
                   .filter(item => !compareIds.includes(item.resourceId))
@@ -1888,9 +2038,9 @@ watch(
                 <img
                   v-if="imageUrls[Number(item.resource?.visualFileId)]"
                   :src="imageUrls[Number(item.resource.visualFileId)]"
-                  :alt="item.resourceName"
+                  :alt="ipText(item.resourceName)"
                 /><span
-                  ><strong>{{ item.resourceName }}</strong
+                  ><strong>{{ ipText(item.resourceName) }}</strong
                   ><small>{{
                     item.assessment?.fit || item.reason
                   }}</small></span
@@ -1905,7 +2055,9 @@ watch(
             aria-labelledby="intent-tab"
             class="intent-workspace"
           >
-            <p v-if="!chosenIds.length">还未加入初步意向，请从候选中选择。</p>
+            <p v-if="!chosenIds.length">
+              {{ ipText("还未加入初步意向，请从候选中选择。") }}
+            </p>
             <div
               v-for="item in intentItems"
               :key="item.resourceId"
@@ -1914,67 +2066,81 @@ watch(
               <Icon :icon="icons.check" /><img
                 v-if="imageUrls[Number(item.resource?.visualFileId)]"
                 :src="imageUrls[Number(item.resource.visualFileId)]"
-                :alt="item.resourceName"
+                :alt="ipText(item.resourceName)"
               />
               <div>
-                <strong>{{ item.resourceName }}</strong
+                <strong>{{ ipText(item.resourceName) }}</strong
                 ><small>{{ item.assessment?.fit || item.reason }}</small>
               </div>
               <button type="button" @click="removeIntent(item.resourceId)">
-                移除
+                {{ ipText("移除") }}
               </button>
             </div>
             <p
               v-if="chosenIds.length > intentItems.length"
               class="workspace-hint"
             >
-              包含
-              {{ chosenIds.length - intentItems.length }} 个当前推荐之外的已选
-              IP，返回提需可查看完整清单。
+              {{ ipText("包含") }}
+              {{ ipText(chosenIds.length - intentItems.length) }}
+              {{ ipText("个当前推荐之外的已选 IP，返回提需可查看完整清单。") }}
             </p>
           </div>
           <div v-if="workbenchTab === 'external'" class="workbench-footer">
             <p class="workspace-hint">
-              库外候选可在此对比；核实并入库后，才能加入正式意向或回填提需。
+              {{
+                ipText(
+                  "库外候选可在此对比；核实并入库后，才能加入正式意向或回填提需。"
+                )
+              }}
             </p>
             <router-link to="/business/ip/resources"
-              >前往 IP 资源库 <Icon :icon="icons.arrow"
+              >{{ ipText("前往 IP 资源库") }} <Icon :icon="icons.arrow"
             /></router-link>
           </div>
           <div v-else-if="visibleResults.length" class="workbench-footer">
             <div v-if="workbenchTab !== 'intent'" class="intent-preview">
-              <h3>初步意向 · {{ chosenIds.length }}</h3>
+              <h3>{{ ipText("初步意向 ·") }} {{ ipText(chosenIds.length) }}</h3>
               <div v-if="intentItems.length" class="intent-row">
                 <Icon :icon="icons.check" /><img
                   v-if="
                     imageUrls[Number(intentItems[0].resource?.visualFileId)]
                   "
                   :src="imageUrls[Number(intentItems[0].resource.visualFileId)]"
-                  :alt="intentItems[0].resourceName"
+                  :alt="ipText(intentItems[0].resourceName)"
                 />
                 <div>
-                  <strong>{{ intentItems[0].resourceName }}</strong
+                  <strong>{{ ipText(intentItems[0].resourceName) }}</strong
                   ><small>{{
                     intentItems[0].assessment?.fit || intentItems[0].reason
                   }}</small>
                 </div>
                 <button type="button" @click="workbenchTab = 'intent'">
-                  查看
+                  {{ ipText("查看") }}
                 </button>
               </div>
-              <p v-else>选择候选，形成待评估的合作方向。</p>
+              <p v-else>{{ ipText("选择候选，形成待评估的合作方向。") }}</p>
             </div>
             <div class="handoff-actions">
               <div>
-                <p class="handoff-note">下一步由 IP 组核对授权与合作条件</p>
-                <router-link to="/business/ip/requests">返回提需</router-link>
+                <p class="handoff-note">
+                  {{ ipText("下一步由 IP 组核对授权与合作条件") }}
+                </p>
+                <router-link to="/business/ip/requests">{{
+                  ipText("返回提需")
+                }}</router-link>
               </div>
               <button
                 type="button"
                 class="workspace-primary"
                 @click="confirmIntent"
               >
-                {{ chosenIds.length ? "确认初步意向" : "加入初步意向" }}
+                {{
+                  ipText(
+                    chosenIds.length
+                      ? ipText("确认初步意向")
+                      : ipText("加入初步意向")
+                  )
+                }}
                 <Icon :icon="icons.arrow" />
               </button>
             </div>
@@ -1985,69 +2151,77 @@ watch(
     <el-dialog
       v-model="editing"
       class="ip-workspace-dialog"
-      title="需求与推荐条件"
+      :title="ipText('需求与推荐条件')"
       width="680px"
       :close-on-click-modal="false"
       ><div class="condition-editor">
         <div class="editor-card">
           <div class="editor-grid">
             <label
-              >条件名称 *<el-input
+              >{{ ipText("条件名称 *")
+              }}<el-input
                 v-model="form.name"
                 maxlength="80"
-                placeholder="例如：东南亚年轻用户向游戏 IP"
+                :placeholder="ipText('例如：东南亚年轻用户向游戏 IP')"
             /></label>
             <label
-              >合作目标<el-select
+              >{{ ipText("合作目标")
+              }}<el-select
                 v-model="form.goal"
                 clearable
-                placeholder="请选择合作目标"
+                :placeholder="ipText('请选择合作目标')"
                 ><el-option
                   v-for="item in goals"
                   :key="item"
-                  :label="item"
+                  :label="ipText(item)"
                   :value="item" /></el-select
             ></label>
             <label class="span-2"
-              >需求描述 *<el-input
+              >{{ ipText("需求描述 *")
+              }}<el-input
                 v-model="form.query"
                 type="textarea"
                 :rows="3"
                 maxlength="2000"
                 show-word-limit
-                placeholder="描述产品、目标受众、联动方式和希望达到的效果"
+                :placeholder="
+                  ipText('描述产品、目标受众、联动方式和希望达到的效果')
+                "
             /></label>
             <label
-              >目标市场<el-select
+              >{{ ipText("目标市场")
+              }}<el-select
                 v-model="form.markets"
                 multiple
                 filterable
-                placeholder="可选择多个市场"
+                :placeholder="ipText('可选择多个市场')"
                 ><el-option
                   v-for="item in markets"
                   :key="item"
-                  :label="item"
+                  :label="ipText(item)"
                   :value="item" /></el-select
             ></label>
             <label
-              >IP 类型<el-select
+              >{{ ipText("IP 类型")
+              }}<el-select
                 v-model="form.ipTypes"
                 multiple
                 filterable
-                placeholder="不限类型"
+                :placeholder="ipText('不限类型')"
                 ><el-option
                   v-for="item in ipTypes"
                   :key="item"
-                  :label="item"
+                  :label="ipText(item)"
                   :value="item" /></el-select
             ></label>
             <label class="span-2"
-              >目标受众<el-input
+              >{{ ipText("目标受众")
+              }}<el-input
                 v-model="form.audience"
-                placeholder="例如：18–30 岁，偏好电竞与手机游戏"
+                :placeholder="ipText('例如：18–30 岁，偏好电竞与手机游戏')"
             /></label>
             <label class="span-2"
-              >授权费用预算
+              >{{ ipText("授权费用预算") }}
               <div class="budget">
                 <el-select v-model="form.budgetCurrency"
                   ><el-option label="CNY ¥" value="CNY" /><el-option
@@ -2059,33 +2233,35 @@ watch(
                   v-model="form.budgetMin"
                   :min="0"
                   :controls="false"
-                  placeholder="最低"
-                /><span>至</span
+                  :placeholder="ipText('最低')"
+                /><span>{{ ipText("至") }}</span
                 ><el-input-number
                   v-model="form.budgetMax"
                   :min="0"
                   :controls="false"
-                  placeholder="最高"
+                  :placeholder="ipText('最高')"
                 /></div
             ></label>
           </div>
           <label class="excluded-types"
-            >排除的IP类型<el-select
+            >{{ ipText("排除的IP类型")
+            }}<el-select
               v-model="form.excludedIPTypes"
               multiple
               clearable
-              placeholder="选择明确不考虑的类型"
+              :placeholder="ipText('选择明确不考虑的类型')"
               ><el-option
                 v-for="kind in ipTypes"
                 :key="kind"
-                :label="kind"
+                :label="ipText(kind)"
                 :value="kind" /></el-select
           ></label>
           <div class="editor-footer">
-            <span
-              >保存后立即生成推荐；开启每周检查时，每周一 09:00
-              检查新匹配。</span
-            >
+            <span>{{
+              ipText(
+                "保存后立即生成推荐；开启每周检查时，每周一 09:00 检查新匹配。"
+              )
+            }}</span>
             <div>
               <el-button
                 v-if="subscriptions.length"
@@ -2093,12 +2269,12 @@ watch(
                   editing = false;
                   activeView = 'all';
                 "
-                >取消</el-button
+                >{{ ipText("取消") }}</el-button
               ><el-button
                 class="primary-button"
                 :loading="saving"
                 @click="saveSubscription"
-                >保存并获取推荐 →</el-button
+                >{{ ipText("保存并获取推荐 →") }}</el-button
               >
             </div>
           </div>
@@ -2106,12 +2282,14 @@ watch(
       </div>
       <div v-if="selectedSubscription" class="conversation-management">
         <span>{{
-          selectedSubscription.active
-            ? "每周检查库内新匹配已开启"
-            : "每周检查库内新匹配已暂停"
+          ipText(
+            selectedSubscription.active
+              ? ipText("每周检查库内新匹配已开启")
+              : ipText("每周检查库内新匹配已暂停")
+          )
         }}</span
         ><el-button link @click="toggleSubscription(selectedSubscription)">{{
-          selectedSubscription.active ? "暂停" : "开启"
+          ipText(selectedSubscription.active ? ipText("暂停") : ipText("开启"))
         }}</el-button
         ><el-button
           link
@@ -2120,11 +2298,15 @@ watch(
             removeSubscription(selectedSubscription);
             editing = false;
           "
-          >删除会话</el-button
+          >{{ ipText("删除会话") }}</el-button
         >
       </div></el-dialog
     >
-    <el-drawer v-model="drawerVisible" title="IP 档案与授权资料" size="500px">
+    <el-drawer
+      v-model="drawerVisible"
+      :title="ipText('IP 档案与授权资料')"
+      size="500px"
+    >
       <div v-loading="drawerLoading" class="resource-drawer">
         <template v-if="drawerDetail">
           <div class="drawer-intro">
@@ -2135,33 +2317,43 @@ watch(
             />
             <div>
               <h2>{{ drawerDetail.resource.name }}</h2>
-              <el-tag>{{ drawerDetail.resource.ipType }}</el-tag>
-              <p>{{ drawerDetail.resource.audience || "受众待补充" }}</p>
+              <el-tag>{{ ipText(drawerDetail.resource.ipType) }}</el-tag>
+              <p>
+                {{ drawerDetail.resource.audience || ipText("受众待补充") }}
+              </p>
             </div>
           </div>
           <p class="drawer-summary">
-            {{ drawerDetail.resource.summary || "暂无 IP 简介" }}
+            {{ drawerDetail.resource.summary || ipText("暂无 IP 简介") }}
           </p>
           <dl class="drawer-facts">
-            <dt>版权方</dt>
-            <dd>{{ drawerDetail.resource.rightsOwner || "待补充" }}</dd>
-            <dt>覆盖市场</dt>
+            <dt>{{ ipText("版权方") }}</dt>
+            <dd>{{ drawerDetail.resource.rightsOwner || ipText("待补充") }}</dd>
+            <dt>{{ ipText("覆盖市场") }}</dt>
             <dd>
               {{
-                parseTextArray(drawerDetail.resource.markets).join(" / ") ||
-                "待补充"
+                ipText(
+                  parseTextArray(drawerDetail.resource.markets).join(" / ") ||
+                    ipText("待补充")
+                )
               }}
             </dd>
-            <dt>合作状态</dt>
-            <dd>{{ drawerDetail.resource.cooperationStatus || "待确认" }}</dd>
-            <dt>参考权益价</dt>
+            <dt>{{ ipText("合作状态") }}</dt>
             <dd>
-              <strong>{{ priceText(drawerDetail.resource) }}</strong
-              ><small>供参考，根据具体需求更新</small>
+              {{
+                ipText(
+                  drawerDetail.resource.cooperationStatus || ipText("待确认")
+                )
+              }}
+            </dd>
+            <dt>{{ ipText("参考权益价") }}</dt>
+            <dd>
+              <strong>{{ ipText(priceText(drawerDetail.resource)) }}</strong
+              ><small>{{ ipText("供参考，根据具体需求更新") }}</small>
             </dd>
           </dl>
           <section class="drawer-section">
-            <h3>版权介绍文件</h3>
+            <h3>{{ ipText("版权介绍文件") }}</h3>
             <div
               v-for="file in drawerDetail.files.filter(
                 item => item.fileKind === 'copyright'
@@ -2170,7 +2362,9 @@ watch(
               class="document-row"
             >
               <span>PDF · {{ file.originalName }}</span
-              ><el-button link @click="openDocument(file)">预览</el-button>
+              ><el-button link @click="openDocument(file)">{{
+                ipText("预览")
+              }}</el-button>
             </div>
             <p
               v-if="
@@ -2178,13 +2372,13 @@ watch(
               "
               class="drawer-muted"
             >
-              暂无版权介绍文件
+              {{ ipText("暂无版权介绍文件") }}
             </p>
           </section>
           <section class="drawer-section">
-            <h3>历史合作与结案</h3>
+            <h3>{{ ipText("历史合作与结案") }}</h3>
             <p v-if="!drawerDetail.cases.length" class="drawer-muted">
-              暂无历史合作记录
+              {{ ipText("暂无历史合作记录") }}
             </p>
             <div
               v-for="item in drawerDetail.cases"
@@ -2192,7 +2386,7 @@ watch(
               class="case-row"
             >
               <strong>{{ item.title }}</strong>
-              <p>{{ item.summary || "暂无说明" }}</p>
+              <p>{{ item.summary || ipText("暂无说明") }}</p>
               <div
                 v-for="file in drawerDetail.files.filter(
                   file => Number(file.caseId) === Number(item.id)
@@ -2201,7 +2395,9 @@ watch(
                 class="document-row"
               >
                 <span>PDF · {{ file.originalName }}</span
-                ><el-button link @click="openDocument(file)">预览</el-button>
+                ><el-button link @click="openDocument(file)">{{
+                  ipText("预览")
+                }}</el-button>
               </div>
             </div>
           </section>
@@ -2211,7 +2407,7 @@ watch(
     <el-dialog
       v-model="previewVisible"
       class="ip-workspace-dialog"
-      :title="previewFileName"
+      :title="ipText(previewFileName)"
       width="80%"
       top="5vh"
       @close="closePreview"
@@ -2219,15 +2415,21 @@ watch(
       <div v-if="previewUrl" class="pdf-preview">
         <div class="pdf-toolbar">
           <span>{{
-            previewPages
-              ? `共 ${previewPages} 页 · 向下滚动查看`
-              : "正在读取 PDF…"
+            ipText(
+              previewPages
+                ? ipText("共 {0} 页 · 向下滚动查看", [previewPages])
+                : ipText("正在读取 PDF…")
+            )
           }}</span>
-          <a :href="previewUrl" :download="previewFileName">下载 PDF</a>
+          <a :href="previewUrl" :download="previewFileName">{{
+            ipText("下载 PDF")
+          }}</a>
         </div>
-        <p v-if="previewError" class="pdf-error">{{ previewError }}</p>
+        <p v-if="previewError" class="pdf-error">{{ ipText(previewError) }}</p>
         <div v-else class="pdf-canvas">
-          <p v-if="previewLoading" class="pdf-loading">正在渲染 PDF…</p>
+          <p v-if="previewLoading" class="pdf-loading">
+            {{ ipText("正在渲染 PDF…") }}
+          </p>
           <vue-pdf-embed
             :key="previewUrl"
             :source="previewUrl"
@@ -2239,13 +2441,13 @@ watch(
         </div>
       </div>
       <div v-else-if="previewError" class="pdf-error">
-        <p>{{ previewError }}</p>
+        <p>{{ ipText(previewError) }}</p>
         <el-button v-if="previewFile" @click="openDocument(previewFile)">
-          重试
+          {{ ipText("重试") }}
         </el-button>
       </div>
       <div v-else-if="previewDownloading" class="pdf-transfer">
-        <p>{{ previewDownloadText }}</p>
+        <p>{{ ipText(previewDownloadText) }}</p>
         <el-progress
           v-if="previewTotal > 0"
           :percentage="previewDownloadPercent"

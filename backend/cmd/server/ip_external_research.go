@@ -96,6 +96,8 @@ func containsResearchTerm(text string, terms ...string) bool {
 }
 
 func prepareIPResearchBrief(s recommendationSubscription, message string) ipResearchBrief {
+	originalMessage := message
+	message = normalizeIPIntentTerms(message)
 	b := ipResearchBrief{Markets: []string{}, Kinds: []string{}}
 	if s.IPWorkspace != nil && s.IPWorkspace.ExternalBrief != nil {
 		b = *s.IPWorkspace.ExternalBrief
@@ -125,7 +127,7 @@ func prepareIPResearchBrief(s recommendationSubscription, message string) ipRese
 				}
 			}
 			for _, c := range p.WebSearch.Candidates {
-				if strings.Contains(researchNameKey(message), researchNameKey(c.Name)) && !slices.Contains(b.FocusNames, c.Name) {
+				if strings.Contains(researchNameKey(originalMessage), researchNameKey(c.Name)) && !slices.Contains(b.FocusNames, c.Name) {
 					b.FocusNames = append(b.FocusNames, c.Name)
 				}
 			}
@@ -309,7 +311,7 @@ func ipResearchJSON(ctx context.Context, model *assistantAIModel, transport http
 		return errors.New("研究模型未配置")
 	}
 	payload, _ := json.Marshal(input)
-	body, _ := json.Marshal(map[string]any{"model": model.Model, "messages": []map[string]string{{"role": "system", "content": instruction}, {"role": "user", "content": string(payload)}}, "temperature": 0.1, "max_tokens": 4000, "stream": false, "response_format": map[string]string{"type": "json_object"}})
+	body, _ := json.Marshal(map[string]any{"model": model.Model, "messages": []map[string]string{{"role": "system", "content": instruction + ipModelLanguageInstruction(ctx)}, {"role": "user", "content": string(payload)}}, "temperature": 0.1, "max_tokens": 4000, "stream": false, "response_format": map[string]string{"type": "json_object"}})
 	callTimeout := model.Timeout
 	if callTimeout <= 0 || callTimeout > 30*time.Second {
 		callTimeout = 30 * time.Second
@@ -787,7 +789,7 @@ func (a *app) handleIPExternalResearch(w http.ResponseWriter, r *http.Request, s
 	if r.Context().Err() != nil {
 		return
 	}
-	p := ipResearchPresentation(search)
+	p := localizeIPPresentation(ctx, ipResearchPresentation(search))
 	if s.IPWorkspace.Stage == "" {
 		s.IPWorkspace.Stage = "confirm"
 	}

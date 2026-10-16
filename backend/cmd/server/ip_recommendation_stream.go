@@ -71,6 +71,16 @@ func (s *ipConversationStream) write(frame string) error {
 }
 
 func (s *ipConversationStream) send(event string, data any) error {
+	if ipLanguage(s.ctx) == "en" && (event == "status" || event == "error") {
+		if message, ok := data.(map[string]string); ok {
+			copy := map[string]string{}
+			for k, v := range message {
+				copy[k] = v
+			}
+			copy["message"] = ipEnglishText(copy["message"])
+			data = copy
+		}
+	}
 	body, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -78,7 +88,7 @@ func (s *ipConversationStream) send(event string, data any) error {
 	err = s.write("event: " + event + "\ndata: " + string(body) + "\n\n")
 	if err == nil && (event == "done" || event == "error") {
 		s.mu.Lock()
-		if recorder, ok := s.w.(*loggingResponseWriter); ok {
+		if recorder := ipLoggingWriter(s.w); recorder != nil {
 			recorder.apiCode, recorder.hasAPICode = 0, true
 			if event == "error" {
 				recorder.apiCode = 500

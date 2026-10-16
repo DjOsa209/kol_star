@@ -1,3 +1,4 @@
+import { ipText } from "@/utils/ipI18n";
 import type {
   IPRecommendationPresentation,
   IPRecommendationConversationResult
@@ -25,7 +26,7 @@ export async function readRecommendationStream(
   options.signal?.addEventListener("abort", abort, { once: true });
   const checkAbort = () => {
     if (options.signal?.aborted)
-      throw new DOMException("已停止生成", "AbortError");
+      throw new DOMException(ipText("已停止生成"), "AbortError");
   };
   const dispatch = () => {
     if (!data.length) {
@@ -34,7 +35,7 @@ export async function readRecommendationStream(
     }
     const body = JSON.parse(data.join("\n"));
     if (event === "error")
-      throw new Error(body.message || "推荐生成失败，请重试");
+      throw new Error(body.message || ipText("推荐生成失败，请重试"));
     if (event === "status" && typeof body.message === "string")
       options.onStatus?.(body.message);
     if (event === "session" && Number.isSafeInteger(body.id) && body.id > 0)
@@ -46,7 +47,7 @@ export async function readRecommendationStream(
         !Array.isArray(body.basis) ||
         !["ai", "rule"].includes(body.source)
       )
-        throw new Error("推荐内容格式不合法，请重试");
+        throw new Error(ipText("推荐内容格式不合法，请重试"));
       options.onPresentation?.(body);
     }
     if (event === "done") {
@@ -56,7 +57,7 @@ export async function readRecommendationStream(
         !Array.isArray(body.data.results) ||
         typeof body.data.presentation?.headline !== "string"
       )
-        throw new Error(body.message || "推荐结果不完整，请重试");
+        throw new Error(body.message || ipText("推荐结果不完整，请重试"));
       result = body;
     }
     event = "message";
@@ -68,7 +69,7 @@ export async function readRecommendationStream(
     else if (value.startsWith("event:")) event = value.slice(6).trim();
     else if (value.startsWith("data:")) {
       dataLength += value.length;
-      if (dataLength > 1 << 20) throw new Error("推荐响应过长，请重试");
+      if (dataLength > 1 << 20) throw new Error(ipText("推荐响应过长，请重试"));
       data.push(value.slice(5).replace(/^ /, ""));
     }
   };
@@ -78,7 +79,8 @@ export async function readRecommendationStream(
       const chunk = await reader.read();
       checkAbort();
       buffer += decoder.decode(chunk.value, { stream: !chunk.done });
-      if (buffer.length > 1 << 20) throw new Error("推荐响应过长，请重试");
+      if (buffer.length > 1 << 20)
+        throw new Error(ipText("推荐响应过长，请重试"));
       let end: number;
       while ((end = buffer.indexOf("\n")) >= 0) {
         line(buffer.slice(0, end).replace(/\r$/, ""));
@@ -91,7 +93,8 @@ export async function readRecommendationStream(
         break;
       }
     }
-    if (!result) throw new Error("流式连接提前结束，回答尚未完成，请重试");
+    if (!result)
+      throw new Error(ipText("流式连接提前结束，回答尚未完成，请重试"));
     return result;
   } finally {
     options.signal?.removeEventListener("abort", abort);

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText } = useIPLocale();
+
 import { computed } from "vue";
 import type { IPStageDeadline } from "@/api/ip";
 const props = defineProps<{ deadline?: IPStageDeadline; compact?: boolean }>();
@@ -22,10 +25,10 @@ const status = computed(() => {
       return "今日截止";
     case "overdue":
       return d.overdueWorkdays
-        ? `已逾期 ${d.overdueWorkdays} 个工作日`
+        ? ipText("已逾期 {0} 个工作日", [d.overdueWorkdays])
         : "已逾期";
     default:
-      return `剩余 ${d.remainingWorkdays} 个工作日`;
+      return ipText("剩余 {0} 个工作日", [d.remainingWorkdays]);
   }
 });
 // Always show Beijing civil time, regardless of the viewer's browser timezone.
@@ -36,19 +39,21 @@ const dueText = computed(() =>
 <template>
   <div class="ip-deadline" :class="{ compact }">
     <span class="deadline-label"
-      >{{ deadline?.label || "反馈"
+      >{{ ipText(deadline?.label || ipText("反馈"))
       }}<small v-if="!compact"
-        >{{ deadline?.workingDays }} 个工作日</small
+        >{{ ipText(deadline?.workingDays) }} {{ ipText("个工作日") }}</small
       ></span
     >
-    <time v-if="dueText" :datetime="deadline?.dueAt">{{ dueText }} 前</time>
+    <time v-if="dueText" :datetime="deadline?.dueAt">{{
+      ipText("{0} 前", [dueText])
+    }}</time>
     <span
       class="deadline-state"
       :class="{ late: deadline?.late, urgent: deadline?.state === 'due_today' }"
-      >{{ status }}</span
+      >{{ ipText(status) }}</span
     >
     <small v-if="deadline?.warning" class="deadline-warning">{{
-      deadline.warning
+      ipText(deadline.warning)
     }}</small>
   </div>
 </template>

@@ -1055,7 +1055,7 @@ func (a *app) requestRecommendationAIRanks(ctx context.Context, model assistantA
 	body, _ := json.Marshal(map[string]any{
 		"model": model.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": recommendationAdviceSystemPrompt()},
+			{"role": "system", "content": recommendationAdviceSystemPrompt() + ipModelLanguageInstruction(ctx)},
 			{"role": "user", "content": string(payload)},
 		},
 		"temperature":     model.Temperature,
@@ -1175,6 +1175,9 @@ func (a *app) executeRecommendationRun(ctx context.Context, subscriptionID int64
 	}
 	notices := 0
 	for _, candidate := range candidates {
+		if domain == "ip" && ipLanguage(ctx) == "en" {
+			candidate = ipEnglishCandidate(s, candidate)
+		}
 		isNew := 0
 		if weekly {
 			isNew = 1

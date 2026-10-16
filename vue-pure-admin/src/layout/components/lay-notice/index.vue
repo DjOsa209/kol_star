@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText } = useIPLocale();
+
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
@@ -133,22 +136,27 @@ onUnmounted(() => {
     <template #dropdown>
       <el-dropdown-menu class="recommendation-notice-menu">
         <div class="notice-head">
-          <strong>推荐提醒</strong><small>每周更新</small>
+          <strong>{{ ipText("推荐提醒") }}</strong
+          ><small>{{ ipText("每周更新") }}</small>
         </div>
         <el-tabs v-model="activeDomain" stretch class="notice-tabs">
           <el-tab-pane
             name="creator"
-            :label="`${t('menus.creatorRecommendations')} ${creatorCount || ''}`"
+            :label="
+              ipText(
+                `${t('menus.creatorRecommendations')} ${creatorCount || ''}`
+              )
+            "
           />
           <el-tab-pane
             name="ip"
-            :label="`${t('menus.ipRecommendations')} ${ipCount || ''}`"
+            :label="ipText(`${t('menus.ipRecommendations')} ${ipCount || ''}`)"
           />
         </el-tabs>
         <el-scrollbar max-height="350px" class="notice-scroll">
           <el-empty
             v-if="!visibleNotices.length"
-            description="暂无新推荐提醒"
+            :description="ipText('暂无新推荐提醒')"
             :image-size="60"
           />
           <button
@@ -163,16 +171,16 @@ onUnmounted(() => {
               ><i v-if="!item.readAt" />{{ item.title }}</span
             >
             <span class="notice-description">{{ item.description }}</span>
-            <time>{{ formatTime(item.createdAt) }}</time>
+            <time>{{ ipText(formatTime(item.createdAt)) }}</time>
           </button>
         </el-scrollbar>
         <div class="notice-foot">
           <el-button size="small" text @click.stop="markDomainRead">{{
-            t("buttons.pureMarkAsRead")
+            ipText(t("buttons.pureMarkAsRead"))
           }}</el-button>
-          <el-button size="small" text @click.stop="openDomain"
-            >查看推荐 →</el-button
-          >
+          <el-button size="small" text @click.stop="openDomain">{{
+            ipText("查看推荐 →")
+          }}</el-button>
         </div>
       </el-dropdown-menu>
     </template>

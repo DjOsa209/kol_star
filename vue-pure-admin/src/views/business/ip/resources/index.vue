@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { canonicalIPImportHeader, canonicalIPOption } from "@/utils/ipI18n";
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText, locale } = useIPLocale();
+
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useUserStoreHook } from "@/store/modules/user";
@@ -154,7 +158,7 @@ function saveManualDraft() {
       caseSummary: caseSummary.value
     })
   );
-  ElMessage.success("文字草稿已保存在当前浏览器，附件需重新选择");
+  ElMessage.success(ipText("文字草稿已保存在当前浏览器，附件需重新选择"));
 }
 function restoreManualDraft() {
   try {
@@ -210,9 +214,15 @@ const previewDownloadPercent = computed(() =>
 );
 const previewDownloadText = computed(() =>
   previewTotal.value > 0
-    ? `正在下载 PDF · ${formatBytes(previewDownloaded.value)} / ${formatBytes(previewTotal.value)}（${previewDownloadPercent.value}%）`
+    ? ipText("正在下载 PDF · {0} / {1}（{2}%）", [
+        formatBytes(previewDownloaded.value),
+        formatBytes(previewTotal.value),
+        previewDownloadPercent.value
+      ])
     : previewDownloaded.value > 0
-      ? `正在下载 PDF · 已下载 ${formatBytes(previewDownloaded.value)}`
+      ? ipText("正在下载 PDF · 已下载 {0}", [
+          formatBytes(previewDownloaded.value)
+        ])
       : "正在连接并下载 PDF…"
 );
 const importFileName = ref("");
@@ -376,7 +386,7 @@ async function openDrawer(id: number) {
       );
   } catch {
     drawerVisible.value = false;
-    ElMessage.error("IP档案加载失败，请重试");
+    ElMessage.error(ipText("IP档案加载失败，请重试"));
   } finally {
     drawerLoading.value = false;
   }
@@ -407,13 +417,13 @@ function toggleForRequest(id: number) {
     );
   else if (selectedForRequest.value.length < 5)
     selectedForRequest.value.push(id);
-  else ElMessage.warning("最多选择5个意向IP");
+  else ElMessage.warning(ipText("最多选择5个意向IP"));
 }
 function confirmForRequest() {
   const key = String(route.query.selectionKey || "");
   if (!key) return;
   localStorage.setItem(key, JSON.stringify(selectedForRequest.value));
-  ElMessage.success("已加入需求意向清单，请返回需求页面");
+  ElMessage.success(ipText("已加入需求意向清单，请返回需求页面"));
   window.close();
 }
 async function loadDetail(id: number) {
@@ -463,7 +473,7 @@ function pdfChanged(event: Event, kind: "copyright" | "case") {
       !file.name.toLowerCase().endsWith(".pdf") || file.size > 20 * 1024 * 1024
   );
   if (invalid) {
-    ElMessage.error("仅支持20MB以内的PDF文件");
+    ElMessage.error(ipText("仅支持20MB以内的PDF文件"));
     return;
   }
   if (kind === "copyright") {
@@ -478,7 +488,9 @@ function pdfChanged(event: Event, kind: "copyright" | "case") {
     });
     copyrightFiles.value.push(...additions);
     if (additions.length !== files.length)
-      ElMessage.warning("同名版权文件已跳过；如需添加，请先重命名已选文件");
+      ElMessage.warning(
+        ipText("同名版权文件已跳过；如需添加，请先重命名已选文件")
+      );
   } else if (files[0]) {
     caseFile.value = files[0];
   }
@@ -492,7 +504,7 @@ function visualChanged(event: Event) {
     !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
     file.size > 5 * 1024 * 1024
   ) {
-    ElMessage.warning("IP形象仅支持5MB以内的PNG、JPG或WebP图片");
+    ElMessage.warning(ipText("IP形象仅支持5MB以内的PNG、JPG或WebP图片"));
     return;
   }
   visualFile.value = file;
@@ -503,12 +515,12 @@ function selectedFileExtension(file: File) {
 async function askFileName(currentName: string, extension: string) {
   try {
     const { value } = await ElMessageBox.prompt(
-      "请输入新的文件名",
-      "重命名文件",
+      ipText("请输入新的文件名"),
+      ipText("重命名文件"),
       {
         inputValue: currentName,
-        confirmButtonText: "保存",
-        cancelButtonText: "取消",
+        confirmButtonText: ipText("保存"),
+        cancelButtonText: ipText("取消"),
         inputValidator: value => {
           const name = String(value || "").trim();
           const finalName = name.toLowerCase().endsWith(extension.toLowerCase())
@@ -559,7 +571,7 @@ async function renameSelectedFile(
         item.name.toLocaleLowerCase() === name.toLocaleLowerCase()
     )
   ) {
-    ElMessage.warning("已选择同名版权文件，请使用不同文件名");
+    ElMessage.warning(ipText("已选择同名版权文件，请使用不同文件名"));
     return;
   }
   const renamed = new File([file], name, {
@@ -577,7 +589,7 @@ async function renameStoredFile(file: any) {
   if (!name || name === originalName) return;
   await renameIPFile(Number(file.id), name);
   if (detail.value) await loadDetail(Number(detail.value.resource.id));
-  ElMessage.success("文件名已更新");
+  ElMessage.success(ipText("文件名已更新"));
 }
 function removeSelectedFile(kind: "copyright" | "visual" | "case", index = 0) {
   if (kind === "copyright") copyrightFiles.value.splice(index, 1);
@@ -592,12 +604,12 @@ async function addVisual(event: Event) {
   visualFile.value = null;
   await uploadIPFile(id, "visual", file);
   await loadDetail(id);
-  ElMessage.success("IP形象已上传");
+  ElMessage.success(ipText("IP形象已上传"));
 }
 async function saveManual() {
   const item = form.value;
   if (!item.name.trim() || !item.ipType || !item.markets.length) {
-    ElMessage.warning("请填写IP名称、类型和覆盖市场");
+    ElMessage.warning(ipText("请填写IP名称、类型和覆盖市场"));
     return;
   }
   const marketPenetrations = Object.fromEntries(
@@ -610,7 +622,7 @@ async function saveManual() {
       value => !Number.isFinite(value) || value < 0 || value > 100
     )
   ) {
-    ElMessage.warning("市场渗透率请输入0至100之间的数值");
+    ElMessage.warning(ipText("市场渗透率请输入0至100之间的数值"));
     return;
   }
   if (
@@ -618,11 +630,11 @@ async function saveManual() {
     item.priceMax != null &&
     item.priceMin > item.priceMax
   ) {
-    ElMessage.warning("价格下限不能高于上限");
+    ElMessage.warning(ipText("价格下限不能高于上限"));
     return;
   }
   if (caseFile.value && !caseTitle.value.trim()) {
-    ElMessage.warning("上传结案文件前请填写历史合作名称");
+    ElMessage.warning(ipText("上传结案文件前请填写历史合作名称"));
     return;
   }
   saving.value = true;
@@ -651,7 +663,9 @@ async function saveManual() {
     caseFile.value = null;
     caseTitle.value = "";
     caseSummary.value = "";
-    ElMessage.success(item.id ? "IP资料已更新" : "IP已创建");
+    ElMessage.success(
+      ipText(item.id ? ipText("IP资料已更新") : ipText("IP已创建"))
+    );
     if (!item.id) localStorage.removeItem(manualDraftKey());
     if (Number(route.query.id) === id) {
       mode.value = "detail";
@@ -663,7 +677,7 @@ async function saveManual() {
 }
 async function addCase() {
   if (!detail.value || !caseTitle.value.trim()) {
-    ElMessage.warning("请填写合作案例名称");
+    ElMessage.warning(ipText("请填写合作案例名称"));
     return;
   }
   saving.value = true;
@@ -680,7 +694,7 @@ async function addCase() {
     caseSummary.value = "";
     caseFile.value = null;
     await loadDetail(id);
-    ElMessage.success("合作案例已添加");
+    ElMessage.success(ipText("合作案例已添加"));
   } finally {
     saving.value = false;
   }
@@ -694,7 +708,7 @@ async function addCopyright(event: Event) {
       file => file.type !== "application/pdf" || file.size > 20 * 1024 * 1024
     )
   ) {
-    ElMessage.error("仅支持20MB以内的PDF文件");
+    ElMessage.error(ipText("仅支持20MB以内的PDF文件"));
     return;
   }
   saving.value = true;
@@ -702,7 +716,7 @@ async function addCopyright(event: Event) {
     const id = Number(detail.value.resource.id);
     for (const file of files) await uploadIPFile(id, "copyright", file);
     await loadDetail(id);
-    ElMessage.success("版权资料已上传");
+    ElMessage.success(ipText("版权资料已上传"));
   } finally {
     saving.value = false;
   }
@@ -754,7 +768,7 @@ async function openFile(file: any, download = false) {
     }
   } catch {
     if (download) {
-      ElMessage.error("文件下载失败，请稍后重试");
+      ElMessage.error(ipText("文件下载失败，请稍后重试"));
     } else if (requestId === previewRequestId && previewVisible.value) {
       previewDownloading.value = false;
       previewError.value = "文件下载失败，请检查网络后重试";
@@ -769,17 +783,21 @@ function pdfFailed() {
   previewError.value = "PDF无法预览，请下载文件查看";
 }
 async function removeFile(file: any) {
-  await ElMessageBox.confirm(`删除「${file.originalName}」？`, "确认删除", {
-    type: "warning"
-  });
+  await ElMessageBox.confirm(
+    ipText("删除「{0}」？", [file.originalName]),
+    ipText("确认删除"),
+    {
+      type: "warning"
+    }
+  );
   await deleteIPFile(Number(file.id));
   if (detail.value) await loadDetail(Number(detail.value.resource.id));
-  ElMessage.success("文件已删除");
+  ElMessage.success(ipText("文件已删除"));
 }
 function downloadTemplate() {
   const anchor = document.createElement("a");
-  anchor.href = `${import.meta.env.BASE_URL}IP导入模板.xlsx`;
-  anchor.download = "IP导入模板.xlsx";
+  anchor.href = `${import.meta.env.BASE_URL}${locale.value.startsWith("en") ? "IP-import-template.en.xlsx" : "IP导入模板.xlsx"}`;
+  anchor.download = ipText("IP导入模板.xlsx");
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
@@ -787,7 +805,7 @@ function downloadTemplate() {
 function splitImportMarkets(value: unknown) {
   return String(value || "")
     .split(/[,，、;；/]+/)
-    .map(market => market.trim())
+    .map(market => canonicalIPOption(market))
     .filter(Boolean);
 }
 function parseImportMarkets(row: Record<string, any>) {
@@ -808,8 +826,8 @@ function parseImportMarkets(row: Record<string, any>) {
     if (rate === undefined) continue;
     if (names.length !== 1) {
       issue ||= names.length
-        ? `覆盖市场${index}有多个市场，请拆分后填写渗透率`
-        : `渗透率${index}已填写，请先选择覆盖市场${index}`;
+        ? ipText("覆盖市场{0}有多个市场，请拆分后填写渗透率", [index])
+        : ipText("渗透率{0}已填写，请先选择覆盖市场{1}", [index, index]);
       continue;
     }
     const text = String(rate)
@@ -818,7 +836,7 @@ function parseImportMarkets(row: Record<string, any>) {
       .trim();
     const amount = Number(text);
     if (!text || !Number.isFinite(amount) || amount < 0 || amount > 100) {
-      issue ||= `渗透率${index}应为0至100的数字`;
+      issue ||= ipText("渗透率{0}应为0至100的数字", [index]);
       marketPenetrations[names[0]] = -1;
       continue;
     }
@@ -855,20 +873,37 @@ async function readImport(event: Event) {
   try {
     const book = XLSX.read(await file.arrayBuffer());
     const sheet = book.Sheets[book.SheetNames[0]];
-    const records = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, {
-      defval: ""
-    });
+    const records = XLSX.utils
+      .sheet_to_json<Record<string, any>>(sheet, {
+        defval: ""
+      })
+      .map(record => {
+        const row: Record<string, any> = Object.fromEntries(
+          Object.entries(record).map(([key, value]) => [
+            canonicalIPImportHeader(key),
+            value
+          ])
+        );
+        if (typeof record.__rowNum__ === "number")
+          Object.defineProperty(row, "__rowNum__", {
+            value: record.__rowNum__,
+            enumerable: false
+          });
+        return row;
+      });
     const headers =
       XLSX.utils.sheet_to_json<string[]>(sheet, {
         header: 1,
         range: 0,
         blankrows: false
       })[0] || [];
-    const rateColumns = headers.flatMap((header, column) =>
-      /^渗透率[1-9](（%）|\(%\)|%)$/.test(String(header))
-        ? [{ header, column }]
-        : []
-    );
+    const rateColumns = headers
+      .map(header => canonicalIPImportHeader(String(header)))
+      .flatMap((header, column) =>
+        /^渗透率[1-9](（%）|\(%\)|%)$/.test(String(header))
+          ? [{ header, column }]
+          : []
+      );
     records.forEach((row, index) => {
       const excelRow =
         typeof row.__rowNum__ === "number" ? row.__rowNum__ : index + 1;
@@ -880,7 +915,7 @@ async function readImport(event: Event) {
       }
     });
     if (!records.length || records.length > 500) {
-      ElMessage.warning("每次请选择1至500条IP");
+      ElMessage.warning(ipText("每次请选择1至500条IP"));
       return;
     }
     importExcelRows.value = records.map((row, index) =>
@@ -898,14 +933,18 @@ async function readImport(event: Event) {
       importLocalIssues.value.push(marketInput.issue);
       return {
         name: String(row["IP名称*"] || row["IP名称"] || "").trim(),
-        ipType: String(row["IP类型*"] || row["IP类型"] || "").trim(),
+        ipType: canonicalIPOption(
+          String(row["IP类型*"] || row["IP类型"] || "")
+        ),
         markets: marketInput.markets,
         marketPenetrations: marketInput.marketPenetrations,
         rightsOwner: String(row["版权方"] || "").trim(),
         contact: String(row["联系人"] || "").trim(),
         audience: String(row["目标受众"] || "").trim(),
         summary: String(row["IP简介"] || "").trim(),
-        cooperationStatus: String(row["合作状态"] || "待评估").trim(),
+        cooperationStatus: canonicalIPOption(
+          String(row["合作状态"] || "待评估")
+        ),
         currency: String(row["币种"] || "CNY").trim(),
         priceMin: parseMoney(row["基础权益价格下限"]),
         priceMax: parseMoney(row["基础权益价格上限"]),
@@ -932,7 +971,7 @@ async function readImport(event: Event) {
         : result
     );
   } catch {
-    ElMessage.error("文件解析失败，请使用下载的模板");
+    ElMessage.error(ipText("文件解析失败，请使用下载的模板"));
   } finally {
     importLoading.value = false;
   }
@@ -945,7 +984,7 @@ function readBatchFiles(event: Event) {
       file => file.type !== "application/pdf" || file.size > 20 * 1024 * 1024
     )
   ) {
-    ElMessage.error("仅支持20MB以内的PDF文件");
+    ElMessage.error(ipText("仅支持20MB以内的PDF文件"));
     return;
   }
   batchFiles.value = files;
@@ -955,12 +994,16 @@ function batchFileKind(
   key: string
 ): "copyright" | "case" | "" {
   if (
-    fileName.startsWith(`${key}_版权介绍`) &&
+    [`${key}_版权介绍`, `${key}_copyright`].some(prefix =>
+      fileName.startsWith(prefix)
+    ) &&
     fileName.toLowerCase().endsWith(".pdf")
   )
     return "copyright";
   if (
-    fileName.startsWith(`${key}_结案`) &&
+    [`${key}_结案`, `${key}_case`].some(prefix =>
+      fileName.startsWith(prefix)
+    ) &&
     fileName.toLowerCase().endsWith(".pdf")
   )
     return "case";
@@ -976,7 +1019,9 @@ async function runImport() {
       .filter(row => row.status === "ready")
       .map(row => importKeys.value[Number(row.row) - 2]);
     if (keys.some(key => !key) || new Set(keys).size !== keys.length) {
-      ElMessage.warning("批量关联PDF时，请为可导入行填写不重复的导入编号");
+      ElMessage.warning(
+        ipText("批量关联PDF时，请为可导入行填写不重复的导入编号")
+      );
       return;
     }
     if (
@@ -984,7 +1029,7 @@ async function runImport() {
         file => !keys.some(key => batchFileKind(file.name, key))
       )
     ) {
-      ElMessage.warning("有PDF文件名未匹配可导入行的编号或附件类型");
+      ElMessage.warning(ipText("有PDF文件名未匹配可导入行的编号或附件类型"));
       return;
     }
   }
@@ -1026,7 +1071,11 @@ async function runImport() {
       }
     }
     ElMessage.success(
-      `成功导入${result.data.imported}条IP，关联${uploaded}份PDF${failed ? `，${failed}份附件上传失败，请在详情页补充` : ""}`
+      ipText("成功导入{0}条IP，关联{1}份PDF{2}", [
+        result.data.imported,
+        uploaded,
+        failed ? `，${failed}份附件上传失败，请在详情页补充` : ""
+      ])
     );
     importRows.value = [];
     importPreview.value = [];
@@ -1092,43 +1141,49 @@ onUnmounted(() => {
     <div class="ip-head">
       <div>
         <div v-if="mode !== 'list'" class="ip-eyebrow">
-          IP资源库 / {{ mode === "detail" ? detail?.resource.name : "新增IP" }}
+          {{ ipText("IP资源库 /") }}
+          {{ mode === "detail" ? detail?.resource.name : ipText("新增IP") }}
         </div>
         <h1>
           {{
             mode === "list"
-              ? "IP资源库"
+              ? ipText("IP资源库")
               : mode === "detail"
-                ? detail?.resource.name || "IP详情"
-                : "新增IP"
+                ? detail?.resource.name || ipText("IP详情")
+                : ipText("新增IP")
           }}
         </h1>
         <p>
           {{
-            mode === "list"
-              ? "统一沉淀IP资产，支持需求快速匹配"
-              : mode === "detail"
-                ? "版权资料、参考权益价格与历史合作"
-                : "支持单条录入与模板批量导入"
+            ipText(
+              mode === "list"
+                ? ipText("统一沉淀IP资产，支持需求快速匹配")
+                : mode === "detail"
+                  ? ipText("版权资料、参考权益价格与历史合作")
+                  : ipText("支持单条录入与模板批量导入")
+            )
           }}
         </p>
       </div>
       <div class="ip-actions">
-        <el-button v-if="mode !== 'list'" @click="goList">返回资源库</el-button>
-        <el-button v-if="mode === 'list'" class="ip-primary" @click="goNew()"
-          >＋ 新增IP</el-button
-        >
+        <el-button v-if="mode !== 'list'" @click="goList">{{
+          ipText("返回资源库")
+        }}</el-button>
+        <el-button v-if="mode === 'list'" class="ip-primary" @click="goNew()">{{
+          ipText("＋ 新增IP")
+        }}</el-button>
         <el-button
           v-if="mode === 'list' && selectingForRequest"
           class="ip-primary"
           @click="confirmForRequest"
-          >确认选择 {{ selectedForRequest.length }} 个IP</el-button
+          >{{ ipText("确认选择") }} {{ ipText(selectedForRequest.length) }}
+          {{ ipText("个IP") }}</el-button
         >
         <el-button
           v-if="mode === 'detail'"
           class="ip-primary"
           @click="editDetail"
-          >编辑IP资料</el-button
+          >{{ ipText("编辑IP资料") }}</el-button
         >
       </div>
     </div>
@@ -1140,7 +1195,8 @@ onUnmounted(() => {
             <IconifyIconOnline icon="ri:stack-line" />
           </div>
           <div>
-            <span>IP总数</span><strong>{{ stats.total }}</strong>
+            <span>{{ ipText("IP总数") }}</span
+            ><strong>{{ ipText(stats.total) }}</strong>
           </div>
         </div>
         <div class="ip-stat">
@@ -1148,7 +1204,8 @@ onUnmounted(() => {
             <IconifyIconOnline icon="ri:group-line" />
           </div>
           <div>
-            <span>可合作</span><strong>{{ stats.cooperable }}</strong>
+            <span>{{ ipText("可合作") }}</span
+            ><strong>{{ ipText(stats.cooperable) }}</strong>
           </div>
         </div>
         <div class="ip-stat">
@@ -1156,7 +1213,8 @@ onUnmounted(() => {
             <IconifyIconOnline icon="ri:file-list-3-line" />
           </div>
           <div>
-            <span>待版权资料</span><strong>{{ stats.pendingFiles }}</strong>
+            <span>{{ ipText("待版权资料") }}</span
+            ><strong>{{ ipText(stats.pendingFiles) }}</strong>
           </div>
         </div>
         <div class="ip-stat">
@@ -1164,7 +1222,8 @@ onUnmounted(() => {
             <IconifyIconOnline icon="ri:line-chart-line" />
           </div>
           <div>
-            <span>近30天新增</span><strong>{{ stats.recent }}</strong>
+            <span>{{ ipText("近30天新增") }}</span
+            ><strong>{{ ipText(stats.recent) }}</strong>
           </div>
         </div>
       </div>
@@ -1172,34 +1231,40 @@ onUnmounted(() => {
         <div class="ip-filter">
           <el-input
             v-model="filter.keyword"
-            placeholder="搜索IP名称、版权方或市场"
+            :placeholder="ipText('搜索IP名称、版权方或市场')"
             clearable
             @keyup.enter="loadList"
           />
-          <el-select v-model="filter.ipType" placeholder="全部类型" clearable
+          <el-select
+            v-model="filter.ipType"
+            :placeholder="ipText('全部类型')"
+            clearable
             ><el-option
               v-for="type in filterTypes"
               :key="type"
-              :label="type"
+              :label="ipText(type)"
               :value="type"
           /></el-select>
-          <el-select v-model="filter.status" placeholder="合作状态" clearable
+          <el-select
+            v-model="filter.status"
+            :placeholder="ipText('合作状态')"
+            clearable
             ><el-option
               v-for="status in statuses"
               :key="status"
-              :label="status"
+              :label="ipText(status)"
               :value="status"
           /></el-select>
           <el-select
             v-model="filter.market"
-            placeholder="目标市场"
+            :placeholder="ipText('目标市场')"
             clearable
             filterable
           >
             <el-option
               v-for="market in markets"
               :key="market"
-              :label="market"
+              :label="ipText(market)"
               :value="market"
             />
           </el-select>
@@ -1209,39 +1274,47 @@ onUnmounted(() => {
               filter.page = 1;
               loadList();
             "
-            >搜索</el-button
+            >{{ ipText("搜索") }}</el-button
           >
-          <el-button @click="resetFilters">重置</el-button>
+          <el-button @click="resetFilters">{{ ipText("重置") }}</el-button>
           <el-button link @click="advancedFilters = !advancedFilters">{{
-            advancedFilters ? "收起筛选" : "高级筛选"
+            ipText(advancedFilters ? ipText("收起筛选") : ipText("高级筛选"))
           }}</el-button>
         </div>
         <div v-if="advancedFilters" class="ip-filter ip-advanced-filter">
           <el-select
             v-model="filter.completeness"
-            placeholder="资料完成度"
+            :placeholder="ipText('资料完成度')"
             clearable
           >
-            <el-option label="资料完整" value="complete" />
-            <el-option label="待补充" value="incomplete" />
+            <el-option :label="ipText('资料完整')" value="complete" />
+            <el-option :label="ipText('待补充')" value="incomplete" />
           </el-select>
           <el-date-picker
             v-model="updatedRange"
             type="daterange"
             value-format="YYYY-MM-DD"
-            start-placeholder="更新起始"
-            end-placeholder="更新截止"
+            :start-placeholder="ipText('更新起始')"
+            :end-placeholder="ipText('更新截止')"
           />
         </div>
-        <el-table :data="rows" empty-text="暂无IP，点击右上角新增" stripe>
-          <el-table-column v-if="selectingForRequest" label="选择" width="65">
+        <el-table
+          :data="rows"
+          :empty-text="ipText('暂无IP，点击右上角新增')"
+          stripe
+        >
+          <el-table-column
+            v-if="selectingForRequest"
+            :label="ipText('选择')"
+            width="65"
+          >
             <template #default="scope"
               ><el-checkbox
                 :model-value="selectedForRequest.includes(Number(scope.row.id))"
                 @change="toggleForRequest(Number(scope.row.id))"
             /></template>
           </el-table-column>
-          <el-table-column prop="name" label="IP名称" min-width="260"
+          <el-table-column prop="name" :label="ipText('IP名称')" min-width="260"
             ><template #default="scope"
               ><div class="ip-name-cell">
                 <img
@@ -1254,36 +1327,41 @@ onUnmounted(() => {
                   <button class="ip-link" @click="openDrawer(scope.row.id)">
                     {{ scope.row.name }}</button
                   ><small>{{
-                    scope.row.summary || scope.row.rightsOwner || "版权方待补充"
+                    scope.row.summary ||
+                    scope.row.rightsOwner ||
+                    ipText("版权方待补充")
                   }}</small>
                 </div>
               </div></template
             ></el-table-column
           >
-          <el-table-column label="类型" min-width="110"
+          <el-table-column :label="ipText('类型')" min-width="160"
             ><template #default="scope"
-              ><el-tag effect="light">{{ scope.row.ipType }}</el-tag></template
+              ><el-tag effect="light">{{
+                ipText(scope.row.ipType)
+              }}</el-tag></template
             ></el-table-column
           >
-          <el-table-column label="覆盖市场及渗透率" min-width="220"
+          <el-table-column :label="ipText('覆盖市场及渗透率')" min-width="220"
             ><template #default="scope">{{
-              marketCoverageText(scope.row)
+              ipText(marketCoverageText(scope.row))
             }}</template></el-table-column
           >
           <el-table-column
             prop="audience"
-            label="目标受众"
+            :label="ipText('目标受众')"
             min-width="140"
             show-overflow-tooltip
           />
-          <el-table-column label="基础权益价格范围" min-width="180"
+          <el-table-column :label="ipText('基础权益价格范围')" min-width="180"
             ><template #header
-              >基础权益价格范围 <small class="ip-muted">供参考</small></template
+              >{{ ipText("基础权益价格范围") }}
+              <small class="ip-muted">{{ ipText("供参考") }}</small></template
             ><template #default="scope">{{
-              priceText(scope.row)
+              ipText(priceText(scope.row))
             }}</template></el-table-column
           >
-          <el-table-column label="合作状态" min-width="110"
+          <el-table-column :label="ipText('合作状态')" min-width="150"
             ><template #default="scope"
               ><el-tag
                 :type="
@@ -1291,22 +1369,29 @@ onUnmounted(() => {
                     ? 'success'
                     : 'warning'
                 "
-                >{{ scope.row.cooperationStatus }}</el-tag
+                >{{ ipText(scope.row.cooperationStatus) }}</el-tag
               ></template
             ></el-table-column
           >
-          <el-table-column label="资料完成度" width="130">
+          <el-table-column :label="ipText('资料完成度')" width="130">
             <template #default="scope"
               ><el-progress
                 :percentage="Number(scope.row.completeness || 0)"
                 :show-text="true"
             /></template>
           </el-table-column>
-          <el-table-column prop="updatedAt" label="最近更新" min-width="145" />
-          <el-table-column label="操作" width="100"
+          <el-table-column
+            prop="updatedAt"
+            :label="ipText('最近更新')"
+            min-width="145"
+          />
+          <el-table-column :label="ipText('操作')" width="100"
             ><template #default="scope"
-              ><el-button link type="primary" @click="openDrawer(scope.row.id)"
-                >查看档案</el-button
+              ><el-button
+                link
+                type="primary"
+                @click="openDrawer(scope.row.id)"
+                >{{ ipText("查看档案") }}</el-button
               ></template
             ></el-table-column
           >
@@ -1323,7 +1408,7 @@ onUnmounted(() => {
       </div>
       <el-drawer
         v-model="drawerVisible"
-        title="IP档案"
+        :title="ipText('IP档案')"
         size="420px"
         class="ip-resource-drawer"
       >
@@ -1337,31 +1422,35 @@ onUnmounted(() => {
               />
               <div>
                 <h2>{{ drawerDetail.resource.name }}</h2>
-                <el-tag>{{ drawerDetail.resource.ipType }}</el-tag>
-                <p>{{ drawerDetail.resource.audience || "受众待补充" }}</p>
+                <el-tag>{{ ipText(drawerDetail.resource.ipType) }}</el-tag>
+                <p>
+                  {{ drawerDetail.resource.audience || ipText("受众待补充") }}
+                </p>
               </div>
             </div>
-            <p>{{ drawerDetail.resource.summary || "暂无IP简介" }}</p>
+            <p>{{ drawerDetail.resource.summary || ipText("暂无IP简介") }}</p>
             <div class="ip-drawer-section">
-              <h3>核心信息</h3>
+              <h3>{{ ipText("核心信息") }}</h3>
               <dl class="ip-dl">
-                <dt>版权方</dt>
-                <dd>{{ drawerDetail.resource.rightsOwner || "待补充" }}</dd>
-                <dt>覆盖市场及渗透率</dt>
-                <dd>{{ marketCoverageText(drawerDetail.resource) }}</dd>
-                <dt>合作状态</dt>
-                <dd>{{ drawerDetail.resource.cooperationStatus }}</dd>
+                <dt>{{ ipText("版权方") }}</dt>
+                <dd>
+                  {{ drawerDetail.resource.rightsOwner || ipText("待补充") }}
+                </dd>
+                <dt>{{ ipText("覆盖市场及渗透率") }}</dt>
+                <dd>{{ ipText(marketCoverageText(drawerDetail.resource)) }}</dd>
+                <dt>{{ ipText("合作状态") }}</dt>
+                <dd>{{ ipText(drawerDetail.resource.cooperationStatus) }}</dd>
               </dl>
             </div>
             <div class="ip-drawer-section">
-              <h3>参考权益价格</h3>
+              <h3>{{ ipText("参考权益价格") }}</h3>
               <strong class="ip-price">{{
-                priceText(drawerDetail.resource)
+                ipText(priceText(drawerDetail.resource))
               }}</strong>
-              <p class="ip-muted">供参考，根据具体需求更新</p>
+              <p class="ip-muted">{{ ipText("供参考，根据具体需求更新") }}</p>
             </div>
             <div class="ip-drawer-section">
-              <h3>可查看资料</h3>
+              <h3>{{ ipText("可查看资料") }}</h3>
               <div
                 v-for="file in drawerDetail.files.filter(
                   item => item.fileKind !== 'visual'
@@ -1372,7 +1461,9 @@ onUnmounted(() => {
                 <span
                   ><b class="ip-file-icon">PDF</b>{{ file.originalName }}</span
                 >
-                <el-button link @click="openFile(file)">预览</el-button>
+                <el-button link @click="openFile(file)">{{
+                  ipText("预览")
+                }}</el-button>
               </div>
               <p
                 v-if="
@@ -1380,13 +1471,13 @@ onUnmounted(() => {
                 "
                 class="ip-muted"
               >
-                暂无附件
+                {{ ipText("暂无附件") }}
               </p>
             </div>
             <el-button
               class="ip-primary ip-drawer-action"
               @click="goDetail(Number(drawerDetail.resource.id))"
-              >查看详情 →</el-button
+              >{{ ipText("查看详情 →") }}</el-button
             >
           </template>
         </div>
@@ -1397,9 +1488,10 @@ onUnmounted(() => {
       <div class="ip-card ip-hero">
         <div class="ip-hero-media">
           <img v-if="visualURL" :src="visualURL" :alt="detail.resource.name" />
-          <div v-else class="ip-hero-empty">暂无IP形象</div>
+          <div v-else class="ip-hero-empty">{{ ipText("暂无IP形象") }}</div>
           <label class="ip-hero-upload"
-            >＋ 上传形象<input
+            >{{ ipText("＋ 上传形象")
+            }}<input
               type="file"
               accept="image/png,image/jpeg,image/webp"
               hidden
@@ -1411,19 +1503,19 @@ onUnmounted(() => {
           <p>
             {{
               detail.resource.summary ||
-              "暂无IP简介，请补充背景、特点和影响力。"
+              ipText("暂无IP简介，请补充背景、特点和影响力。")
             }}
           </p>
           <div class="ip-hero-tags">
-            <el-tag>{{ detail.resource.ipType }}</el-tag>
+            <el-tag>{{ ipText(detail.resource.ipType) }}</el-tag>
             <el-tag type="success">{{
-              detail.resource.cooperationStatus
+              ipText(detail.resource.cooperationStatus)
             }}</el-tag>
             <el-tag
               v-if="objectValue(detail.resource.profile).lifecycle"
               type="info"
             >
-              {{ objectValue(detail.resource.profile).lifecycle }}
+              {{ ipText(objectValue(detail.resource.profile).lifecycle) }}
             </el-tag>
           </div>
         </div>
@@ -1431,17 +1523,18 @@ onUnmounted(() => {
       <div class="ip-detail-grid">
         <div class="ip-stack">
           <div class="ip-card">
-            <h2>基础权益价格范围</h2>
-            <div class="ip-price">{{ priceText(detail.resource) }}</div>
+            <h2>{{ ipText("基础权益价格范围") }}</h2>
+            <div class="ip-price">{{ ipText(priceText(detail.resource)) }}</div>
             <p class="ip-muted">
-              供参考，根据具体需求更新；最终以版权方报价为准。
+              {{ ipText("供参考，根据具体需求更新；最终以版权方报价为准。") }}
             </p>
           </div>
           <div class="ip-card">
             <div class="ip-card-head">
-              <h2>版权介绍文件</h2>
+              <h2>{{ ipText("版权介绍文件") }}</h2>
               <label class="ip-upload-inline"
-                >＋ 上传版权资料<input
+                >{{ ipText("＋ 上传版权资料")
+                }}<input
                   type="file"
                   accept="application/pdf,.pdf"
                   multiple
@@ -1459,31 +1552,38 @@ onUnmounted(() => {
               <span
                 ><b class="ip-file-icon">PDF</b>{{ file.originalName }}
                 <small
-                  >{{ (Number(file.sizeBytes) / 1024 / 1024).toFixed(1) }} MB ·
-                  {{ file.createdAt }}</small
+                  >{{
+                    ipText((Number(file.sizeBytes) / 1024 / 1024).toFixed(1))
+                  }}
+                  MB · {{ ipText(file.createdAt) }}</small
                 ></span
               >
               <div>
-                <el-button link @click="openFile(file)">预览</el-button
-                ><el-button link @click="openFile(file, true)">下载</el-button
-                ><el-button link @click="renameStoredFile(file)"
-                  >重命名</el-button
-                ><el-button link type="danger" @click="removeFile(file)"
-                  >删除</el-button
-                >
+                <el-button link @click="openFile(file)">{{
+                  ipText("预览")
+                }}</el-button
+                ><el-button link @click="openFile(file, true)">{{
+                  ipText("下载")
+                }}</el-button
+                ><el-button link @click="renameStoredFile(file)">{{
+                  ipText("重命名")
+                }}</el-button
+                ><el-button link type="danger" @click="removeFile(file)">{{
+                  ipText("删除")
+                }}</el-button>
               </div>
             </div>
             <el-empty
               v-if="!detail.files.some(f => f.fileKind === 'copyright')"
-              description="暂无版权介绍文件"
+              :description="ipText('暂无版权介绍文件')"
               :image-size="68"
             />
           </div>
           <div class="ip-card">
-            <h2>历史合作与结案</h2>
+            <h2>{{ ipText("历史合作与结案") }}</h2>
             <div v-for="item in detail.cases" :key="item.id" class="ip-case">
               <strong>{{ item.title }}</strong>
-              <p>{{ item.summary || "暂无案例说明" }}</p>
+              <p>{{ item.summary || ipText("暂无案例说明") }}</p>
               <div
                 v-for="file in detail.files.filter(
                   f => Number(f.caseId) === Number(item.id)
@@ -1495,28 +1595,36 @@ onUnmounted(() => {
                   ><b class="ip-file-icon">PDF</b>{{ file.originalName }}</span
                 >
                 <div>
-                  <el-button link @click="openFile(file)">预览</el-button
-                  ><el-button link @click="openFile(file, true)">下载</el-button
-                  ><el-button link @click="renameStoredFile(file)"
-                    >重命名</el-button
-                  ><el-button link type="danger" @click="removeFile(file)"
-                    >删除</el-button
-                  >
+                  <el-button link @click="openFile(file)">{{
+                    ipText("预览")
+                  }}</el-button
+                  ><el-button link @click="openFile(file, true)">{{
+                    ipText("下载")
+                  }}</el-button
+                  ><el-button link @click="renameStoredFile(file)">{{
+                    ipText("重命名")
+                  }}</el-button
+                  ><el-button link type="danger" @click="removeFile(file)">{{
+                    ipText("删除")
+                  }}</el-button>
                 </div>
               </div>
             </div>
-            <p v-if="!detail.cases.length" class="ip-muted">暂无历史合作</p>
+            <p v-if="!detail.cases.length" class="ip-muted">
+              {{ ipText("暂无历史合作") }}
+            </p>
             <div class="ip-case-form">
               <el-input
                 v-model="caseTitle"
-                placeholder="合作案例名称"
+                :placeholder="ipText('合作案例名称')"
               /><el-input
                 v-model="caseSummary"
-                placeholder="案例概述（选填）"
+                :placeholder="ipText('案例概述（选填）')"
               />
               <div class="ip-detail-case-file">
                 <label class="ip-upload-inline"
-                  >＋ 添加结案PDF<input
+                  >{{ ipText("＋ 添加结案PDF")
+                  }}<input
                     type="file"
                     accept="application/pdf,.pdf"
                     hidden
@@ -1524,63 +1632,74 @@ onUnmounted(() => {
                 /></label>
                 <span v-if="caseFile" class="ip-selected-file">
                   <span class="ip-selected-file-name">{{ caseFile.name }}</span>
-                  <el-button link @click="renameSelectedFile('case')"
-                    >重命名</el-button
-                  >
+                  <el-button link @click="renameSelectedFile('case')">{{
+                    ipText("重命名")
+                  }}</el-button>
                   <el-button
                     link
                     type="danger"
                     @click="removeSelectedFile('case')"
-                    >删除</el-button
+                    >{{ ipText("删除") }}</el-button
                   >
                 </span>
               </div>
-              <el-button :loading="saving" @click="addCase"
-                >添加历史合作</el-button
-              >
+              <el-button :loading="saving" @click="addCase">{{
+                ipText("添加历史合作")
+              }}</el-button>
             </div>
           </div>
         </div>
         <div class="ip-stack">
           <div class="ip-card">
-            <h2>基础信息</h2>
+            <h2>{{ ipText("基础信息") }}</h2>
             <dl class="ip-dl">
-              <dt>IP类型</dt>
-              <dd>{{ detail.resource.ipType }}</dd>
-              <dt>版权方</dt>
-              <dd>{{ detail.resource.rightsOwner || "待补充" }}</dd>
-              <dt>联系人</dt>
-              <dd>{{ detail.resource.contact || "待补充" }}</dd>
-              <dt>覆盖市场及渗透率</dt>
-              <dd>{{ marketCoverageText(detail.resource) }}</dd>
-              <dt>目标受众</dt>
-              <dd>{{ detail.resource.audience || "待补充" }}</dd>
-              <dt>合作状态</dt>
-              <dd>{{ detail.resource.cooperationStatus }}</dd>
+              <dt>{{ ipText("IP类型") }}</dt>
+              <dd>{{ ipText(detail.resource.ipType) }}</dd>
+              <dt>{{ ipText("版权方") }}</dt>
+              <dd>{{ detail.resource.rightsOwner || ipText("待补充") }}</dd>
+              <dt>{{ ipText("联系人") }}</dt>
+              <dd>{{ detail.resource.contact || ipText("待补充") }}</dd>
+              <dt>{{ ipText("覆盖市场及渗透率") }}</dt>
+              <dd>{{ ipText(marketCoverageText(detail.resource)) }}</dd>
+              <dt>{{ ipText("目标受众") }}</dt>
+              <dd>{{ detail.resource.audience || ipText("待补充") }}</dd>
+              <dt>{{ ipText("合作状态") }}</dt>
+              <dd>{{ ipText(detail.resource.cooperationStatus) }}</dd>
               <template v-for="field in profileFields" :key="field.key">
-                <dt>{{ field.label }}</dt>
+                <dt>{{ ipText(field.label) }}</dt>
                 <dd>
                   {{
-                    objectValue(detail.resource.profile)[field.key] || "待补充"
+                    ipText(
+                      objectValue(detail.resource.profile)[field.key] ||
+                        ipText("待补充")
+                    )
                   }}
                 </dd>
               </template>
             </dl>
           </div>
           <div class="ip-card">
-            <h2>合作建议与授权</h2>
+            <h2>{{ ipText("合作建议与授权") }}</h2>
             <p>
               {{
-                objectValue(detail.resource.profile).cooperationTips ||
-                "暂无合作建议"
+                ipText(
+                  objectValue(detail.resource.profile).cooperationTips ||
+                    ipText("暂无合作建议")
+                )
               }}
             </p>
-            <h3>授权范围与限制</h3>
-            <p>{{ detail.resource.licenseNotes || "待版权方补充" }}</p>
+            <h3>{{ ipText("授权范围与限制") }}</h3>
+            <p>
+              {{
+                ipText(detail.resource.licenseNotes || ipText("待版权方补充"))
+              }}
+            </p>
           </div>
           <div class="ip-card">
-            <h2>资料维护</h2>
-            <p class="ip-muted">最近更新：{{ detail.resource.updatedAt }}</p>
+            <h2>{{ ipText("资料维护") }}</h2>
+            <p class="ip-muted">
+              {{ ipText("最近更新：") }}{{ ipText(detail.resource.updatedAt) }}
+            </p>
           </div>
         </div>
       </div>
@@ -1592,60 +1711,68 @@ onUnmounted(() => {
           :class="{ active: activeTab === 'single' }"
           @click="activeTab = 'single'"
         >
-          单条录入 <small>适合补充少量IP</small></button
+          {{ ipText("单条录入") }}
+          <small>{{ ipText("适合补充少量IP") }}</small></button
         ><button
           :class="{ active: activeTab === 'bulk' }"
           @click="activeTab = 'bulk'"
         >
-          批量导入 <small>适合集中 sourcing</small>
+          {{ ipText("批量导入") }}
+          <small>{{ ipText("适合集中 sourcing") }}</small>
         </button>
       </div>
       <template v-if="activeTab === 'single'">
         <div class="ip-detail-grid">
           <div class="ip-stack">
             <div class="ip-card">
-              <h2>基础信息</h2>
+              <h2>{{ ipText("基础信息") }}</h2>
               <div class="ip-form-grid ip-basic-grid">
                 <label
-                  >IP名称 *<el-input
+                  >{{ ipText("IP名称 *")
+                  }}<el-input
                     v-model="form.name"
-                    placeholder="请输入IP名称"
+                    :placeholder="ipText('请输入IP名称')"
                     maxlength="255"
                 /></label>
                 <label
-                  >IP类型 *<el-select v-model="form.ipType" placeholder="请选择"
+                  >{{ ipText("IP类型 *")
+                  }}<el-select
+                    v-model="form.ipType"
+                    :placeholder="ipText('请选择')"
                     ><el-option
                       v-for="type in formTypes"
                       :key="type"
-                      :label="type"
+                      :label="ipText(type)"
                       :value="type" /></el-select
                 ></label>
                 <label
-                  >版权方<el-input
+                  >{{ ipText("版权方")
+                  }}<el-input
                     v-model="form.rightsOwner"
-                    placeholder="版权方名称"
+                    :placeholder="ipText('版权方名称')"
                 /></label>
                 <label
-                  >联系人<el-input
+                  >{{ ipText("联系人")
+                  }}<el-input
                     v-model="form.contact"
-                    placeholder="联系人或联系方式"
+                    :placeholder="ipText('联系人或联系方式')"
                 /></label>
                 <div class="ip-market-field ip-span">
-                  <strong>覆盖市场 *</strong>
+                  <strong>{{ ipText("覆盖市场 *") }}</strong>
                   <el-select
                     v-model="form.markets"
                     multiple
                     filterable
                     allow-create
                     default-first-option
-                    aria-label="覆盖市场"
-                    placeholder="请选择市场"
+                    :aria-label="ipText('覆盖市场')"
+                    :placeholder="ipText('请选择市场')"
                     @change="syncMarketPenetrations"
                   >
                     <el-option
                       v-for="market in markets"
                       :key="market"
-                      :label="market"
+                      :label="ipText(market)"
                       :value="market"
                     />
                   </el-select>
@@ -1658,15 +1785,17 @@ onUnmounted(() => {
                       :key="market"
                       class="ip-market-penetration-row"
                     >
-                      <span>{{ market }}</span>
+                      <span>{{ ipText(market) }}</span>
                       <el-input-number
                         :model-value="form.marketPenetrations?.[market]"
                         :min="0"
                         :max="100"
                         :precision="2"
                         :controls="false"
-                        :aria-label="`${market}市场渗透率（%）`"
-                        placeholder="输入渗透率"
+                        :aria-label="
+                          ipText('{0}市场渗透率（%）', [ipText(market)])
+                        "
+                        :placeholder="ipText('输入渗透率')"
                         @update:model-value="
                           value => setMarketPenetration(market, value)
                         "
@@ -1674,37 +1803,42 @@ onUnmounted(() => {
                       <span>%</span>
                     </div>
                   </div>
-                  <small
-                    >每个市场可填写渗透率（0–100），例如25表示25%。各市场独立填写，暂无数据可留空。</small
-                  >
+                  <small>{{
+                    ipText(
+                      "每个市场可填写渗透率（0–100），例如25表示25%。各市场独立填写，暂无数据可留空。"
+                    )
+                  }}</small>
                 </div>
                 <label
-                  >合作状态<el-select v-model="form.cooperationStatus"
+                  >{{ ipText("合作状态")
+                  }}<el-select v-model="form.cooperationStatus"
                     ><el-option
                       v-for="status in statuses"
                       :key="status"
-                      :label="status"
+                      :label="ipText(status)"
                       :value="status" /></el-select
                 ></label>
                 <label
-                  >目标受众<el-input
+                  >{{ ipText("目标受众")
+                  }}<el-input
                     v-model="form.audience"
-                    placeholder="例如：18–30岁年轻人"
+                    :placeholder="ipText('例如：18–30岁年轻人')"
                 /></label>
                 <label class="ip-span"
-                  >IP简介<el-input
+                  >{{ ipText("IP简介")
+                  }}<el-input
                     v-model="form.summary"
                     type="textarea"
                     :rows="3"
-                    placeholder="背景、特点和影响力"
+                    :placeholder="ipText('背景、特点和影响力')"
                 /></label>
               </div>
             </div>
             <div class="ip-card">
-              <h2>商业与授权</h2>
+              <h2>{{ ipText("商业与授权") }}</h2>
               <div class="ip-form-grid">
                 <label
-                  >基础权益价格范围（参考）
+                  >{{ ipText("基础权益价格范围（参考）") }}
                   <div class="ip-money">
                     <el-select v-model="form.currency"
                       ><el-option label="CNY ¥" value="CNY" /><el-option
@@ -1716,60 +1850,61 @@ onUnmounted(() => {
                       v-model="form.priceMin"
                       :min="0"
                       :controls="false"
-                      placeholder="最低价"
+                      :placeholder="ipText('最低价')"
                     /><span>—</span
                     ><el-input-number
                       v-model="form.priceMax"
                       :min="0"
                       :controls="false"
-                      placeholder="最高价"
+                      :placeholder="ipText('最高价')"
                     />
                   </div>
-                  <small>供参考，根据具体需求更新</small></label
+                  <small>{{ ipText("供参考，根据具体需求更新") }}</small></label
                 ><label
-                  >授权范围与限制<el-input
+                  >{{ ipText("授权范围与限制")
+                  }}<el-input
                     v-model="form.licenseNotes"
                     type="textarea"
                     :rows="3"
-                    placeholder="授权地域、渠道或使用限制"
+                    :placeholder="ipText('授权地域、渠道或使用限制')"
                 /></label>
               </div>
             </div>
             <div class="ip-card">
-              <h2>资料附件</h2>
+              <h2>{{ ipText("资料附件") }}</h2>
               <div class="ip-form-grid">
                 <div class="ip-attachment-field">
-                  <strong>IP形象（PNG / JPG / WebP）</strong
+                  <strong>{{ ipText("IP形象（PNG / JPG / WebP）") }}</strong
                   ><span class="ip-upload"
                     ><input
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
                       @change="visualChanged"
-                    />选择图片</span
+                    />{{ ipText("选择图片") }}</span
                   ><span v-if="visualFile" class="ip-selected-file">
                     <span class="ip-selected-file-name">{{
                       visualFile.name
                     }}</span>
-                    <el-button link @click="renameSelectedFile('visual')"
-                      >重命名</el-button
-                    >
+                    <el-button link @click="renameSelectedFile('visual')">{{
+                      ipText("重命名")
+                    }}</el-button>
                     <el-button
                       link
                       type="danger"
                       @click="removeSelectedFile('visual')"
-                      >删除</el-button
+                      >{{ ipText("删除") }}</el-button
                     >
                   </span>
                 </div>
                 <div class="ip-attachment-field">
-                  <strong>版权介绍文件（PDF）</strong
+                  <strong>{{ ipText("版权介绍文件（PDF）") }}</strong
                   ><span class="ip-upload"
                     ><input
                       type="file"
                       accept="application/pdf,.pdf"
                       multiple
                       @change="pdfChanged($event, 'copyright')"
-                    />选择PDF文件</span
+                    />{{ ipText("选择PDF文件") }}</span
                   ><span
                     v-for="(file, index) in copyrightFiles"
                     :key="`${index}:${file.name}`"
@@ -1779,42 +1914,42 @@ onUnmounted(() => {
                     <el-button
                       link
                       @click="renameSelectedFile('copyright', index)"
-                      >重命名</el-button
+                      >{{ ipText("重命名") }}</el-button
                     >
                     <el-button
                       link
                       type="danger"
                       @click="removeSelectedFile('copyright', index)"
-                      >删除</el-button
+                      >{{ ipText("删除") }}</el-button
                     >
                   </span>
                 </div>
                 <div class="ip-attachment-field">
-                  <strong>历史合作结案文件（选填）</strong
+                  <strong>{{ ipText("历史合作结案文件（选填）") }}</strong
                   ><el-input
                     v-model="caseTitle"
-                    placeholder="历史合作名称"
+                    :placeholder="ipText('历史合作名称')"
                   /><el-input
                     v-model="caseSummary"
-                    placeholder="案例概述"
+                    :placeholder="ipText('案例概述')"
                   /><span class="ip-upload"
                     ><input
                       type="file"
                       accept="application/pdf,.pdf"
                       @change="pdfChanged($event, 'case')"
-                    />选择结案PDF</span
+                    />{{ ipText("选择结案PDF") }}</span
                   ><span v-if="caseFile" class="ip-selected-file">
                     <span class="ip-selected-file-name">{{
                       caseFile.name
                     }}</span>
-                    <el-button link @click="renameSelectedFile('case')"
-                      >重命名</el-button
-                    >
+                    <el-button link @click="renameSelectedFile('case')">{{
+                      ipText("重命名")
+                    }}</el-button>
                     <el-button
                       link
                       type="danger"
                       @click="removeSelectedFile('case')"
-                      >删除</el-button
+                      >{{ ipText("删除") }}</el-button
                     >
                   </span>
                 </div>
@@ -1825,16 +1960,22 @@ onUnmounted(() => {
                 <el-collapse-item name="profile">
                   <template #title>
                     <div>
-                      <h2>补充档案信息（选填）</h2>
-                      <p>完善受众、影响力和合作建议，便于后续需求匹配。</p>
+                      <h2>{{ ipText("补充档案信息（选填）") }}</h2>
+                      <p>
+                        {{
+                          ipText(
+                            "完善受众、影响力和合作建议，便于后续需求匹配。"
+                          )
+                        }}
+                      </p>
                     </div>
                   </template>
                   <div class="ip-form-grid">
                     <label v-for="field in profileFields" :key="field.key">
-                      {{ field.label }}
+                      {{ ipText(field.label) }}
                       <el-input
                         v-model="form.profile[field.key]"
-                        :placeholder="field.hint"
+                        :placeholder="ipText(field.hint)"
                       />
                     </label>
                   </div>
@@ -1844,13 +1985,19 @@ onUnmounted(() => {
           </div>
           <div class="ip-stack">
             <div class="ip-card">
-              <h2>录入提示</h2>
-              <p>填写名称、类型和覆盖市场后即可创建；渗透率暂无数据可留空。</p>
-              <p>价格仅作参考，以最终授权报价为准。</p>
-              <p>上传的PDF会显示在IP详情页。</p>
+              <h2>{{ ipText("录入提示") }}</h2>
+              <p>
+                {{
+                  ipText(
+                    "填写名称、类型和覆盖市场后即可创建；渗透率暂无数据可留空。"
+                  )
+                }}
+              </p>
+              <p>{{ ipText("价格仅作参考，以最终授权报价为准。") }}</p>
+              <p>{{ ipText("上传的PDF会显示在IP详情页。") }}</p>
             </div>
             <div class="ip-card">
-              <h2>历史合作</h2>
+              <h2>{{ ipText("历史合作") }}</h2>
               <div
                 v-for="item in detail?.cases || []"
                 :key="item.id"
@@ -1860,20 +2007,23 @@ onUnmounted(() => {
                 <p>{{ item.summary }}</p>
               </div>
               <p v-if="!detail?.cases?.length" class="ip-muted">
-                暂无历史合作案例，可在左侧补充结案资料。
+                {{ ipText("暂无历史合作案例，可在左侧补充结案资料。") }}
               </p>
             </div>
           </div>
         </div>
         <div class="ip-bottom">
-          <el-button v-if="!form.id" @click="saveManualDraft"
-            >保存草稿</el-button
-          ><el-button v-else @click="goList">取消</el-button
+          <el-button v-if="!form.id" @click="saveManualDraft">{{
+            ipText("保存草稿")
+          }}</el-button
+          ><el-button v-else @click="goList">{{ ipText("取消") }}</el-button
           ><el-button
             class="ip-primary"
             :loading="saving"
             @click="saveManual"
-            >{{ form.id ? "保存修改" : "创建IP" }}</el-button
+            >{{
+              ipText(form.id ? ipText("保存修改") : ipText("创建IP"))
+            }}</el-button
           >
         </div>
       </template>
@@ -1883,41 +2033,52 @@ onUnmounted(() => {
             <span class="ip-step">1</span>
             <div class="ip-import-main">
               <div>
-                <h2>下载模板</h2>
-                <p>先下载 Excel 模板，按要求填写后再上传文件。</p>
-                <el-button @click="downloadTemplate"
-                  >下载IP导入模板.xlsx</el-button
-                >
+                <h2>{{ ipText("下载模板") }}</h2>
+                <p>
+                  {{ ipText("先下载 Excel 模板，按要求填写后再上传文件。") }}
+                </p>
+                <el-button @click="downloadTemplate">{{
+                  ipText("下载IP导入模板.xlsx")
+                }}</el-button>
               </div>
               <div class="ip-template-fields">
-                <strong>模板主要字段</strong>
+                <strong>{{ ipText("模板主要字段") }}</strong>
                 <div>
-                  <span>IP名称 *</span><span>IP类型 *</span>
-                  <span>覆盖市场 *</span><span>市场渗透率</span>
-                  <span>版权方</span>
-                  <span>合作状态</span><span>参考价格范围</span>
-                  <span>目标受众</span><span>联系人</span>
+                  <span>{{ ipText("IP名称 *") }}</span
+                  ><span>{{ ipText("IP类型 *") }}</span>
+                  <span>{{ ipText("覆盖市场 *") }}</span
+                  ><span>{{ ipText("市场渗透率") }}</span>
+                  <span>{{ ipText("版权方") }}</span>
+                  <span>{{ ipText("合作状态") }}</span
+                  ><span>{{ ipText("参考价格范围") }}</span>
+                  <span>{{ ipText("目标受众") }}</span
+                  ><span>{{ ipText("联系人") }}</span>
                 </div>
-                <small
-                  >一行一个IP；“渗透率1”至“渗透率9”逐列对应“覆盖市场1”至“覆盖市场9”，填写0至100的数字，例如25表示25%。可留空。</small
-                >
+                <small>{{
+                  ipText(
+                    "一行一个IP；“渗透率1”至“渗透率9”逐列对应“覆盖市场1”至“覆盖市场9”，填写0至100的数字，例如25表示25%。可留空。"
+                  )
+                }}</small>
               </div>
             </div>
           </div>
           <div class="ip-card ip-import-rules">
-            <h2>导入规则</h2>
-            <p>1. 按名称与版权方检查重复</p>
-            <p>2. 重复市场及无效渗透率需修正后重新校验</p>
-            <p>3. 已有IP不会被覆盖</p>
+            <h2>{{ ipText("导入规则") }}</h2>
+            <p>{{ ipText("1. 按名称与版权方检查重复") }}</p>
+            <p>{{ ipText("2. 重复市场及无效渗透率需修正后重新校验") }}</p>
+            <p>{{ ipText("3. 已有IP不会被覆盖") }}</p>
           </div>
         </div>
         <div class="ip-card ip-import-step">
           <span class="ip-step">2</span>
           <div>
-            <h2>上传文件</h2>
+            <h2>{{ ipText("上传文件") }}</h2>
             <p>
-              支持 .xlsx /
-              .xls，最多500条。PDF为可选；文件名使用“导入编号_版权介绍.pdf”或“导入编号_结案.pdf”，导入后自动关联。
+              {{
+                ipText(
+                  "支持 .xlsx / .xls，最多500条。PDF为可选；文件名使用“导入编号_版权介绍.pdf”或“导入编号_结案.pdf”，导入后自动关联。"
+                )
+              }}
             </p>
             <div class="ip-batch-upload">
               <label class="ip-upload ip-upload-drop"
@@ -1925,9 +2086,9 @@ onUnmounted(() => {
                   type="file"
                   accept=".xlsx,.xls"
                   @change="readImport"
-                /><strong>选择Excel文件</strong
+                /><strong>{{ ipText("选择Excel文件") }}</strong
                 ><small>{{
-                  importFileName || "点击上传已填写的导入模板"
+                  ipText(importFileName || ipText("点击上传已填写的导入模板"))
                 }}</small></label
               ><label class="ip-upload ip-upload-drop"
                 ><input
@@ -1935,11 +2096,13 @@ onUnmounted(() => {
                   accept="application/pdf,.pdf"
                   multiple
                   @change="readBatchFiles"
-                /><strong>添加PDF附件（可选）</strong
+                /><strong>{{ ipText("添加PDF附件（可选）") }}</strong
                 ><small>{{
-                  batchFiles.length
-                    ? `已选${batchFiles.length}份PDF`
-                    : "按模板中的导入编号关联，可一次上传多份"
+                  ipText(
+                    batchFiles.length
+                      ? ipText("已选{0}份PDF", [batchFiles.length])
+                      : ipText("按模板中的导入编号关联，可一次上传多份")
+                  )
                 }}</small></label
               >
             </div>
@@ -1950,38 +2113,45 @@ onUnmounted(() => {
           <div class="ip-import-body">
             <div class="ip-card-head">
               <div>
-                <h2>校验预览</h2>
+                <h2>{{ ipText("校验预览") }}</h2>
                 <p>
-                  “Excel行号”是文件中的实际行数；“导入编号”来自模板，用于匹配PDF附件。
+                  {{
+                    ipText(
+                      "“Excel行号”是文件中的实际行数；“导入编号”来自模板，用于匹配PDF附件。"
+                    )
+                  }}
                 </p>
               </div>
               <strong v-if="importPreview.length"
-                >共{{ importPreview.length }}条 · 可导入{{ readyCount }}条 ·
-                重复{{ duplicateCount }}条 · 错误{{ errorCount }}条</strong
+                >{{ ipText("共") }}{{ ipText(importPreview.length)
+                }}{{ ipText("条 · 可导入") }}{{ ipText(readyCount)
+                }}{{ ipText("条 · 重复") }}{{ ipText(duplicateCount)
+                }}{{ ipText("条 · 错误") }}{{ ipText(errorCount)
+                }}{{ ipText("条") }}</strong
               >
             </div>
             <el-table
               :data="importPreview"
               max-height="340"
-              empty-text="上传模板后显示校验结果"
-              ><el-table-column label="Excel行号" width="110"
+              :empty-text="ipText('上传模板后显示校验结果')"
+              ><el-table-column :label="ipText('Excel行号')" width="110"
                 ><template #default="scope">{{
-                  excelRow(scope.row.row)
+                  ipText(excelRow(scope.row.row))
                 }}</template> </el-table-column
-              ><el-table-column label="导入编号" width="120"
+              ><el-table-column :label="ipText('导入编号')" width="120"
                 ><template #default="scope">{{
-                  importKeyForRow(scope.row.row)
+                  ipText(importKeyForRow(scope.row.row))
                 }}</template> </el-table-column
               ><el-table-column
                 prop="name"
-                label="IP名称"
+                :label="ipText('IP名称')"
                 min-width="180" /><el-table-column
-                label="覆盖市场及渗透率"
+                :label="ipText('覆盖市场及渗透率')"
                 min-width="220"
                 ><template #default="scope">{{
-                  importCoverageText(scope.row.row)
+                  ipText(importCoverageText(scope.row.row))
                 }}</template></el-table-column
-              ><el-table-column label="校验结果" width="120"
+              ><el-table-column :label="ipText('校验结果')" width="120"
                 ><template #default="scope"
                   ><el-tag
                     :type="
@@ -1992,43 +2162,62 @@ onUnmounted(() => {
                           : 'danger'
                     "
                     >{{
-                      scope.row.status === "ready"
-                        ? "通过"
-                        : scope.row.status === "duplicate"
-                          ? "疑似重复"
-                          : "字段错误"
+                      ipText(
+                        scope.row.status === "ready"
+                          ? ipText("通过")
+                          : scope.row.status === "duplicate"
+                            ? ipText("疑似重复")
+                            : ipText("字段错误")
+                      )
                     }}</el-tag
                   ></template
                 ></el-table-column
-              ><el-table-column prop="message" label="问题" min-width="220"
+              ><el-table-column
+                prop="message"
+                :label="ipText('问题')"
+                min-width="220"
             /></el-table>
           </div>
         </div>
         <div class="ip-bottom">
-          <el-button @click="goList">取消</el-button
+          <el-button @click="goList">{{ ipText("取消") }}</el-button
           ><el-button
             class="ip-primary"
             :loading="importLoading"
             :disabled="!readyCount"
             @click="runImport"
-            >导入{{ readyCount }}条IP</el-button
+            >{{ ipText("导入") }}{{ ipText(readyCount)
+            }}{{ ipText("条IP") }}</el-button
           >
         </div>
       </template>
     </template>
-    <el-dialog v-model="previewVisible" title="PDF预览" width="80%" top="5vh">
+    <el-dialog
+      v-model="previewVisible"
+      :title="ipText('PDF预览')"
+      width="80%"
+      top="5vh"
+    >
       <div v-if="previewURL" class="ip-pdf-preview">
         <div class="ip-pdf-toolbar">
           <span>{{
-            previewPageCount
-              ? `共 ${previewPageCount} 页 · 向下滚动查看`
-              : "正在读取 PDF…"
+            ipText(
+              previewPageCount
+                ? ipText("共 {0} 页 · 向下滚动查看", [previewPageCount])
+                : ipText("正在读取 PDF…")
+            )
           }}</span>
-          <a :href="previewURL" :download="previewFileName">下载 PDF</a>
+          <a :href="previewURL" :download="previewFileName">{{
+            ipText("下载 PDF")
+          }}</a>
         </div>
-        <div v-if="previewError" class="ip-pdf-error">{{ previewError }}</div>
+        <div v-if="previewError" class="ip-pdf-error">
+          {{ ipText(previewError) }}
+        </div>
         <div v-else class="ip-pdf">
-          <p v-if="previewLoading" class="ip-pdf-loading">正在渲染 PDF…</p>
+          <p v-if="previewLoading" class="ip-pdf-loading">
+            {{ ipText("正在渲染 PDF…") }}
+          </p>
           <vue-pdf-embed
             :key="previewURL"
             :source="previewURL"
@@ -2040,13 +2229,13 @@ onUnmounted(() => {
         </div>
       </div>
       <div v-else-if="previewError" class="ip-pdf-error">
-        <p>{{ previewError }}</p>
-        <el-button v-if="previewFile" @click="openFile(previewFile)"
-          >重试</el-button
-        >
+        <p>{{ ipText(previewError) }}</p>
+        <el-button v-if="previewFile" @click="openFile(previewFile)">{{
+          ipText("重试")
+        }}</el-button>
       </div>
       <div v-else-if="previewDownloading" class="ip-pdf-transfer">
-        <p>{{ previewDownloadText }}</p>
+        <p>{{ ipText(previewDownloadText) }}</p>
         <el-progress
           v-if="previewTotal > 0"
           :percentage="previewDownloadPercent"
@@ -2060,6 +2249,20 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.ip-page :deep(.el-table th.el-table__cell > .cell) {
+  display: block;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.ip-page :deep(.el-table .el-tag) {
+  height: auto;
+  min-height: 24px;
+  text-align: center;
+  white-space: normal;
+}
+
 .ip-batch-upload {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2272,9 +2475,9 @@ onUnmounted(() => {
 .ip-name-cell small {
   display: -webkit-box;
   overflow: hidden;
+  -webkit-line-clamp: 2;
   color: #8c9296;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .ip-muted {
@@ -2409,8 +2612,8 @@ onUnmounted(() => {
   height: 32px;
   margin-right: 10px;
   font-size: 10px;
-  color: #fff;
   vertical-align: middle;
+  color: #fff;
   background: #e94340;
   border-radius: 4px;
 }
@@ -2488,10 +2691,10 @@ onUnmounted(() => {
 
 .ip-detail-case-file {
   display: flex;
-  min-width: 0;
   flex-direction: column;
-  align-items: flex-start;
   gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
 }
 
 .ip-upload-inline {
@@ -2578,18 +2781,18 @@ onUnmounted(() => {
 
 .ip-attachment-field {
   display: flex;
-  min-width: 0;
   flex-direction: column;
-  align-items: flex-start;
   gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
 }
 
 .ip-selected-file {
   display: flex;
+  gap: 8px;
+  align-items: center;
   width: 100%;
   min-width: 0;
-  align-items: center;
-  gap: 8px;
   padding: 5px 9px;
   background: #f8faf2;
   border: 1px solid #e6edda;
@@ -2648,9 +2851,9 @@ onUnmounted(() => {
 
 .ip-market-penetration-row {
   display: flex;
-  min-width: 0;
-  align-items: center;
   gap: 8px;
+  align-items: center;
+  min-width: 0;
 }
 
 .ip-market-penetration-row > span:first-child {
@@ -2793,49 +2996,56 @@ onUnmounted(() => {
   width: 100%;
   min-height: 55vh;
   max-height: 70vh;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 12px;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
   background: #f3f4f0;
 }
+
 .ip-pdf-toolbar {
   display: flex;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 12px;
 }
+
 .ip-pdf-toolbar a {
   font-size: 13px;
   font-weight: 700;
   color: #567811;
 }
+
 .ip-pdf-loading {
   margin: 0 0 12px;
   color: #737373;
 }
+
 .ip-pdf-transfer {
   min-height: 100px;
   padding: 24px 16px;
 }
+
 .ip-pdf-transfer p {
   margin: 0 0 14px;
   color: #535a47;
 }
+
 .ip-pdf :deep(.vue-pdf-embed > div + div) {
   margin-top: 12px;
 }
+
 .ip-pdf :deep(canvas) {
   display: block;
   max-width: 100%;
   height: auto !important;
   margin: 0 auto;
 }
+
 .ip-pdf-error {
   padding: 48px 16px;
-  text-align: center;
   color: #737373;
+  text-align: center;
 }
 
 .ip-visual {

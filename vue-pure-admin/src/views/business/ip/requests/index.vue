@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText } = useIPLocale();
+
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -141,7 +144,7 @@ const externalIPs = computed(() =>
 
 function detailText(value: unknown, fallback = "待补充") {
   return value == null || String(value).trim() === ""
-    ? fallback
+    ? ipText(fallback)
     : String(value);
 }
 
@@ -574,7 +577,7 @@ async function showValidation(
 ) {
   invalidField.value = key;
   if (expandBrief) briefOpen.value = ["brief"];
-  ElMessage.warning(message);
+  ElMessage.warning(ipText(message));
   await nextTick();
   const target = document.querySelector<HTMLElement>(
     `[data-validation-key="${key}"]`
@@ -673,7 +676,7 @@ async function loadRows() {
   } catch {
     rows.value = [];
     total.value = 0;
-    ElMessage.error("IP需求列表加载失败，请稍后重试");
+    ElMessage.error(ipText("IP需求列表加载失败，请稍后重试"));
   } finally {
     loading.value = false;
   }
@@ -736,11 +739,14 @@ async function deleteRequest(row: any) {
   if (!row.canDelete || deletingID.value != null) return;
   try {
     await ElMessageBox.confirm(
-      `确定删除「${row.projectName}」？需求、IP评估意见和营销意见将一并删除，无法恢复。资源库和 AI 会话会保留，会话与该需求的关联将解除。`,
-      "删除IP需求",
+      ipText(
+        "确定删除「{0}」？需求、IP评估意见和营销意见将一并删除，无法恢复。资源库和 AI 会话会保留，会话与该需求的关联将解除。",
+        [row.projectName]
+      ),
+      ipText("删除IP需求"),
       {
-        confirmButtonText: "确认删除",
-        cancelButtonText: "取消",
+        confirmButtonText: ipText("确认删除"),
+        cancelButtonText: ipText("取消"),
         type: "warning",
         distinguishCancelAndClose: true,
         closeOnClickModal: false
@@ -752,7 +758,7 @@ async function deleteRequest(row: any) {
   deletingID.value = Number(row.id);
   try {
     await deleteIPRequest(Number(row.id));
-    ElMessage.success("需求已删除");
+    ElMessage.success(ipText("需求已删除"));
     if (mode.value !== "list") {
       goList();
     } else {
@@ -761,7 +767,10 @@ async function deleteRequest(row: any) {
     }
   } catch (error) {
     ElMessage.error(
-      (error as any)?.response?.data?.message || "删除失败，请刷新后重试"
+      ipText(
+        (error as any)?.response?.data?.message ||
+          ipText("删除失败，请刷新后重试")
+      )
     );
   } finally {
     deletingID.value = null;
@@ -776,7 +785,7 @@ function storeRecommendationContext() {
     `${librarySelectionKey.value}-recommendation-criteria`,
     JSON.stringify({
       name: form.value.projectName
-        ? `${form.value.projectName} · IP寻找`
+        ? ipText("{0} · IP寻找", [form.value.projectName])
         : "IP寻找",
       query: form.value.description,
       markets: form.value.markets,
@@ -792,7 +801,9 @@ function storeRecommendationContext() {
 }
 function canOpenIPRecommendations() {
   if (router.hasRoute("IPRecommendations")) return true;
-  ElMessage.warning("当前账号尚未开通 IP AI 推荐，请联系管理员配置菜单权限");
+  ElMessage.warning(
+    ipText("当前账号尚未开通 IP AI 推荐，请联系管理员配置菜单权限")
+  );
   return false;
 }
 function openRecommendationsFromForm(event: MouseEvent) {
@@ -870,7 +881,7 @@ async function loadDetail(id: number) {
     };
   } catch {
     detail.value = null;
-    ElMessage.error("IP需求详情加载失败，请稍后重试");
+    ElMessage.error(ipText("IP需求详情加载失败，请稍后重试"));
     router.replace({ path: route.path });
   } finally {
     loading.value = false;
@@ -880,7 +891,7 @@ function addFeedbackCandidate() {
   const id = addCandidateID.value;
   if (!id || feedback.value.some(row => row.ipId === id)) return;
   if (feedback.value.length >= 8) {
-    ElMessage.warning("最多评估8个IP（含IP组追加建议）");
+    ElMessage.warning(ipText("最多评估8个IP（含IP组追加建议）"));
     return;
   }
   feedback.value.push({
@@ -897,7 +908,7 @@ function addFeedbackCandidate() {
 function editDraft() {
   if (!detail.value) return;
   if (!detail.value.request.canEdit) {
-    ElMessage.warning("只能编辑本人发起的需求");
+    ElMessage.warning(ipText("只能编辑本人发起的需求"));
     return;
   }
   const item = detail.value.request;
@@ -953,9 +964,9 @@ async function syncLibrarySelection() {
       "id"
     );
     ensureCandidateEvaluations();
-    ElMessage.success("已从IP资源库加入意向清单");
+    ElMessage.success(ipText("已从IP资源库加入意向清单"));
   } catch {
-    ElMessage.warning("IP选择结果读取失败，请重新选择");
+    ElMessage.warning(ipText("IP选择结果读取失败，请重新选择"));
   }
 }
 function onLibraryStorage(event: StorageEvent) {
@@ -1130,8 +1141,11 @@ async function exportEvaluation(candidate: any) {
   ]);
   sheet["!cols"] = [{ wch: 16 }, { wch: 28 }, { wch: 65 }];
   const book = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(book, sheet, "完整评估表");
-  XLSX.writeFile(book, `${request.projectName}_${resource.name}_评估表.xlsx`);
+  XLSX.utils.book_append_sheet(book, sheet, ipText("完整评估表"));
+  XLSX.writeFile(
+    book,
+    ipText("{0}_{1}_评估表.xlsx", [request.projectName, resource.name])
+  );
 }
 async function save(submit: boolean) {
   const item = form.value;
@@ -1145,7 +1159,7 @@ async function save(submit: boolean) {
     ];
     for (const [key, label, value] of baseRequired) {
       if (!String(value || "").trim()) {
-        await showValidation(`请填写${label}`, String(key));
+        await showValidation(ipText("请填写{0}", [label]), String(key));
         return;
       }
     }
@@ -1156,13 +1170,16 @@ async function save(submit: boolean) {
       item.budgetMax < 0 ||
       item.budgetMin > item.budgetMax
     ) {
-      await showValidation("请填写有效的授权费用预算范围", "budget");
+      await showValidation(
+        ipText("请填写有效的授权费用预算范围"),
+        ipText("budget")
+      );
       return;
     }
     for (const field of briefFields.filter(field => field.required)) {
       if (!String(item.brief[field.key] || "").trim()) {
         await showValidation(
-          `请填写补充项目资料中的「${field.label}」`,
+          ipText("请填写补充项目资料中的「{0}」", [ipText(field.label)]),
           `brief-${field.key}`,
           true
         );
@@ -1172,7 +1189,7 @@ async function save(submit: boolean) {
     for (const stage of contactStages) {
       if (!String(item.brief.contactsByStage?.[stage.key]?.name || "").trim()) {
         await showValidation(
-          `请填写「${stage.label}」环节对接人`,
+          ipText("请填写「{0}」环节对接人", [ipText(stage.label)]),
           `contact-${stage.key}`,
           true
         );
@@ -1184,7 +1201,7 @@ async function save(submit: boolean) {
       const candidateName = selectedIP(id)?.name;
       if (!candidateName) {
         await showValidation(
-          `库内意向IP（ID ${id}）已不可用，请移除后重新选择`,
+          ipText("库内意向IP（ID {0}）已不可用，请移除后重新选择", [id]),
           `candidate-${id}`
         );
         return;
@@ -1198,7 +1215,7 @@ async function save(submit: boolean) {
           !String(item.brief.candidateEvaluations?.[id]?.[key] || "").trim()
         ) {
           await showValidation(
-            `请补齐库内意向IP「${candidateName}」的${label}`,
+            ipText("请补齐库内意向IP「{0}」的{1}", [candidateName, label]),
             `candidate-${id}-${key}`
           );
           return;
@@ -1207,8 +1224,8 @@ async function save(submit: boolean) {
     }
     if (!item.candidateIds.length && !item.brief.externalIPs.length) {
       await showValidation(
-        "请至少选择一个库内IP或添加一个库外IP意向",
-        "ip-intentions"
+        ipText("请至少选择一个库内IP或添加一个库外IP意向"),
+        ipText("ip-intentions")
       );
       return;
     }
@@ -1223,7 +1240,7 @@ async function save(submit: boolean) {
       ]) {
         if (!String(candidate[key] || "").trim()) {
           await showValidation(
-            `请补齐库外IP ${index + 1} 的${label}`,
+            ipText("请补齐库外IP {0} 的{1}", [index + 1, label]),
             `external-${index}-${key}`
           );
           return;
@@ -1231,7 +1248,9 @@ async function save(submit: boolean) {
       }
       if (!imageURLValid(candidate.imageUrl)) {
         await showValidation(
-          `库外IP ${index + 1} 的形象示意链接需以 http:// 或 https:// 开头`,
+          ipText("库外IP {0} 的形象示意链接需以 http:// 或 https:// 开头", [
+            index + 1
+          ]),
           `external-${index}-imageUrl`
         );
         return;
@@ -1254,11 +1273,13 @@ async function save(submit: boolean) {
   try {
     const result = await saveIPRequest({ ...item, submit });
     ElMessage.success(
-      editingSubmitted.value
-        ? "需求已更新，已有意见及截止时间已保留"
-        : submit
-          ? "需求已提交，等待IP组反馈"
-          : "草稿已保存"
+      ipText(
+        editingSubmitted.value
+          ? ipText("需求已更新，已有意见及截止时间已保留")
+          : submit
+            ? ipText("需求已提交，等待IP组反馈")
+            : ipText("草稿已保存")
+      )
     );
     if (Number(route.query.id) === Number(result.data.id)) {
       if (route.query.mode === "edit") {
@@ -1277,7 +1298,10 @@ async function save(submit: boolean) {
       });
   } catch (error) {
     ElMessage.error(
-      (error as any)?.response?.data?.message || "需求保存失败，请稍后重试"
+      ipText(
+        (error as any)?.response?.data?.message ||
+          ipText("需求保存失败，请稍后重试")
+      )
     );
   } finally {
     saving.value = false;
@@ -1286,7 +1310,7 @@ async function save(submit: boolean) {
 async function sendFeedback(saveDraft = false) {
   if (!detail.value) return;
   if (!feedback.value.length) {
-    ElMessage.warning("请先为需求关联意向IP");
+    ElMessage.warning(ipText("请先为需求关联意向IP"));
     return;
   }
   if (
@@ -1295,13 +1319,13 @@ async function sendFeedback(saveDraft = false) {
       row => !row.feasibility || !row.recommendation || !row.reason.trim()
     )
   ) {
-    ElMessage.warning("请填写每个IP的可行性、推荐意见和理由");
+    ElMessage.warning(ipText("请填写每个IP的可行性、推荐意见和理由"));
     return;
   }
   if (
     feedback.value.some(row => ![0, 1, 2].includes(Number(row.priorityOrder)))
   ) {
-    ElMessage.warning("请选择T0、T1或T2优先级");
+    ElMessage.warning(ipText("请选择T0、T1或T2优先级"));
     return;
   }
   if (
@@ -1312,14 +1336,14 @@ async function sendFeedback(saveDraft = false) {
       )
     )
   ) {
-    ElMessage.warning("请补齐每个IP的授权、资源、商务与舆情风险信息");
+    ElMessage.warning(ipText("请补齐每个IP的授权、资源、商务与舆情风险信息"));
     return;
   }
   if (
     !saveDraft &&
     feedback.value.some(row => weightedScore(row.assessment) === null)
   ) {
-    ElMessage.warning("请为每个IP填写四项0至100分的评估分数");
+    ElMessage.warning(ipText("请为每个IP填写四项0至100分的评估分数"));
     return;
   }
   saving.value = true;
@@ -1330,7 +1354,11 @@ async function sendFeedback(saveDraft = false) {
       candidates: feedback.value
     });
     ElMessage.success(
-      saveDraft ? "IP评估草稿已保存" : "IP反馈已提交，等待营销意见补充"
+      ipText(
+        saveDraft
+          ? ipText("IP评估草稿已保存")
+          : ipText("IP反馈已提交，等待营销意见补充")
+      )
     );
     await loadDetail(Number(detail.value.request.id));
   } finally {
@@ -1339,14 +1367,14 @@ async function sendFeedback(saveDraft = false) {
 }
 async function sendMarketing(saveDraft = false) {
   if (!detail.value || !selectedMarketingFunction.value) {
-    ElMessage.warning("请选择本次填写的职能");
+    ElMessage.warning(ipText("请选择本次填写的职能"));
     return;
   }
   if (!canEditMarketingFunction.value) return;
   const role = selectedMarketingFunction.value;
   const draft = marketingFunctionDrafts.value[role.key];
   if (!saveDraft && !draft.comments.trim()) {
-    ElMessage.warning(`请填写${role.label}的补充意见`);
+    ElMessage.warning(ipText("请填写{0}的补充意见", [ipText(role.label)]));
     return;
   }
   if (
@@ -1361,7 +1389,11 @@ async function sendMarketing(saveDraft = false) {
       )
     )
   ) {
-    ElMessage.warning(`请补齐每个意向IP的${role.label}意见，无需填写其他职能`);
+    ElMessage.warning(
+      ipText("请补齐每个意向IP的{0}意见，无需填写其他职能", [
+        ipText(role.label)
+      ])
+    );
     return;
   }
   saving.value = true;
@@ -1398,22 +1430,26 @@ async function sendMarketing(saveDraft = false) {
         : {})
     });
     ElMessage.success(
-      saveDraft
-        ? `${role.label}意见草稿已保存`
-        : result.data.status === "marketing_reviewed"
-          ? "各职能意见已全部提交"
-          : `${role.label}意见已提交，其他职能可继续补充`
+      ipText(
+        saveDraft
+          ? ipText("{0}意见草稿已保存", [ipText(role.label)])
+          : result.data.status === "marketing_reviewed"
+            ? ipText("各职能意见已全部提交")
+            : ipText("{0}意见已提交，其他职能可继续补充", [ipText(role.label)])
+      )
     );
     await loadDetail(Number(detail.value.request.id));
   } catch (error) {
     const response = (error as any)?.response;
     if (Number(response?.status) === 409)
-      ElMessage.warning("该职能意见已被更新，请刷新后重试");
+      ElMessage.warning(ipText("该职能意见已被更新，请刷新后重试"));
     else
       ElMessage.error(
-        Number(response?.status) === 400
-          ? response.data?.message || "请检查本职能意见"
-          : "意见未保存，请稍后重试"
+        ipText(
+          Number(response?.status) === 400
+            ? response.data?.message || ipText("请检查本职能意见")
+            : ipText("意见未保存，请稍后重试")
+        )
       );
   } finally {
     saving.value = false;
@@ -1461,7 +1497,7 @@ async function syncRoute() {
           });
         } catch {
           form.value.candidateIds = [];
-          ElMessage.warning("推荐的 IP 已不可用，请重新选择");
+          ElMessage.warning(ipText("推荐的 IP 已不可用，请重新选择"));
         }
       }
       ensureCandidateEvaluations();
@@ -1497,42 +1533,51 @@ onUnmounted(() => {
     <div class="ip-header">
       <div>
         <div v-if="mode === 'new'" class="ip-kicker">
-          需求管理 / {{ mode === "new" ? "提起IP需求" : pageTitle }}
+          {{ ipText("需求管理 /") }}
+          {{ ipText(mode === "new" ? ipText("提起IP需求") : pageTitle) }}
         </div>
         <h1>
           {{
-            mode === "list"
-              ? pageTitle
-              : mode === "new"
-                ? form.id
-                  ? "编辑IP需求"
-                  : "提起IP需求"
-                : menuKind === "requests"
-                  ? "IP需求详情"
-                  : pageTitle
+            ipText(
+              mode === "list"
+                ? pageTitle
+                : mode === "new"
+                  ? form.id
+                    ? ipText("编辑IP需求")
+                    : ipText("提起IP需求")
+                  : menuKind === "requests"
+                    ? ipText("IP需求详情")
+                    : pageTitle
+            )
           }}
         </h1>
         <p>
           {{
-            mode === "list"
-              ? pageSubtitle
-              : mode === "new"
-                ? editingSubmitted
-                  ? "修改项目资料，保留已有意见、流程进度与反馈截止时间"
-                  : "明确合作目标和授权预算，提交给IP组评估"
-                : menuKind === "requests"
-                  ? "查看需求、IP反馈与营销意见"
-                  : pageSubtitle
+            ipText(
+              mode === "list"
+                ? pageSubtitle
+                : mode === "new"
+                  ? editingSubmitted
+                    ? ipText(
+                        "修改项目资料，保留已有意见、流程进度与反馈截止时间"
+                      )
+                    : ipText("明确合作目标和授权预算，提交给IP组评估")
+                  : menuKind === "requests"
+                    ? ipText("查看需求、IP反馈与营销意见")
+                    : pageSubtitle
+            )
           }}
         </p>
       </div>
       <div>
-        <el-button v-if="mode !== 'list'" @click="goList">返回列表</el-button
+        <el-button v-if="mode !== 'list'" @click="goList">{{
+          ipText("返回列表")
+        }}</el-button
         ><el-button
           v-if="menuKind === 'requests' && mode === 'list'"
           class="ip-primary"
           @click="goNew"
-          >＋ 提起IP需求</el-button
+          >{{ ipText("＋ 提起IP需求") }}</el-button
         >
       </div>
     </div>
@@ -1542,7 +1587,7 @@ onUnmounted(() => {
         <div class="ip-search">
           <el-input
             v-model="keyword"
-            placeholder="搜索项目名称"
+            :placeholder="ipText('搜索项目名称')"
             clearable
             @keyup.enter="
               page = 1;
@@ -1554,41 +1599,45 @@ onUnmounted(() => {
               page = 1;
               loadRows();
             "
-            >搜索</el-button
-          ><span>共 {{ total }} 条需求</span>
+            >{{ ipText("搜索") }}</el-button
+          ><span
+            >{{ ipText("共") }} {{ ipText(total) }} {{ ipText("条需求") }}</span
+          >
         </div>
         <el-table
           class="ip-request-table"
           :data="rows"
           :cell-style="{ textAlign: 'center' }"
           :header-cell-style="{ textAlign: 'center' }"
-          empty-text="暂无符合条件的IP需求"
+          :empty-text="ipText('暂无符合条件的IP需求')"
           stripe
-          ><el-table-column label="项目名称" min-width="200"
+          ><el-table-column :label="ipText('项目名称')" min-width="200"
             ><template #default="scope"
               ><button class="ip-link" @click="goDetail(scope.row.id)">
                 {{ scope.row.projectName }}</button
               ><small
-                >{{ scope.row.department }} · {{ scope.row.createdAt }}</small
+                >{{ ipText(scope.row.department) }} ·
+                {{ ipText(scope.row.createdAt) }}</small
               ></template
             ></el-table-column
-          ><el-table-column label="目标市场" min-width="120"
+          ><el-table-column :label="ipText('目标市场')" min-width="120"
             ><template #default="scope">{{
-              arrayValue(scope.row.markets).join(" / ")
+              ipText(arrayValue(scope.row.markets).join(" / "))
             }}</template></el-table-column
           ><el-table-column
             prop="goal"
-            label="合作目标"
+            :formatter="row => ipText(row.goal)"
+            :label="ipText('合作目标')"
             min-width="100"
-          /><el-table-column label="授权费用预算" min-width="150"
+          /><el-table-column :label="ipText('授权费用预算')" min-width="150"
             ><template #default="scope">{{
-              priceText(scope.row)
+              ipText(priceText(scope.row))
             }}</template></el-table-column
           ><el-table-column
             prop="candidateCount"
-            label="意向IP"
+            :label="ipText('意向IP')"
             width="70"
-          /><el-table-column label="进度" width="130"
+          /><el-table-column :label="ipText('进度')" width="130"
             ><template #default="scope"
               ><el-tag
                 :type="
@@ -1600,10 +1649,13 @@ onUnmounted(() => {
                       ? 'info'
                       : 'warning'
                 "
-                >{{ listStatusText(scope.row.status) }}</el-tag
+                >{{ ipText(listStatusText(scope.row.status)) }}</el-tag
               ></template
             ></el-table-column
-          ><el-table-column label="最晚反馈（北京时间）" min-width="200">
+          ><el-table-column
+            :label="ipText('最晚反馈（北京时间）')"
+            min-width="200"
+          >
             <template #default="{ row }">
               <DeadlineStatus
                 v-if="row.status !== 'draft'"
@@ -1615,42 +1667,52 @@ onUnmounted(() => {
                     : row.deadlines?.marketing
                 "
               />
-              <span v-else>提交后开始计时</span>
+              <span v-else>{{ ipText("提交后开始计时") }}</span>
             </template> </el-table-column
           ><el-table-column
-            label="操作"
+            :label="ipText('操作')"
             :width="menuKind === 'requests' ? 200 : 115"
             fixed="right"
             ><template #default="scope"
               ><div class="ip-row-actions">
                 <el-button link @click="goDetail(scope.row.id)">{{
-                  menuKind === "feedback"
-                    ? scope.row.status === "submitted"
-                      ? "填写反馈"
-                      : "查看反馈"
-                    : menuKind === "marketing"
-                      ? scope.row.status === "ip_reviewed"
-                        ? "补充意见"
-                        : "查看意见"
-                      : "查看详情"
+                  ipText(
+                    menuKind === "feedback"
+                      ? scope.row.status === "submitted"
+                        ? ipText("填写反馈")
+                        : ipText("查看反馈")
+                      : menuKind === "marketing"
+                        ? scope.row.status === "ip_reviewed"
+                          ? ipText("补充意见")
+                          : ipText("查看意见")
+                        : ipText("查看详情")
+                  )
                 }}</el-button>
                 <template v-if="menuKind === 'requests'">
                   <span
                     :title="
-                      scope.row.canEdit ? '编辑需求' : '仅发起人本人可编辑'
+                      ipText(
+                        scope.row.canEdit
+                          ? ipText('编辑需求')
+                          : ipText('仅发起人本人可编辑')
+                      )
                     "
                   >
                     <el-button
                       link
                       :disabled="!scope.row.canEdit || deletingID != null"
-                      :aria-label="`编辑${scope.row.projectName}`"
+                      :aria-label="ipText('编辑{0}', [scope.row.projectName])"
                       @click="goEdit(scope.row.id)"
-                      >编辑</el-button
+                      >{{ ipText("编辑") }}</el-button
                     >
                   </span>
                   <span
                     :title="
-                      scope.row.canDelete ? '删除需求' : '仅发起人本人可删除'
+                      ipText(
+                        scope.row.canDelete
+                          ? ipText('删除需求')
+                          : ipText('仅发起人本人可删除')
+                      )
                     "
                   >
                     <el-button
@@ -1658,9 +1720,9 @@ onUnmounted(() => {
                       type="danger"
                       :disabled="!scope.row.canDelete || deletingID != null"
                       :loading="deletingID === Number(scope.row.id)"
-                      :aria-label="`删除${scope.row.projectName}`"
+                      :aria-label="ipText('删除{0}', [scope.row.projectName])"
                       @click="deleteRequest(scope.row)"
-                      >删除</el-button
+                      >{{ ipText("删除") }}</el-button
                     >
                   </span>
                 </template>
@@ -1681,40 +1743,40 @@ onUnmounted(() => {
 
     <template v-else-if="mode === 'new'"
       ><div v-if="!editingSubmitted" class="ip-steps">
-        <span class="active"><b>1</b>基本信息</span>
+        <span class="active"><b>1</b>{{ ipText("基本信息") }}</span>
         <span :class="{ active: form.candidateIds.length > 0 }"
-          ><b>2</b>初步意向IP</span
+          ><b>2</b>{{ ipText("初步意向IP") }}</span
         >
-        <span><b>3</b>确认提交</span>
+        <span><b>3</b>{{ ipText("确认提交") }}</span>
       </div>
       <div class="ip-grid">
         <div class="ip-stack">
           <div class="ip-card">
-            <h2>项目基本信息</h2>
+            <h2>{{ ipText("项目基本信息") }}</h2>
             <div class="ip-form-grid">
               <label
                 data-validation-key="projectName"
                 :class="validationClass('projectName')"
                 ><span class="ip-field-label"
-                  >项目名称
+                  >{{ ipText("项目名称") }}
                   <span class="ip-required" aria-hidden="true">*</span></span
                 ><el-input
                   v-model="form.projectName"
-                  placeholder="请输入项目名称" /></label
+                  :placeholder="ipText('请输入项目名称')" /></label
               ><label
                 data-validation-key="department"
                 :class="validationClass('department')"
                 ><span class="ip-field-label"
-                  >需求发起部门
+                  >{{ ipText("需求发起部门") }}
                   <span class="ip-required" aria-hidden="true">*</span></span
                 ><el-input
                   v-model="form.department"
-                  placeholder="例如：产品组" /></label
+                  :placeholder="ipText('例如：产品组')" /></label
               ><label
                 data-validation-key="markets"
                 :class="validationClass('markets')"
                 ><span class="ip-field-label"
-                  >目标市场
+                  >{{ ipText("目标市场") }}
                   <span class="ip-required" aria-hidden="true">*</span></span
                 ><el-select
                   v-model="form.markets"
@@ -1722,23 +1784,24 @@ onUnmounted(() => {
                   filterable
                   allow-create
                   default-first-option
-                  placeholder="请选择目标市场"
+                  :placeholder="ipText('请选择目标市场')"
                   ><el-option
                     v-for="market in markets"
                     :key="market"
-                    :label="market"
+                    :label="ipText(market)"
                     :value="market" /></el-select></label
               ><label
-                >预计上线时间<el-date-picker
+                >{{ ipText("预计上线时间")
+                }}<el-date-picker
                   v-model="form.expectedLaunch"
                   type="date"
                   value-format="YYYY-MM-DD"
-                  placeholder="请选择日期" /></label
+                  :placeholder="ipText('请选择日期')" /></label
               ><label
                 data-validation-key="budget"
                 :class="validationClass('budget')"
                 ><span class="ip-field-label"
-                  >授权费用预算
+                  >{{ ipText("授权费用预算") }}
                   <span class="ip-required" aria-hidden="true">*</span></span
                 >
                 <div class="ip-budget">
@@ -1752,34 +1815,34 @@ onUnmounted(() => {
                     v-model="form.budgetMin"
                     :min="0"
                     :controls="false"
-                    placeholder="最低预算"
+                    :placeholder="ipText('最低预算')"
                   /><span>—</span
                   ><el-input-number
                     v-model="form.budgetMax"
                     :min="0"
                     :controls="false"
-                    placeholder="最高预算"
+                    :placeholder="ipText('最高预算')"
                   />
                 </div>
-                <small>预计授权费用，不含执行费用</small></label
+                <small>{{ ipText("预计授权费用，不含执行费用") }}</small></label
               ><label
                 data-validation-key="goal"
                 :class="validationClass('goal')"
                 ><span class="ip-field-label"
-                  >合作目标
+                  >{{ ipText("合作目标") }}
                   <span class="ip-required" aria-hidden="true">*</span></span
-                ><el-select v-model="form.goal" placeholder="请选择"
+                ><el-select v-model="form.goal" :placeholder="ipText('请选择')"
                   ><el-option
                     v-for="goal in goals"
                     :key="goal"
-                    :label="goal"
+                    :label="ipText(goal)"
                     :value="goal" /></el-select></label
               ><label
                 class="ip-span"
                 data-validation-key="description"
                 :class="validationClass('description')"
                 ><span class="ip-field-label"
-                  >项目背景与需求说明
+                  >{{ ipText("项目背景与需求说明") }}
                   <span class="ip-required" aria-hidden="true">*</span></span
                 ><el-input
                   v-model="form.description"
@@ -1787,7 +1850,9 @@ onUnmounted(() => {
                   :rows="3"
                   maxlength="2000"
                   show-word-limit
-                  placeholder="说明合作背景、希望达成的目标与执行方向"
+                  :placeholder="
+                    ipText('说明合作背景、希望达成的目标与执行方向')
+                  "
               /></label>
             </div>
           </div>
@@ -1798,12 +1863,18 @@ onUnmounted(() => {
           >
             <div class="ip-card-head">
               <div>
-                <h2>初步意向IP</h2>
+                <h2>{{ ipText("初步意向IP") }}</h2>
                 <p>
                   {{
-                    candidateSelectionLocked
-                      ? "IP组已开始反馈，意向IP名单和原始评估资料保持不变，可继续编辑其他项目资料。"
-                      : "最多5个意向IP；可前往资源库查看完整档案、版权资料及历史合作。"
+                    ipText(
+                      candidateSelectionLocked
+                        ? ipText(
+                            "IP组已开始反馈，意向IP名单和原始评估资料保持不变，可继续编辑其他项目资料。"
+                          )
+                        : ipText(
+                            "最多5个意向IP；可前往资源库查看完整档案、版权资料及历史合作。"
+                          )
+                    )
                   }}
                 </p>
               </div>
@@ -1813,7 +1884,7 @@ onUnmounted(() => {
                 :href="libraryHref"
                 target="_blank"
                 rel="noopener"
-                >前往IP资源库 ↗</a
+                >{{ ipText("前往IP资源库 ↗") }}</a
               >
               <a
                 v-if="!candidateSelectionLocked"
@@ -1822,7 +1893,7 @@ onUnmounted(() => {
                 target="_blank"
                 rel="noopener"
                 @click="openRecommendationsFromForm"
-                >AI寻找匹配IP ↗</a
+                >{{ ipText("AI寻找匹配IP ↗") }}</a
               >
             </div>
             <el-select
@@ -1830,7 +1901,7 @@ onUnmounted(() => {
               :disabled="candidateSelectionLocked"
               multiple
               filterable
-              placeholder="搜索并选择资源库中的IP"
+              :placeholder="ipText('搜索并选择资源库中的IP')"
               style="width: 100%"
               :multiple-limit="5"
               ><el-option
@@ -1856,9 +1927,9 @@ onUnmounted(() => {
                   <div>
                     <strong>{{ selectedIP(id)?.name || "IP" }}</strong
                     ><small
-                      >{{ selectedIP(id)?.ipType }} ·
+                      >{{ ipText(selectedIP(id)?.ipType) }} ·
                       {{
-                        arrayValue(selectedIP(id)?.markets).join(" / ")
+                        ipText(arrayValue(selectedIP(id)?.markets).join(" / "))
                       }}</small
                     >
                   </div>
@@ -1866,7 +1937,7 @@ onUnmounted(() => {
                     v-if="!candidateSelectionLocked"
                     link
                     @click="removeCandidate(id)"
-                    >移除</el-button
+                    >{{ ipText("移除") }}</el-button
                   >
                 </div>
                 <a
@@ -1874,21 +1945,21 @@ onUnmounted(() => {
                   :href="ipDetailHref(id)"
                   target="_blank"
                   rel="noopener"
-                  >查看IP详情 ↗</a
+                  >{{ ipText("查看IP详情 ↗") }}</a
                 >
                 <div class="ip-form-grid ip-span">
                   <label
                     :data-validation-key="`candidate-${id}-reason`"
                     :class="validationClass(`candidate-${id}-reason`)"
                     ><span class="ip-field-label"
-                      >选择理由
+                      >{{ ipText("选择理由") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
                     ><el-input
                       v-model="form.brief.candidateEvaluations[id].reason"
                       :disabled="candidateSelectionLocked"
-                      placeholder="商业潜力、品牌调性或话题契合"
+                      :placeholder="ipText('商业潜力、品牌调性或话题契合')"
                   /></label>
                   <label
                     :data-validation-key="`candidate-${id}-productEvaluation`"
@@ -1896,7 +1967,7 @@ onUnmounted(() => {
                       validationClass(`candidate-${id}-productEvaluation`)
                     "
                     ><span class="ip-field-label"
-                      >产品维度评估
+                      >{{ ipText("产品维度评估") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
@@ -1905,28 +1976,28 @@ onUnmounted(() => {
                         form.brief.candidateEvaluations[id].productEvaluation
                       "
                       :disabled="candidateSelectionLocked"
-                      placeholder="认知度、用户重叠率、机型适配"
+                      :placeholder="ipText('认知度、用户重叠率、机型适配')"
                   /></label>
                   <label
                     class="ip-span"
                     :data-validation-key="`candidate-${id}-technicalFit`"
                     :class="validationClass(`candidate-${id}-technicalFit`)"
                     ><span class="ip-field-label"
-                      >技术匹配程度
+                      >{{ ipText("技术匹配程度") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
                     ><el-input
                       v-model="form.brief.candidateEvaluations[id].technicalFit"
                       :disabled="candidateSelectionLocked"
-                      placeholder="视觉惊喜度、开发及本地化难度"
+                      :placeholder="ipText('视觉惊喜度、开发及本地化难度')"
                   /></label>
                 </div>
               </div>
             </div>
             <div class="ip-other">
               <div class="ip-card-head">
-                <strong>库外IP意向（最多3个，选填）</strong>
+                <strong>{{ ipText("库外IP意向（最多3个，选填）") }}</strong>
                 <el-button
                   :disabled="form.brief.externalIPs.length >= 3"
                   @click="
@@ -1939,7 +2010,7 @@ onUnmounted(() => {
                       technicalFit: ''
                     })
                   "
-                  >＋ 添加</el-button
+                  >{{ ipText("＋ 添加") }}</el-button
                 >
               </div>
               <div
@@ -1948,12 +2019,14 @@ onUnmounted(() => {
                 class="ip-candidate"
               >
                 <div class="ip-card-head">
-                  <strong>库外IP {{ Number(index) + 1 }}</strong
+                  <strong
+                    >{{ ipText("库外IP") }}
+                    {{ ipText(Number(index) + 1) }}</strong
                   ><el-button
                     link
                     type="danger"
                     @click="removeExternalIP(Number(index))"
-                    >移除</el-button
+                    >{{ ipText("移除") }}</el-button
                   >
                 </div>
                 <div class="ip-form-grid">
@@ -1961,7 +2034,7 @@ onUnmounted(() => {
                     :data-validation-key="`external-${index}-name`"
                     :class="validationClass(`external-${index}-name`)"
                     ><span class="ip-field-label"
-                      >IP名称
+                      >{{ ipText("IP名称") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
@@ -1971,7 +2044,7 @@ onUnmounted(() => {
                     :data-validation-key="`external-${index}-rightsOwner`"
                     :class="validationClass(`external-${index}-rightsOwner`)"
                     ><span class="ip-field-label"
-                      >版权方
+                      >{{ ipText("版权方") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
@@ -1982,7 +2055,7 @@ onUnmounted(() => {
                     :data-validation-key="`external-${index}-imageUrl`"
                     :class="validationClass(`external-${index}-imageUrl`)"
                     ><span class="ip-field-label"
-                      >IP形象示意链接
+                      >{{ ipText("IP形象示意链接") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
@@ -1990,9 +2063,11 @@ onUnmounted(() => {
                       v-model="item.imageUrl"
                       placeholder="https://..."
                       @input="brokenExternalImageUrls[index] = false"
-                    /><small
-                      >可填图片直链或介绍页面链接；页面链接无法在此预览。</small
-                    ></label
+                    /><small>{{
+                      ipText(
+                        "可填图片直链或介绍页面链接；页面链接无法在此预览。"
+                      )
+                    }}</small></label
                   >
                   <img
                     v-if="
@@ -2000,7 +2075,7 @@ onUnmounted(() => {
                       !brokenExternalImageUrls[index]
                     "
                     :src="item.imageUrl"
-                    alt="库外IP形象示意"
+                    :alt="ipText('库外IP形象示意')"
                     class="ip-external-image"
                     @error="brokenExternalImageUrls[index] = true"
                   />
@@ -2011,17 +2086,17 @@ onUnmounted(() => {
                     "
                     class="ip-external-link-state ip-span"
                   >
-                    链接已填写，当前无法直接预览图片。
-                    <a :href="item.imageUrl" target="_blank" rel="noopener"
-                      >打开链接 ↗</a
-                    >
+                    {{ ipText("链接已填写，当前无法直接预览图片。") }}
+                    <a :href="item.imageUrl" target="_blank" rel="noopener">{{
+                      ipText("打开链接 ↗")
+                    }}</a>
                   </div>
                   <label
                     class="ip-span"
                     :data-validation-key="`external-${index}-reason`"
                     :class="validationClass(`external-${index}-reason`)"
                     ><span class="ip-field-label"
-                      >选择理由
+                      >{{ ipText("选择理由") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
@@ -2034,26 +2109,26 @@ onUnmounted(() => {
                       validationClass(`external-${index}-productEvaluation`)
                     "
                     ><span class="ip-field-label"
-                      >产品维度评估
+                      >{{ ipText("产品维度评估") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
                     ><el-input
                       v-model="item.productEvaluation"
-                      placeholder="市场认知、用户重叠、机型适配"
+                      :placeholder="ipText('市场认知、用户重叠、机型适配')"
                   /></label>
                   <label
                     class="ip-span"
                     :data-validation-key="`external-${index}-technicalFit`"
                     :class="validationClass(`external-${index}-technicalFit`)"
                     ><span class="ip-field-label"
-                      >技术匹配程度
+                      >{{ ipText("技术匹配程度") }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
                     ><el-input
                       v-model="item.technicalFit"
-                      placeholder="视觉、开发和本地化难度"
+                      :placeholder="ipText('视觉、开发和本地化难度')"
                   /></label>
                 </div>
               </div>
@@ -2064,11 +2139,11 @@ onUnmounted(() => {
               <el-collapse-item name="brief">
                 <template #title>
                   <div>
-                    <h2>补充项目资料</h2>
+                    <h2>{{ ipText("补充项目资料") }}</h2>
                     <p>
-                      带
+                      {{ ipText("带") }}
                       <span class="ip-required" aria-hidden="true">*</span>
-                      的项目资料与各环节对接人提交时必填。
+                      {{ ipText("的项目资料与各环节对接人提交时必填。") }}
                     </p>
                   </div>
                 </template>
@@ -2081,7 +2156,7 @@ onUnmounted(() => {
                     :class="validationClass(`brief-${field.key}`)"
                   >
                     <span class="ip-field-label"
-                      >{{ field.label
+                      >{{ ipText(field.label)
                       }}<span
                         v-if="field.required"
                         class="ip-required"
@@ -2090,16 +2165,25 @@ onUnmounted(() => {
                       ></span
                     ><el-input
                       v-model="form.brief[field.key]"
-                      :placeholder="field.hint"
+                      :placeholder="ipText(field.hint)"
                     />
                   </label>
                 </div>
                 <div class="ip-stage-head">
-                  <h3>各环节对接人</h3>
-                  <p>输入姓名或工号搜索同事；未找到时也可直接填写姓名。</p>
+                  <h3>{{ ipText("各环节对接人") }}</h3>
                   <p>
-                    选择 SSO
-                    同事且有可用邮箱时，流程推进会发送飞书提醒；手动输入姓名可保存，但不会自动提醒。
+                    {{
+                      ipText(
+                        "输入姓名或工号搜索同事；未找到时也可直接填写姓名。"
+                      )
+                    }}
+                  </p>
+                  <p>
+                    {{
+                      ipText(
+                        "选择 SSO 同事且有可用邮箱时，流程推进会发送飞书提醒；手动输入姓名可保存，但不会自动提醒。"
+                      )
+                    }}
                   </p>
                   <p
                     v-if="
@@ -2110,9 +2194,9 @@ onUnmounted(() => {
                     "
                     class="ip-legacy-contacts"
                   >
-                    历史草稿对接人：{{
-                      form.brief.contacts
-                    }}。请按环节补全后提交。
+                    {{ ipText("历史草稿对接人：")
+                    }}{{ ipText(form.brief.contacts)
+                    }}{{ ipText("。请按环节补全后提交。") }}
                   </p>
                 </div>
                 <div class="ip-contact-grid">
@@ -2123,7 +2207,7 @@ onUnmounted(() => {
                     :class="validationClass(`contact-${stage.key}`)"
                   >
                     <span class="ip-field-label"
-                      >{{ stage.label }}
+                      >{{ ipText(stage.label) }}
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
@@ -2137,7 +2221,7 @@ onUnmounted(() => {
                       :debounce="300"
                       :trigger-on-focus="false"
                       clearable
-                      placeholder="搜索姓名或工号"
+                      :placeholder="ipText('搜索姓名或工号')"
                       @input="value => onContactInput(stage.key, value)"
                       @select="person => selectContact(stage.key, person)"
                     >
@@ -2145,9 +2229,11 @@ onUnmounted(() => {
                         <span>{{ item.name }}</span>
                         <small v-if="item.employeeNo || item.department">
                           {{
-                            [item.employeeNo, item.department]
-                              .filter(Boolean)
-                              .join(" · ")
+                            ipText(
+                              [item.employeeNo, item.department]
+                                .filter(Boolean)
+                                .join(" · ")
+                            )
                           }}
                         </small>
                       </template>
@@ -2157,22 +2243,24 @@ onUnmounted(() => {
                       type="primary"
                       class="ip-colleague-more"
                       @click="openColleaguePicker(stage.key)"
-                      >搜索更多同事</el-button
+                      >{{ ipText("搜索更多同事") }}</el-button
                     >
                     <small
                       v-if="colleagueSearchStatus[stage.key] === 'empty'"
                       class="ip-colleague-hint"
-                      >未找到同事，可直接保留输入的姓名。</small
+                      >{{ ipText("未找到同事，可直接保留输入的姓名。") }}</small
                     >
                     <small
                       v-if="colleagueSearchStatus[stage.key] === 'failed'"
                       class="ip-colleague-hint"
-                      >搜索暂不可用，可直接填写姓名。</small
+                      >{{ ipText("搜索暂不可用，可直接填写姓名。") }}</small
                     >
                     <small
                       v-if="colleagueSearchStatus[stage.key] === 'limited'"
                       class="ip-colleague-hint"
-                      >企业目录暂不可用，仅显示已登录 XMP 的同事。</small
+                      >{{
+                        ipText("企业目录暂不可用，仅显示已登录 XMP 的同事。")
+                      }}</small
                     >
                   </label>
                 </div>
@@ -2182,21 +2270,27 @@ onUnmounted(() => {
         </div>
         <div class="ip-stack">
           <div class="ip-card">
-            <h2>需求摘要</h2>
+            <h2>{{ ipText("需求摘要") }}</h2>
             <dl>
-              <dt>发起部门</dt>
-              <dd>{{ form.department || "待填写" }}</dd>
-              <dt>市场</dt>
-              <dd>{{ form.markets.join(" / ") || "待选择" }}</dd>
-              <dt>目标</dt>
-              <dd>{{ form.goal || "待选择" }}</dd>
-              <dt>授权预算</dt>
-              <dd>{{ priceText(form) }}</dd>
-              <dt>意向IP</dt>
-              <dd>{{ form.candidateIds.length }} 个</dd>
+              <dt>{{ ipText("发起部门") }}</dt>
+              <dd>{{ ipText(form.department || ipText("待填写")) }}</dd>
+              <dt>{{ ipText("市场") }}</dt>
+              <dd>
+                {{ ipText(form.markets.join(" / ") || ipText("待选择")) }}
+              </dd>
+              <dt>{{ ipText("目标") }}</dt>
+              <dd>{{ ipText(form.goal || ipText("待选择")) }}</dd>
+              <dt>{{ ipText("授权预算") }}</dt>
+              <dd>{{ ipText(priceText(form)) }}</dd>
+              <dt>{{ ipText("意向IP") }}</dt>
+              <dd>{{ ipText(form.candidateIds.length) }} {{ ipText("个") }}</dd>
             </dl>
             <div class="ip-note">
-              提交后，IP意见需在10个工作日内反馈；IP意见提交后，营销意见需在5个工作日内补齐。按中国大陆法定节假日与调休、次日起算，截止日北京时间23:59。
+              {{
+                ipText(
+                  "提交后，IP意见需在10个工作日内反馈；IP意见提交后，营销意见需在5个工作日内补齐。按中国大陆法定节假日与调休、次日起算，截止日北京时间23:59。"
+                )
+              }}
             </div>
           </div>
         </div>
@@ -2206,9 +2300,9 @@ onUnmounted(() => {
           v-if="!editingSubmitted"
           :disabled="saving"
           @click="save(false)"
-          >保存草稿</el-button
+          >{{ ipText("保存草稿") }}</el-button
         ><el-button class="ip-primary" :loading="saving" @click="save(true)">{{
-          editingSubmitted ? "保存修改" : "提交需求 →"
+          ipText(editingSubmitted ? ipText("保存修改") : ipText("提交需求 →"))
         }}</el-button>
       </div></template
     >
@@ -2219,9 +2313,9 @@ onUnmounted(() => {
           <div>
             <h2>{{ detail.request.projectName }}</h2>
             <p>
-              {{ detail.request.department }} ·
-              {{ arrayValue(detail.request.markets).join(" / ") }} ·
-              {{ requestDate(detail.request.createdAt, true) }}
+              {{ ipText(detail.request.department) }} ·
+              {{ ipText(arrayValue(detail.request.markets).join(" / ")) }} ·
+              {{ ipText(requestDate(detail.request.createdAt, true)) }}
             </p>
           </div>
           <el-tag
@@ -2230,43 +2324,57 @@ onUnmounted(() => {
                 ? 'success'
                 : 'warning'
             "
-            >{{ statusText[detail.request.status] }}</el-tag
+            >{{ ipText(statusText[detail.request.status]) }}</el-tag
           >
         </div>
-        <div class="ip-timeline ip-detail-timeline" aria-label="需求协作流程">
+        <div
+          class="ip-timeline ip-detail-timeline"
+          :aria-label="ipText('需求协作流程')"
+        >
           <span :class="{ done: detail.request.status !== 'draft' }"
-            ><b>1</b>需求已提交</span
+            ><b>1</b>{{ ipText("需求已提交") }}</span
           ><span
             :class="{
               done: ['ip_reviewed', 'marketing_reviewed'].includes(
                 detail.request.status
               )
             }"
-            ><b>2</b>IP组评估</span
+            ><b>2</b>{{ ipText("IP组评估") }}</span
           ><span
             :class="{ done: detail.request.status === 'marketing_reviewed' }"
-            ><b>3</b>营销意见补充</span
-          ><span><b>4</b>意向IP确认</span>
+            ><b>3</b>{{ ipText("营销意见补充") }}</span
+          ><span><b>4</b>{{ ipText("意向IP确认") }}</span>
         </div>
-        <section class="ip-deadline-summary" aria-label="意见反馈时效">
+        <section
+          class="ip-deadline-summary"
+          :aria-label="ipText('意见反馈时效')"
+        >
           <DeadlineStatus :deadline="detail.request.deadlines?.ip" />
           <DeadlineStatus :deadline="detail.request.deadlines?.marketing" />
           <p>
-            按中国大陆法定节假日与调休，阶段开始次日起算；截止时间为北京时间。草稿保存不重置期限。
+            {{
+              ipText(
+                "按中国大陆法定节假日与调休，阶段开始次日起算；截止时间为北京时间。草稿保存不重置期限。"
+              )
+            }}
           </p>
         </section>
         <div class="ip-detail-summary">
           <div>
-            <span>合作目标</span>
-            <strong>{{ detailText(detail.request.goal, "待确定") }}</strong>
+            <span>{{ ipText("合作目标") }}</span>
+            <strong>{{
+              ipText(detailText(detail.request.goal, ipText("待确定")))
+            }}</strong>
           </div>
           <div>
-            <span>授权预算</span>
-            <strong>{{ priceText(detail.request) }}</strong>
+            <span>{{ ipText("授权预算") }}</span>
+            <strong>{{ ipText(priceText(detail.request)) }}</strong>
           </div>
           <div>
-            <span>预计上线</span>
-            <strong>{{ requestDate(detail.request.expectedLaunch) }}</strong>
+            <span>{{ ipText("预计上线") }}</span>
+            <strong>{{
+              ipText(requestDate(detail.request.expectedLaunch))
+            }}</strong>
           </div>
         </div>
         <div class="ip-detail-body">
@@ -2275,15 +2383,15 @@ onUnmounted(() => {
               class="ip-detail-section"
               aria-labelledby="ip-project-info"
             >
-              <h3 id="ip-project-info">项目资料</h3>
+              <h3 id="ip-project-info">{{ ipText("项目资料") }}</h3>
               <dl class="ip-detail-facts">
                 <div
                   v-for="field in projectFields"
                   :key="field.key"
                   :class="{ 'ip-detail-wide': field.key === 'cooperationMode' }"
                 >
-                  <dt>{{ field.label }}</dt>
-                  <dd>{{ detailText(requestBrief[field.key]) }}</dd>
+                  <dt>{{ ipText(field.label) }}</dt>
+                  <dd>{{ ipText(detailText(requestBrief[field.key])) }}</dd>
                 </div>
               </dl>
             </section>
@@ -2291,14 +2399,16 @@ onUnmounted(() => {
               class="ip-detail-section"
               aria-labelledby="ip-request-description"
             >
-              <h3 id="ip-request-description">项目背景与需求说明</h3>
+              <h3 id="ip-request-description">
+                {{ ipText("项目背景与需求说明") }}
+              </h3>
               <RequestText :text="detail.request.description" />
             </section>
             <section
               class="ip-detail-section"
               aria-labelledby="ip-project-notes"
             >
-              <h3 id="ip-project-notes">项目补充说明</h3>
+              <h3 id="ip-project-notes">{{ ipText("项目补充说明") }}</h3>
               <RequestText :text="detailText(requestBrief.projectNotes)" />
             </section>
             <section
@@ -2306,7 +2416,9 @@ onUnmounted(() => {
               class="ip-detail-section"
               aria-labelledby="ip-external-recommendations"
             >
-              <h3 id="ip-external-recommendations">库外IP推荐</h3>
+              <h3 id="ip-external-recommendations">
+                {{ ipText("库外IP推荐") }}
+              </h3>
               <RequestText
                 v-if="detail.request.externalRecommendation"
                 :text="detail.request.externalRecommendation"
@@ -2318,11 +2430,13 @@ onUnmounted(() => {
               >
                 <div class="ip-detail-external-head">
                   <strong>{{ detailText(item.name) }}</strong>
-                  <el-button link @click="openExternalIP(item)"
-                    >补充并入库 ↗</el-button
-                  >
+                  <el-button link @click="openExternalIP(item)">{{
+                    ipText("补充并入库 ↗")
+                  }}</el-button>
                 </div>
-                <p>版权方：{{ detailText(item.rightsOwner) }}</p>
+                <p>
+                  {{ ipText("版权方：") }}{{ detailText(item.rightsOwner) }}
+                </p>
                 <RequestText :text="item.reason" />
               </div>
             </section>
@@ -2331,10 +2445,10 @@ onUnmounted(() => {
             class="ip-detail-contacts"
             aria-labelledby="ip-project-contacts"
           >
-            <h3 id="ip-project-contacts">协作对接人</h3>
+            <h3 id="ip-project-contacts">{{ ipText("协作对接人") }}</h3>
             <dl class="ip-detail-contact-list">
               <div v-for="stage in contactStages" :key="stage.key">
-                <dt>{{ stage.label }}</dt>
+                <dt>{{ ipText(stage.label) }}</dt>
                 <dd>{{ detailText(requestContacts[stage.key]?.name) }}</dd>
               </div>
               <div
@@ -2344,8 +2458,8 @@ onUnmounted(() => {
                 "
                 class="ip-detail-wide"
               >
-                <dt>原对接人</dt>
-                <dd>{{ requestBrief.contacts }}</dd>
+                <dt>{{ ipText("原对接人") }}</dt>
+                <dd>{{ ipText(requestBrief.contacts) }}</dd>
               </div>
             </dl>
           </section>
@@ -2355,7 +2469,11 @@ onUnmounted(() => {
             v-if="menuKind === 'requests' && detail.request.canEdit"
             @click="goEdit(Number(detail.request.id))"
             >{{
-              detail.request.status === "draft" ? "继续编辑草稿" : "编辑需求"
+              ipText(
+                detail.request.status === "draft"
+                  ? ipText("继续编辑草稿")
+                  : ipText("编辑需求")
+              )
             }}</el-button
           >
           <el-button
@@ -2364,26 +2482,32 @@ onUnmounted(() => {
             plain
             :loading="deletingID === Number(detail.request.id)"
             @click="deleteRequest(detail.request)"
-            >删除需求</el-button
+            >{{ ipText("删除需求") }}</el-button
           >
-          <el-button @click="openRecommendationsFromDetail"
-            >根据此需求寻找匹配IP ↗</el-button
-          >
+          <el-button @click="openRecommendationsFromDetail">{{
+            ipText("根据此需求寻找匹配IP ↗")
+          }}</el-button>
         </div>
       </div>
       <div class="ip-grid">
         <div class="ip-stack">
           <div v-if="menuKind !== 'marketing'" class="ip-card">
-            <h2>IP组评估</h2>
-            <p>请根据评估结果填写推荐意见。评分各项均为百分制。</p>
+            <h2>{{ ipText("IP组评估") }}</h2>
+            <p>
+              {{ ipText("请根据评估结果填写推荐意见。评分各项均为百分制。") }}
+            </p>
             <p v-if="!feedback.length">
-              暂无资源库内的意向IP。可先在资源库新建，再在下方加入评估。
+              {{
+                ipText(
+                  "暂无资源库内的意向IP。可先在资源库新建，再在下方加入评估。"
+                )
+              }}
             </p>
             <div v-if="canFeedback" class="ip-add-candidate">
               <el-select
                 v-model="addCandidateID"
                 filterable
-                placeholder="从IP资源库补充评估对象"
+                :placeholder="ipText('从IP资源库补充评估对象')"
                 ><el-option
                   v-for="item in resourceOptions.filter(
                     row =>
@@ -2394,15 +2518,19 @@ onUnmounted(() => {
                   :key="item.id"
                   :label="item.name"
                   :value="Number(item.id)" /></el-select
-              ><el-button @click="addFeedbackCandidate">加入评估</el-button
+              ><el-button @click="addFeedbackCandidate">{{
+                ipText("加入评估")
+              }}</el-button
               ><a
                 class="ip-outline-link"
                 :href="libraryHref"
                 target="_blank"
                 rel="noopener"
-                >前往IP资源库 ↗</a
+                >{{ ipText("前往IP资源库 ↗") }}</a
               >
-              <el-button @click="loadResources">刷新IP列表</el-button>
+              <el-button @click="loadResources">{{
+                ipText("刷新IP列表")
+              }}</el-button>
             </div>
             <div
               v-for="(item, index) in feedback"
@@ -2418,83 +2546,93 @@ onUnmounted(() => {
                   />
                   <div>
                     <strong>{{ item.name }}</strong
-                    ><small>意向IP {{ index + 1 }}</small>
+                    ><small
+                      >{{ ipText("意向IP") }} {{ ipText(index + 1) }}</small
+                    >
                   </div>
                 </div>
                 <strong class="ip-score"
-                  >{{ weightedScore(item.assessment) ?? "—" }} / 100</strong
+                  >{{ ipText(weightedScore(item.assessment) ?? "—") }} /
+                  100</strong
                 >
                 <a
                   class="ip-text-link"
                   :href="ipDetailHref(item.ipId)"
                   target="_blank"
                   rel="noopener"
-                  >查看IP详情 ↗</a
+                  >{{ ipText("查看IP详情 ↗") }}</a
                 >
-                <el-button link @click="exportEvaluation(item)"
-                  >导出完整评估表</el-button
-                >
+                <el-button link @click="exportEvaluation(item)">{{
+                  ipText("导出完整评估表")
+                }}</el-button>
               </div>
               <div class="ip-form-grid">
                 <label
                   ><span class="ip-field-label"
-                    >可行性判断
+                    >{{ ipText("可行性判断") }}
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-select
                     v-model="item.feasibility"
                     :disabled="!canFeedback"
-                    ><el-option label="可行" value="可行" /><el-option
-                      label="需进一步评估"
+                    ><el-option
+                      :label="ipText('可行')"
+                      value="可行" /><el-option
+                      :label="ipText('需进一步评估')"
                       value="需进一步评估" /><el-option
-                      label="不可行"
+                      :label="ipText('不可行')"
                       value="不可行" /></el-select></label
                 ><label
                   ><span class="ip-field-label"
-                    >推荐意见
+                    >{{ ipText("推荐意见") }}
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-select
                     v-model="item.recommendation"
                     :disabled="!canFeedback"
-                    ><el-option label="优先合作" value="优先合作" /><el-option
-                      label="备选合作"
+                    ><el-option
+                      :label="ipText('优先合作')"
+                      value="优先合作" /><el-option
+                      :label="ipText('备选合作')"
                       value="备选合作" /><el-option
-                      label="暂不合作"
+                      :label="ipText('暂不合作')"
                       value="暂不合作" /></el-select></label
                 ><label
                   ><span class="ip-field-label"
-                    >优先级
+                    >{{ ipText("优先级") }}
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-select
                     v-model="item.priorityOrder"
                     :disabled="!canFeedback"
-                    ><el-option label="T0 · 最高优先级" :value="0" /><el-option
-                      label="T1 · 优先推进"
+                    ><el-option
+                      :label="ipText('T0 · 最高优先级')"
+                      :value="0" /><el-option
+                      :label="ipText('T1 · 优先推进')"
                       :value="1" /><el-option
-                      label="T2 · 后续考虑"
+                      :label="ipText('T2 · 后续考虑')"
                       :value="2" /></el-select></label
                 ><label class="ip-span"
                   ><span class="ip-field-label"
-                    >理由说明
+                    >{{ ipText("理由说明") }}
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-input
                     v-model="item.reason"
                     type="textarea"
                     :rows="2"
                     :disabled="!canFeedback"
-                    placeholder="受众匹配、市场覆盖、档期和授权风险"
+                    :placeholder="ipText('受众匹配、市场覆盖、档期和授权风险')"
                 /></label>
               </div>
               <el-collapse class="ip-assessment-collapse">
                 <el-collapse-item
-                  title="评分与授权明细（各项均为百分制）"
+                  :title="ipText('评分与授权明细（各项均为百分制）')"
                   :name="item.ipId"
                 >
                   <div class="ip-score-grid">
                     <label v-for="field in scoreFields" :key="field.key">
                       <span class="ip-field-label"
-                        >{{ field.label }}
-                        <span class="ip-required" aria-hidden="true">*</span> ·
-                        权重 {{ Math.round(field.weight * 100) }}% </span
+                        >{{ ipText(field.label) }}
+                        <span class="ip-required" aria-hidden="true">*</span>
+                        {{ ipText("· 权重") }}
+                        {{ ipText(Math.round(field.weight * 100)) }}% </span
                       ><el-input-number
                         v-model="item.assessment.scoreDimensions[field.key]"
                         :min="0"
@@ -2511,7 +2649,7 @@ onUnmounted(() => {
                       class="ip-span"
                     >
                       <span class="ip-field-label"
-                        >{{ field.label
+                        >{{ ipText(field.label)
                         }}<span
                           v-if="requiredAssessmentFields.has(field.key)"
                           class="ip-required"
@@ -2522,7 +2660,7 @@ onUnmounted(() => {
                       <el-input
                         v-model="item.assessment[field.key]"
                         :disabled="!canFeedback"
-                        :placeholder="field.hint"
+                        :placeholder="ipText(field.hint)"
                       />
                     </label>
                   </div>
@@ -2530,28 +2668,33 @@ onUnmounted(() => {
               </el-collapse>
             </div>
             <div v-if="canFeedback" class="ip-bottom">
-              <el-button :loading="saving" @click="sendFeedback(true)"
-                >保存草稿</el-button
-              >
+              <el-button :loading="saving" @click="sendFeedback(true)">{{
+                ipText("保存草稿")
+              }}</el-button>
               <el-button
                 class="ip-primary"
                 :loading="saving"
                 @click="sendFeedback(false)"
-                >提交IP反馈</el-button
+                >{{ ipText("提交IP反馈") }}</el-button
               >
             </div>
           </div>
           <div v-if="menuKind !== 'feedback'" class="ip-card">
             <div class="ip-marketing-heading">
-              <h2>营销评估与建议</h2>
-              <span
-                >已提交 {{ submittedMarketingCount }} /
-                {{ marketingFunctions.length }} 个职能</span
-              >
+              <h2>{{ ipText("营销评估与建议") }}</h2>
+              <span>{{
+                ipText("已提交 {0} / {1} 个职能", [
+                  submittedMarketingCount,
+                  marketingFunctions.length
+                ])
+              }}</span>
             </div>
             <p class="ip-marketing-guidance">
-              各职能独立填写、独立提交，只需完成自己负责的意见。全部职能提交后，通过飞书提醒需求发起人；营销环节共用
-              5 个工作日反馈期限。
+              {{
+                ipText(
+                  "各职能独立填写、独立提交，只需完成自己负责的意见。全部职能提交后，通过飞书提醒需求发起人；营销环节共用 5 个工作日反馈期限。"
+                )
+              }}
             </p>
             <template
               v-if="
@@ -2560,7 +2703,7 @@ onUnmounted(() => {
             >
               <el-radio-group
                 v-model="marketingFunctionKey"
-                aria-label="本次填写或查看的职能"
+                :aria-label="ipText('本次填写或查看的职能')"
                 :disabled="saving"
                 class="ip-marketing-functions"
               >
@@ -2569,18 +2712,26 @@ onUnmounted(() => {
                   :key="item.key"
                   :value="item.key"
                 >
-                  {{ item.label }} ·
+                  {{ ipText(item.label) }} ·
                   {{
-                    marketingFunctionSubmitted(item.key) ? "已提交" : "待提交"
+                    ipText(
+                      marketingFunctionSubmitted(item.key)
+                        ? ipText("已提交")
+                        : ipText("待提交")
+                    )
                   }}
                 </el-radio-button>
               </el-radio-group>
               <template v-if="selectedMarketingFunction">
                 <div class="ip-marketing-function-meta">
-                  <strong>{{ selectedMarketingFunction.label }}意见</strong>
+                  <strong>{{
+                    ipText("{0}意见", [ipText(selectedMarketingFunction.label)])
+                  }}</strong>
                   <span
-                    >对接人：{{
-                      requestContacts[marketingFunctionKey]?.name || "待补充"
+                    >{{ ipText("对接人：")
+                    }}{{
+                      requestContacts[marketingFunctionKey]?.name ||
+                      ipText("待补充")
                     }}</span
                   >
                   <span
@@ -2588,23 +2739,25 @@ onUnmounted(() => {
                       objectValue(marketingFunctionStates[marketingFunctionKey])
                         .submittedAt
                     "
-                    >已于
+                    >{{ ipText("已于") }}
                     {{
-                      requestDate(
-                        objectValue(
-                          marketingFunctionStates[marketingFunctionKey]
-                        ).submittedAt,
-                        true
+                      ipText(
+                        requestDate(
+                          objectValue(
+                            marketingFunctionStates[marketingFunctionKey]
+                          ).submittedAt,
+                          true
+                        )
                       )
                     }}
-                    提交</span
+                    {{ ipText("提交") }}</span
                   >
                 </div>
                 <p
                   v-if="marketingFunctionSubmitted(marketingFunctionKey)"
                   class="ip-marketing-guidance"
                 >
-                  本职能已提交，以下为已保存内容。
+                  {{ ipText("本职能已提交，以下为已保存内容。") }}
                 </p>
                 <div
                   v-if="marketingFunctionKey === 'imc'"
@@ -2620,7 +2773,9 @@ onUnmounted(() => {
                     :key="field.key"
                     class="ip-channel-row"
                   >
-                    <strong>{{ field.label }}（选填）</strong>
+                    <strong
+                      >{{ ipText(field.label) }}{{ ipText("（选填）") }}</strong
+                    >
                     <el-input
                       v-model="marketing[field.key]"
                       :disabled="!canEditMarketingFunction || saving"
@@ -2634,7 +2789,11 @@ onUnmounted(() => {
                 >
                   <h3>
                     {{ candidate.name }} ·
-                    {{ selectedMarketingFunction.label }}意见
+                    {{
+                      ipText("{0}意见", [
+                        ipText(selectedMarketingFunction.label)
+                      ])
+                    }}
                   </h3>
                   <div class="ip-form-grid">
                     <label
@@ -2643,7 +2802,7 @@ onUnmounted(() => {
                       class="ip-span"
                     >
                       <span class="ip-field-label"
-                        >{{ field.label
+                        >{{ ipText(field.label)
                         }}<span
                           v-if="requiredMarketingFields.has(field.key)"
                           class="ip-required"
@@ -2656,7 +2815,7 @@ onUnmounted(() => {
                           marketingCandidates[String(candidate.ipId)][field.key]
                         "
                         :disabled="!canEditMarketingFunction || saving"
-                        :placeholder="field.hint"
+                        :placeholder="ipText(field.hint)"
                         :aria-required="requiredMarketingFields.has(field.key)"
                       />
                     </label>
@@ -2664,11 +2823,11 @@ onUnmounted(() => {
                 </div>
                 <div class="ip-marketing-grid">
                   <label class="ip-channel-row">
-                    <strong
-                      >{{
-                        selectedMarketingFunction.label
-                      }}推荐传播方向（选填）</strong
-                    >
+                    <strong>{{
+                      ipText("{0}推荐传播方向（选填）", [
+                        ipText(selectedMarketingFunction.label)
+                      ])
+                    }}</strong>
                     <el-checkbox-group
                       v-model="
                         marketingFunctionDrafts[marketingFunctionKey].channels
@@ -2679,16 +2838,18 @@ onUnmounted(() => {
                         v-for="channel in channels"
                         :key="channel"
                         :value="channel"
-                        >{{ channel }}</el-checkbox
+                        >{{ ipText(channel) }}</el-checkbox
                       >
                     </el-checkbox-group>
                   </label>
                   <label class="ip-channel-row">
                     <span class="ip-field-label"
                       ><strong
-                        >{{ selectedMarketingFunction.label }}补充意见<span
-                          class="ip-required"
-                          aria-hidden="true"
+                        >{{
+                          ipText("{0}补充意见", [
+                            ipText(selectedMarketingFunction.label)
+                          ])
+                        }}<span class="ip-required" aria-hidden="true"
                           >*</span
                         ></strong
                       ></span
@@ -2700,55 +2861,65 @@ onUnmounted(() => {
                       type="textarea"
                       :rows="3"
                       :disabled="!canEditMarketingFunction || saving"
-                      :placeholder="`填写${selectedMarketingFunction.label}意见；无需填写其他职能内容`"
+                      :placeholder="
+                        ipText('填写{0}意见；无需填写其他职能内容', [
+                          ipText(selectedMarketingFunction.label)
+                        ])
+                      "
                       aria-required="true"
                     />
                   </label>
                 </div>
                 <div v-if="canEditMarketingFunction" class="ip-bottom">
-                  <el-button :loading="saving" @click="sendMarketing(true)"
-                    >保存本职能草稿</el-button
-                  >
+                  <el-button :loading="saving" @click="sendMarketing(true)">{{
+                    ipText("保存本职能草稿")
+                  }}</el-button>
                   <el-button
                     class="ip-primary"
                     :loading="saving"
                     @click="sendMarketing(false)"
-                    >提交{{ selectedMarketingFunction.label }}意见</el-button
+                    >{{
+                      ipText("提交{0}意见", [
+                        ipText(selectedMarketingFunction.label)
+                      ])
+                    }}</el-button
                   >
                 </div>
               </template>
               <p v-else class="ip-marketing-guidance">
-                请先选择你负责的职能，查看或填写对应意见。
+                {{ ipText("请先选择你负责的职能，查看或填写对应意见。") }}
               </p>
               <section
                 v-if="legacyMarketingComments"
                 class="ip-marketing-legacy"
               >
-                <h3>历史营销补充意见</h3>
+                <h3>{{ ipText("历史营销补充意见") }}</h3>
                 <RequestText :text="String(legacyMarketingComments)" />
               </section>
             </template>
-            <p v-else>待IP组提交初步反馈后，由各职能伙伴补充意见。</p>
+            <p v-else>
+              {{ ipText("待IP组提交初步反馈后，由各职能伙伴补充意见。") }}
+            </p>
           </div>
         </div>
         <div class="ip-stack">
           <div v-if="menuKind !== 'marketing'" class="ip-card">
-            <h2>评估依据</h2>
-            <p>基于以下维度进行综合评估，供参考。</p>
+            <h2>{{ ipText("评估依据") }}</h2>
+            <p>{{ ipText("基于以下维度进行综合评估，供参考。") }}</p>
             <div
               v-for="field in scoreFields"
               :key="field.key"
               class="ip-weight-row"
             >
-              <span>{{ field.label }}</span>
-              <strong>{{ Math.round(field.weight * 100) }}%</strong>
+              <span>{{ ipText(field.label) }}</span>
+              <strong>{{ ipText(Math.round(field.weight * 100)) }}%</strong>
             </div>
             <div class="ip-note">
-              当前评分是初步判断，需结合后续沟通进一步确认。
+              {{ ipText("当前评分是初步判断，需结合后续沟通进一步确认。") }}
             </div>
           </div>
           <div v-if="menuKind === 'marketing'" class="ip-card">
-            <h2>IP组反馈摘要</h2>
+            <h2>{{ ipText("IP组反馈摘要") }}</h2>
             <div
               v-for="item in feedback"
               :key="item.ipId"
@@ -2762,44 +2933,56 @@ onUnmounted(() => {
               <div>
                 <strong>{{ item.name }}</strong>
                 <small
-                  >{{ item.recommendation }} · 优先级 T{{
-                    item.priorityOrder
-                  }}</small
+                  >{{ ipText(item.recommendation) }} {{ ipText("· 优先级 T")
+                  }}{{ ipText(item.priorityOrder) }}</small
                 >
                 <p>{{ item.reason }}</p>
               </div>
             </div>
           </div>
           <div class="ip-card">
-            <h2>协作记录</h2>
+            <h2>{{ ipText("协作记录") }}</h2>
             <div class="ip-record">
               <b>1</b
               ><span
-                >需求已提交<small>{{
-                  requestDate(detail.request.createdAt, true)
+                >{{ ipText("需求已提交")
+                }}<small>{{
+                  ipText(requestDate(detail.request.createdAt, true))
                 }}</small></span
               >
             </div>
             <div class="ip-record">
               <b>2</b
               ><span
-                >IP组评估<small>{{
-                  detail.request.status === "submitted" ? "待进行" : "已完成"
+                >{{ ipText("IP组评估")
+                }}<small>{{
+                  ipText(
+                    detail.request.status === "submitted"
+                      ? ipText("待进行")
+                      : ipText("已完成")
+                  )
                 }}</small></span
               >
             </div>
             <div class="ip-record">
               <b>3</b
               ><span
-                >营销意见补充<small>{{
-                  detail.request.status === "marketing_reviewed"
-                    ? "已完成"
-                    : "待进行"
+                >{{ ipText("营销意见补充")
+                }}<small>{{
+                  ipText(
+                    detail.request.status === "marketing_reviewed"
+                      ? ipText("已完成")
+                      : ipText("待进行")
+                  )
                 }}</small></span
               >
             </div>
             <div class="ip-record">
-              <b>4</b><span>意向IP确认<small>待进行</small></span>
+              <b>4</b
+              ><span
+                >{{ ipText("意向IP确认")
+                }}<small>{{ ipText("待进行") }}</small></span
+              >
             </div>
           </div>
         </div>
@@ -2807,7 +2990,7 @@ onUnmounted(() => {
     </template>
     <el-dialog
       v-model="colleaguePickerOpen"
-      title="搜索同事"
+      :title="ipText('搜索同事')"
       width="640px"
       @closed="colleaguePickerRequest++"
     >
@@ -2815,16 +2998,16 @@ onUnmounted(() => {
         <el-input
           v-model="colleaguePickerQuery"
           clearable
-          placeholder="输入姓名或工号"
+          :placeholder="ipText('输入姓名或工号')"
           @input="onColleaguePickerQueryInput"
           @keyup.enter="loadColleaguePickerPage(1)"
         />
-        <el-button type="primary" @click="loadColleaguePickerPage(1)"
-          >搜索</el-button
-        >
+        <el-button type="primary" @click="loadColleaguePickerPage(1)">{{
+          ipText("搜索")
+        }}</el-button>
       </div>
       <p v-if="colleaguePickerWarning" class="ip-colleague-hint">
-        {{ colleaguePickerWarning }}
+        {{ ipText(colleaguePickerWarning) }}
       </p>
       <div
         v-loading="colleaguePickerLoading"
@@ -2839,14 +3022,18 @@ onUnmounted(() => {
         >
           <strong>{{ person.name }}</strong>
           <span>{{
-            [person.employeeNo, person.department].filter(Boolean).join(" · ")
+            ipText(
+              [person.employeeNo, person.department].filter(Boolean).join(" · ")
+            )
           }}</span>
         </button>
         <p v-if="!colleaguePickerLoading && !colleaguePickerRows.length">
           {{
-            colleaguePickerQuery.trim()
-              ? "暂无匹配同事"
-              : "输入姓名或工号开始搜索"
+            ipText(
+              colleaguePickerQuery.trim()
+                ? ipText("暂无匹配同事")
+                : ipText("输入姓名或工号开始搜索")
+            )
           }}
         </p>
       </div>
@@ -2854,13 +3041,13 @@ onUnmounted(() => {
         <el-button
           :disabled="colleaguePickerLoading || colleaguePickerPage <= 1"
           @click="loadColleaguePickerPage(colleaguePickerPage - 1)"
-          >上一页</el-button
+          >{{ ipText("上一页") }}</el-button
         >
-        <span>第 {{ colleaguePickerPage }} 页</span>
+        <span>{{ ipText("第 {0} 页", [colleaguePickerPage]) }}</span>
         <el-button
           :disabled="colleaguePickerLoading || !colleaguePickerHasNext"
           @click="loadColleaguePickerPage(colleaguePickerPage + 1)"
-          >下一页</el-button
+          >{{ ipText("下一页") }}</el-button
         >
       </div>
     </el-dialog>
@@ -2868,6 +3055,13 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.ip-request-page :deep(.el-table th.el-table__cell > .cell) {
+  display: block;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .ip-request-page {
   min-height: calc(100vh - 150px);
   padding: 16px 28px 36px;

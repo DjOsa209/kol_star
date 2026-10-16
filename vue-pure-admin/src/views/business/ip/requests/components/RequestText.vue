@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText } = useIPLocale();
 import { nextTick, onMounted, onUnmounted, ref, useId, watch } from "vue";
 
 const props = withDefaults(
@@ -42,7 +44,7 @@ onUnmounted(() => observer?.disconnect());
       class="request-text-content"
       :class="{ collapsed: !expanded, empty: !text?.trim() }"
     >
-      {{ text?.trim() ? text : fallback }}
+      {{ text?.trim() ? text : ipText(fallback) }}
     </p>
     <el-button
       v-if="overflowing"
@@ -52,7 +54,7 @@ onUnmounted(() => observer?.disconnect());
       :aria-controls="contentId"
       @click="expanded = !expanded"
     >
-      {{ expanded ? "收起全文" : "展开全文" }}
+      {{ ipText(expanded ? "收起全文" : "展开全文") }}
     </el-button>
   </div>
 </template>

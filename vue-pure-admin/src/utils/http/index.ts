@@ -11,6 +11,7 @@ import type {
 } from "./types.d";
 import { stringify } from "qs";
 import { message } from "@/utils/message";
+import { currentIPLanguage } from "@/utils/ipI18n";
 import { $t, transformI18n } from "@/plugins/i18n";
 import { getToken, formatToken, removeToken } from "@/utils/auth";
 import { useUserStoreHook } from "@/store/modules/user";
@@ -65,6 +66,9 @@ class PureHttp {
   private httpInterceptorsRequest(): void {
     PureHttp.axiosInstance.interceptors.request.use(
       async (config: PureHttpRequestConfig): Promise<any> => {
+        if (/\/business\/(?:ip|recommendations)\//.test(config.url || ""))
+          config.headers["Accept-Language"] =
+            currentIPLanguage() === "en" ? "en-US" : "zh-CN";
         // 优先判断post/get等方法是否传入回调，否则执行初始化设置等回调
         if (typeof config.beforeRequestCallback === "function") {
           config.beforeRequestCallback(config);

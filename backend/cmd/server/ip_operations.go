@@ -967,6 +967,10 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.ProjectName = strings.TrimSpace(item.ProjectName)
+	if item.Brief == nil {
+		item.Brief = map[string]any{}
+	}
+	item.Brief["notificationLanguage"] = ipRequestLanguage(r)
 	if !ipValidRange(item.BudgetMin, item.BudgetMax) || (item.Submit && (item.ProjectName == "" || item.Department == "" || len(item.Markets) == 0 || item.Goal == "" || item.Description == "" || item.BudgetMin == nil || item.BudgetMax == nil)) {
 		writeError(w, http.StatusBadRequest, 400, "请填写项目、市场、目标、说明及有效授权预算")
 		return

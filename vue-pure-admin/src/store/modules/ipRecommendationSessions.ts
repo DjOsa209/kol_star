@@ -1,3 +1,4 @@
+import { ipText } from "@/utils/ipI18n";
 import { defineStore } from "pinia";
 import type { RecommendationSubscription } from "@/api/recommendations";
 
@@ -47,7 +48,7 @@ export const useIPRecommendationSessionsStore = defineStore(
         loader: () => Promise<RecommendationSubscription[]>,
         force = false
       ) {
-        if (!this.ownerKey) throw new Error("请先登录后查看项目会话");
+        if (!this.ownerKey) throw new Error(ipText("请先登录后查看项目会话"));
         if (
           !force &&
           this.loaded &&

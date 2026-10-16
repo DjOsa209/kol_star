@@ -89,7 +89,7 @@ func main() {
 	a.routes(mux)
 
 	log.Printf("kol-admin backend listening on %s", cfg.Server.Addr)
-	if err := http.ListenAndServe(cfg.Server.Addr, a.withRequestLogging(a.withCORS(mux))); err != nil {
+	if err := http.ListenAndServe(cfg.Server.Addr, a.withRequestLogging(a.withCORS(a.withIPLocale(mux)))); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -1786,10 +1786,17 @@ func writeDBError(w http.ResponseWriter, err error) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	if ipResponseLanguage(w) == "en" {
+		if body, ok := payload.(apiResponse); ok {
+			body.Message = ipEnglishText(body.Message)
+			body.Data = ipLocalizeMetadata(body.Data)
+			payload = body
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err == nil {
-		if recorder, ok := w.(*loggingResponseWriter); ok {
+		if recorder := ipLoggingWriter(w); recorder != nil {
 			switch body := payload.(type) {
 			case apiResponse:
 				recorder.apiCode, recorder.hasAPICode = body.Code, true

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useIPLocale } from "@/utils/ipI18n";
+const { ipText } = useIPLocale();
+
 import { computed, ref, watch } from "vue";
 import type { IPExternalResearch } from "@/api/recommendations";
 
@@ -21,6 +24,7 @@ const scope = computed(() => {
     brief.goal || "用途待定"
   ]
     .filter(Boolean)
+    .map(value => ipText(value))
     .join(" · ");
 });
 watch(
@@ -56,24 +60,32 @@ function toggle(id: string) {
 </script>
 
 <template>
-  <section class="external-research" aria-label="库外 IP 研究">
+  <section class="external-research" :aria-label="ipText('库外 IP 研究')">
     <template v-if="!research">
-      <h3>发现库外合作候选</h3>
-      <p>开启联网搜索，告诉我想找的 IP 方向、目标市场和合作用途。</p>
-      <p class="muted">每个候选都会附上身份来源与待核实事项。</p>
+      <h3>{{ ipText("发现库外合作候选") }}</h3>
+      <p>
+        {{ ipText("开启联网搜索，告诉我想找的 IP 方向、目标市场和合作用途。") }}
+      </p>
+      <p class="muted">
+        {{ ipText("每个候选都会附上身份来源与待核实事项。") }}
+      </p>
     </template>
     <template v-else>
       <p v-if="scope" class="scope">{{ scope }}</p>
       <template v-if="research.phase === 'clarify'">
-        <h3>先明确研究范围</h3>
-        <p>在左侧补充市场与用途，已有条件会沿用，预算可以待定。</p>
-        <p class="muted">暂时未定时，可回复“先探索”。</p>
+        <h3>{{ ipText("先明确研究范围") }}</h3>
+        <p>
+          {{ ipText("在左侧补充市场与用途，已有条件会沿用，预算可以待定。") }}
+        </p>
+        <p class="muted">{{ ipText("暂时未定时，可回复“先探索”。") }}</p>
       </template>
       <template v-else-if="!research.phase">
-        <h3>历史网页线索</h3>
-        <p>这轮记录还未整理为具体 IP 候选，可以重新研究。</p>
+        <h3>{{ ipText("历史网页线索") }}</h3>
+        <p>{{ ipText("这轮记录还未整理为具体 IP 候选，可以重新研究。") }}</p>
         <details>
-          <summary>查看原始来源 · {{ research.results.length }}</summary>
+          <summary>
+            {{ ipText("查看原始来源 ·") }} {{ ipText(research.results.length) }}
+          </summary>
           <a
             v-for="source in research.results"
             :key="source.url"
@@ -85,49 +97,56 @@ function toggle(id: string) {
         </details>
         <button
           :disabled="busy"
-          @click="emit('ask', '重新研究这次需求的具体IP候选')"
+          @click="emit('ask', ipText('重新研究这次需求的具体IP候选'))"
         >
-          重新研究
+          {{ ipText("重新研究") }}
         </button>
       </template>
       <template v-else>
         <div class="research-summary">
-          <h3>具体候选 · {{ candidates.length }}</h3>
-          <span>{{ research.rounds || 0 }} 轮研究</span>
+          <h3>{{ ipText("具体候选 ·") }} {{ ipText(candidates.length) }}</h3>
+          <span>{{ ipText(research.rounds || 0) }} {{ ipText("轮研究") }}</span>
         </div>
         <p v-if="research.phase === 'partial'" class="muted" role="status">
-          本轮研究未全部完成，以下保留已核对的候选。
+          {{ ipText("本轮研究未全部完成，以下保留已核对的候选。") }}
         </p>
         <p v-if="!candidates.length">
-          本轮没有证据充分的候选，请查看研究缺口后调整范围或重试。
+          {{
+            ipText("本轮没有证据充分的候选，请查看研究缺口后调整范围或重试。")
+          }}
         </p>
-        <p v-else class="muted">勾选 2–3 个候选，可在下方对比资料。</p>
+        <p v-else class="muted">
+          {{ ipText("勾选 2–3 个候选，可在下方对比资料。") }}
+        </p>
         <article v-for="item in candidates" :key="item.id" class="candidate">
           <div class="candidate-heading">
             <h4>
-              {{ item.name }} <span>{{ item.kind }}</span>
+              {{ item.name }} <span>{{ ipText(item.kind) }}</span>
             </h4>
             <label
               ><input
                 type="checkbox"
                 :checked="selected.includes(item.id)"
                 :disabled="!selected.includes(item.id) && selected.length >= 3"
-                :aria-label="`将${item.name}加入库外对比`"
+                :aria-label="ipText('将{0}加入库外对比', [item.name])"
                 @change="toggle(item.id)"
-              />对比</label
+              />{{ ipText("对比") }}</label
             >
           </div>
           <p class="identity">{{ item.identity }}</p>
           <dl>
-            <dt>推荐理由</dt>
+            <dt>{{ ipText("推荐理由") }}</dt>
             <dd>{{ item.reason }}</dd>
-            <dt>合作切入</dt>
-            <dd>{{ item.entryPoints.join("；") }}</dd>
-            <dt>待核实</dt>
-            <dd class="muted">{{ item.pending.join("；") }}</dd>
+            <dt>{{ ipText("合作切入") }}</dt>
+            <dd>{{ ipText(item.entryPoints.join("；")) }}</dd>
+            <dt>{{ ipText("待核实") }}</dt>
+            <dd class="muted">{{ ipText(item.pending.join("；")) }}</dd>
           </dl>
           <details>
-            <summary>身份依据与来源 · {{ item.evidence.length }}</summary>
+            <summary>
+              {{ ipText("身份依据与来源 ·") }}
+              {{ ipText(item.evidence.length) }}
+            </summary>
             <blockquote>{{ item.identityQuote }}</blockquote>
             <div
               v-for="source in item.evidence"
@@ -141,9 +160,9 @@ function toggle(id: string) {
                 >{{ source.title }}</a
               >
               <small
-                >{{ source.sourceName || source.source
+                >{{ ipText(source.sourceName || source.source)
                 }}<template v-if="source.publishedAt">
-                  · {{ source.publishedAt }}</template
+                  · {{ ipText(source.publishedAt) }}</template
                 ></small
               >
             </div>
@@ -152,27 +171,30 @@ function toggle(id: string) {
             class="text-action"
             :disabled="busy"
             @click="
-              emit('ask', `继续补查「${item.name}」的合作依据与目标市场适配`)
+              emit(
+                'ask',
+                ipText('继续补查「{0}」的合作依据与目标市场适配', [item.name])
+              )
             "
           >
-            继续补查
+            {{ ipText("继续补查") }}
           </button>
         </article>
         <section
           v-if="comparison.length >= 2"
           class="comparison"
-          aria-label="库外候选对比"
+          :aria-label="ipText('库外候选对比')"
         >
-          <h3>候选对比 · {{ comparison.length }}</h3>
+          <h3>{{ ipText("候选对比 ·") }} {{ ipText(comparison.length) }}</h3>
           <div
             class="table-scroll"
             tabindex="0"
-            aria-label="可横向滚动的对比表"
+            :aria-label="ipText('可横向滚动的对比表')"
           >
             <table>
               <thead>
                 <tr>
-                  <th scope="col">比较维度</th>
+                  <th scope="col">{{ ipText("比较维度") }}</th>
                   <th v-for="item in comparison" :key="item.id" scope="col">
                     {{ item.name }}
                   </th>
@@ -180,52 +202,58 @@ function toggle(id: string) {
               </thead>
               <tbody>
                 <tr>
-                  <th scope="row">类型</th>
+                  <th scope="row">{{ ipText("类型") }}</th>
                   <td v-for="item in comparison" :key="item.id">
-                    {{ item.kind }}
+                    {{ ipText(item.kind) }}
                   </td>
                 </tr>
                 <tr>
-                  <th scope="row">契合依据</th>
+                  <th scope="row">{{ ipText("契合依据") }}</th>
                   <td v-for="item in comparison" :key="item.id">
                     {{ item.reason }}
                   </td>
                 </tr>
                 <tr>
-                  <th scope="row">合作切入</th>
+                  <th scope="row">{{ ipText("合作切入") }}</th>
                   <td v-for="item in comparison" :key="item.id">
-                    {{ item.entryPoints.join("；") }}
+                    {{ ipText(item.entryPoints.join("；")) }}
                   </td>
                 </tr>
                 <tr>
-                  <th scope="row">待核实</th>
+                  <th scope="row">{{ ipText("待核实") }}</th>
                   <td v-for="item in comparison" :key="item.id">
-                    {{ item.pending.join("；") }}
+                    {{ ipText(item.pending.join("；")) }}
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <p class="muted">对比基于公开资料；授权范围和价格尚未确认。</p>
+          <p class="muted">
+            {{ ipText("对比基于公开资料；授权范围和价格尚未确认。") }}
+          </p>
         </section>
         <details v-if="research.gaps?.length" class="gaps" open>
-          <summary>研究缺口 · {{ research.gaps.length }}</summary>
+          <summary>
+            {{ ipText("研究缺口 ·") }} {{ ipText(research.gaps.length) }}
+          </summary>
           <ul>
-            <li v-for="gap in research.gaps" :key="gap">{{ gap }}</li>
+            <li v-for="gap in research.gaps" :key="gap">{{ ipText(gap) }}</li>
           </ul>
         </details>
         <details v-if="research.queries?.length" class="query-log">
-          <summary>查看本轮检索词</summary>
+          <summary>{{ ipText("查看本轮检索词") }}</summary>
           <ul>
-            <li v-for="query in research.queries" :key="query">{{ query }}</li>
+            <li v-for="query in research.queries" :key="query">
+              {{ ipText(query) }}
+            </li>
           </ul>
         </details>
         <button
           v-if="research.phase !== 'unavailable'"
           :disabled="busy"
-          @click="emit('ask', '继续深入研究，补查候选与合作依据')"
+          @click="emit('ask', ipText('继续深入研究，补查候选与合作依据'))"
         >
-          继续深入研究
+          {{ ipText("继续深入研究") }}
         </button>
       </template>
     </template>
