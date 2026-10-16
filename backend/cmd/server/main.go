@@ -77,6 +77,7 @@ func main() {
 	}
 	go a.runResourceSyncScheduler(context.Background())
 	go a.runAIRecommendationScheduler(context.Background())
+	go a.runIPContentTranslationWorker(context.Background())
 	watchConfig(watcher, func(next Config) {
 		if err := a.reloadConfig(next); err != nil {
 			log.Printf("reload config failed: %v", err)
@@ -246,6 +247,7 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/discovery/candidates/refresh", a.requireMenu("/business/resources", a.productDiscoveryCandidatesRefresh))
 	mux.HandleFunc("POST /business/discovery/candidates/list", a.requireMenu("/business/resources", a.productDiscoveryCandidatesList))
 	mux.HandleFunc("POST /business/discovery/candidates/decision", a.requireMenu("/business/resources", a.productDiscoveryCandidateDecision))
+	mux.HandleFunc("POST /business/ip/translations/status", a.ipContentTranslationStatus)
 	mux.HandleFunc("POST /business/ip/resources/list", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing", "/business/ip/recommendations"}, a.ipResourcesList))
 	mux.HandleFunc("POST /business/ip/resources/save", a.requireMenu("/business/ip/resources", a.ipResourceSave))
 	mux.HandleFunc("GET /business/ip/resources/detail", a.requireAnyMenu([]string{"/business/ip/resources", "/business/ip/requests", "/business/ip/feedback", "/business/ip/marketing", "/business/ip/recommendations"}, a.ipResourceDetail))

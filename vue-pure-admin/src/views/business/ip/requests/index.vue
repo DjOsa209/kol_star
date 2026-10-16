@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { useIPLocale } from "@/utils/ipI18n";
 const { ipText, locale } = useIPLocale();
-
+import IPTranslationNotice from "../components/IPTranslationNotice.vue";
+import {
+  translatedIPRecord,
+  applyIPTranslationUpdates,
+  type IPTranslationUpdate
+} from "@/utils/ipContentTranslation";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -23,6 +28,8 @@ import {
   type IPColleague,
   type IPRequestInput
 } from "@/api/ip";
+
+const showOriginal = ref(false);
 
 defineOptions({ name: "IPRequests" });
 const route = useRoute();
@@ -132,7 +139,57 @@ const contactStages = [
   { key: "pr", label: "PR" }
 ];
 const projectFields = briefFields.filter(field => field.key !== "projectNotes");
-const requestBrief = computed(() => objectValue(detail.value?.request.brief));
+const displayedRows = computed(() =>
+  rows.value.map(row => translatedIPRecord(row, locale.value))
+);
+const displayDetail = computed(() =>
+  detail.value
+    ? {
+        request: translatedIPRecord(
+          detail.value.request,
+          locale.value,
+          showOriginal.value
+        ),
+        candidates: detail.value.candidates.map(row =>
+          translatedIPRecord(row, locale.value, showOriginal.value)
+        )
+      }
+    : null
+);
+function updateContentTranslations(updates: IPTranslationUpdate[]) {
+  if (!detail.value) return;
+  applyIPTranslationUpdates([detail.value.request], "ip_request", updates);
+  applyIPTranslationUpdates(detail.value.candidates, "ip_candidate", updates);
+}
+function translatedFeedback(item: any, field: string) {
+  const row = displayDetail.value?.candidates.find(
+    row => Number(row.ipId) === Number(item.ipId)
+  );
+  return field === "reason"
+    ? row?.reason || item.reason
+    : (objectValue(row?.assessment)[field] ?? item.assessment[field]);
+}
+function translatedMarketingCandidate(id: number, field: string) {
+  return (
+    objectValue(
+      objectValue(
+        objectValue(displayDetail.value?.request.marketingProfile).candidates
+      )[String(id)]
+    )[field] || ""
+  );
+}
+function translatedMarketingComments() {
+  return (
+    objectValue(
+      objectValue(
+        objectValue(displayDetail.value?.request.marketingProfile).functions
+      )[marketingFunctionKey.value]
+    ).comments || ""
+  );
+}
+const requestBrief = computed(() =>
+  objectValue(displayDetail.value?.request.brief)
+);
 const requestContacts = computed(() =>
   normalizedContactsByStage(requestBrief.value.contactsByStage)
 );
@@ -1531,6 +1588,17 @@ onUnmounted(() => {
     :lang="locale === 'en' ? 'en' : 'zh-CN'"
     :class="{ 'ip-detail-page': mode === 'detail' }"
   >
+    <IPTranslationNotice
+      v-if="mode === 'detail' && detail"
+      :id="Number(detail.request.id)"
+      v-model:original="showOriginal"
+      type="ip_request"
+      :records="[detail.request, ...detail.candidates]"
+      @updated="updateContentTranslations"
+    />
+    <p v-if="mode === 'new'" class="ip-marketing-guidance">
+      {{ ipText("编辑保留录入原文，保存后自动生成另一语言译文") }}
+    </p>
     <div class="ip-header">
       <div>
         <div v-if="mode === 'new'" class="ip-kicker">
@@ -1607,7 +1675,7 @@ onUnmounted(() => {
         </div>
         <el-table
           class="ip-request-table"
-          :data="rows"
+          :data="displayedRows"
           :cell-style="{ textAlign: 'center' }"
           :header-cell-style="{ textAlign: 'center' }"
           :empty-text="ipText('暂无符合条件的IP需求')"
@@ -2108,7 +2176,13 @@ onUnmounted(() => {
                       <span class="ip-required" aria-hidden="true"
                         >*</span
                       ></span
-                    ><el-input v-model="item.reason"
+                    ><el-input
+                      :model-value="
+                        canFeedback
+                          ? item.reason
+                          : translatedFeedback(item, 'reason')
+                      "
+                      @update:model-value="item.reason = $event"
                   /></label>
                   <label
                     class="ip-span"
@@ -2319,37 +2393,42 @@ onUnmounted(() => {
       ><div class="ip-card ip-request-detail">
         <div class="ip-detail-title">
           <div>
-            <h2>{{ detail.request.projectName }}</h2>
+            <h2>{{ displayDetail.request.projectName }}</h2>
             <p>
-              {{ ipText(detail.request.department) }} ·
-              {{ ipText(arrayValue(detail.request.markets).join(" / ")) }} ·
-              {{ ipText(requestDate(detail.request.createdAt, true)) }}
+              {{ ipText(displayDetail.request.department) }} ·
+              {{
+                ipText(arrayValue(displayDetail.request.markets).join(" / "))
+              }}
+              ·
+              {{ ipText(requestDate(displayDetail.request.createdAt, true)) }}
             </p>
           </div>
           <el-tag
             :type="
-              detail.request.status === 'marketing_reviewed'
+              displayDetail.request.status === 'marketing_reviewed'
                 ? 'success'
                 : 'warning'
             "
-            >{{ ipText(statusText[detail.request.status]) }}</el-tag
+            >{{ ipText(statusText[displayDetail.request.status]) }}</el-tag
           >
         </div>
         <div
           class="ip-timeline ip-detail-timeline"
           :aria-label="ipText('需求协作流程')"
         >
-          <span :class="{ done: detail.request.status !== 'draft' }"
+          <span :class="{ done: displayDetail.request.status !== 'draft' }"
             ><b>1</b>{{ ipText("需求已提交") }}</span
           ><span
             :class="{
               done: ['ip_reviewed', 'marketing_reviewed'].includes(
-                detail.request.status
+                displayDetail.request.status
               )
             }"
             ><b>2</b>{{ ipText("IP组评估") }}</span
           ><span
-            :class="{ done: detail.request.status === 'marketing_reviewed' }"
+            :class="{
+              done: displayDetail.request.status === 'marketing_reviewed'
+            }"
             ><b>3</b>{{ ipText("营销意见补充") }}</span
           ><span><b>4</b>{{ ipText("意向IP确认") }}</span>
         </div>
@@ -2357,8 +2436,10 @@ onUnmounted(() => {
           class="ip-deadline-summary"
           :aria-label="ipText('意见反馈时效')"
         >
-          <DeadlineStatus :deadline="detail.request.deadlines?.ip" />
-          <DeadlineStatus :deadline="detail.request.deadlines?.marketing" />
+          <DeadlineStatus :deadline="displayDetail.request.deadlines?.ip" />
+          <DeadlineStatus
+            :deadline="displayDetail.request.deadlines?.marketing"
+          />
           <p>
             {{
               ipText(
@@ -2371,17 +2452,17 @@ onUnmounted(() => {
           <div>
             <span>{{ ipText("合作目标") }}</span>
             <strong>{{
-              ipText(detailText(detail.request.goal, ipText("待确定")))
+              ipText(detailText(displayDetail.request.goal, ipText("待确定")))
             }}</strong>
           </div>
           <div>
             <span>{{ ipText("授权预算") }}</span>
-            <strong>{{ ipText(priceText(detail.request)) }}</strong>
+            <strong>{{ ipText(priceText(displayDetail.request)) }}</strong>
           </div>
           <div>
             <span>{{ ipText("预计上线") }}</span>
             <strong>{{
-              ipText(requestDate(detail.request.expectedLaunch))
+              ipText(requestDate(displayDetail.request.expectedLaunch))
             }}</strong>
           </div>
         </div>
@@ -2410,7 +2491,7 @@ onUnmounted(() => {
               <h3 id="ip-request-description">
                 {{ ipText("项目背景与需求说明") }}
               </h3>
-              <RequestText :text="detail.request.description" />
+              <RequestText :text="displayDetail.request.description" />
             </section>
             <section
               class="ip-detail-section"
@@ -2420,7 +2501,10 @@ onUnmounted(() => {
               <RequestText :text="detailText(requestBrief.projectNotes)" />
             </section>
             <section
-              v-if="detail.request.externalRecommendation || externalIPs.length"
+              v-if="
+                displayDetail.request.externalRecommendation ||
+                externalIPs.length
+              "
               class="ip-detail-section"
               aria-labelledby="ip-external-recommendations"
             >
@@ -2428,8 +2512,8 @@ onUnmounted(() => {
                 {{ ipText("库外IP推荐") }}
               </h3>
               <RequestText
-                v-if="detail.request.externalRecommendation"
-                :text="detail.request.externalRecommendation"
+                v-if="displayDetail.request.externalRecommendation"
+                :text="displayDetail.request.externalRecommendation"
               />
               <div
                 v-for="(item, index) in externalIPs"
@@ -2438,9 +2522,15 @@ onUnmounted(() => {
               >
                 <div class="ip-detail-external-head">
                   <strong>{{ detailText(item.name) }}</strong>
-                  <el-button link @click="openExternalIP(item)">{{
-                    ipText("补充并入库 ↗")
-                  }}</el-button>
+                  <el-button
+                    link
+                    @click="
+                      openExternalIP(
+                        objectValue(detail.request.brief).externalIPs[index]
+                      )
+                    "
+                    >{{ ipText("补充并入库 ↗") }}</el-button
+                  >
                 </div>
                 <p>
                   {{ ipText("版权方：") }}{{ detailText(item.rightsOwner) }}
@@ -2474,22 +2564,22 @@ onUnmounted(() => {
         </div>
         <div class="ip-detail-actions">
           <el-button
-            v-if="menuKind === 'requests' && detail.request.canEdit"
-            @click="goEdit(Number(detail.request.id))"
+            v-if="menuKind === 'requests' && displayDetail.request.canEdit"
+            @click="goEdit(Number(displayDetail.request.id))"
             >{{
               ipText(
-                detail.request.status === "draft"
+                displayDetail.request.status === "draft"
                   ? ipText("继续编辑草稿")
                   : ipText("编辑需求")
               )
             }}</el-button
           >
           <el-button
-            v-if="menuKind === 'requests' && detail.request.canDelete"
+            v-if="menuKind === 'requests' && displayDetail.request.canDelete"
             type="danger"
             plain
-            :loading="deletingID === Number(detail.request.id)"
-            @click="deleteRequest(detail.request)"
+            :loading="deletingID === Number(displayDetail.request.id)"
+            @click="deleteRequest(displayDetail.request)"
             >{{ ipText("删除需求") }}</el-button
           >
           <el-button @click="openRecommendationsFromDetail">{{
@@ -2626,11 +2716,16 @@ onUnmounted(() => {
                     >{{ ipText("理由说明") }}
                     <span class="ip-required" aria-hidden="true">*</span></span
                   ><el-input
-                    v-model="item.reason"
+                    :model-value="
+                      canFeedback
+                        ? item.reason
+                        : translatedFeedback(item, 'reason')
+                    "
                     type="textarea"
                     :rows="2"
                     :disabled="!canFeedback"
                     :placeholder="ipText('受众匹配、市场覆盖、档期和授权风险')"
+                    @update:model-value="item.reason = $event"
                 /></label>
               </div>
               <el-collapse class="ip-assessment-collapse">
@@ -2670,9 +2765,16 @@ onUnmounted(() => {
                         ></span
                       >
                       <el-input
-                        v-model="item.assessment[field.key]"
+                        :model-value="
+                          canFeedback
+                            ? item.assessment[field.key]
+                            : translatedFeedback(item, field.key)
+                        "
                         :disabled="!canFeedback"
                         :placeholder="ipText(field.hint)"
+                        @update:model-value="
+                          item.assessment[field.key] = $event
+                        "
                       />
                     </label>
                   </div>
@@ -2710,7 +2812,8 @@ onUnmounted(() => {
             </p>
             <template
               v-if="
-                canMarketing || detail.request.status === 'marketing_reviewed'
+                canMarketing ||
+                displayDetail.request.status === 'marketing_reviewed'
               "
             >
               <el-radio-group
@@ -2789,13 +2892,18 @@ onUnmounted(() => {
                       >{{ ipText(field.label) }}{{ ipText("（选填）") }}</strong
                     >
                     <el-input
-                      v-model="marketing[field.key]"
+                      :model-value="
+                        canEditMarketingFunction
+                          ? marketing[field.key]
+                          : displayDetail.request[field.key]
+                      "
                       :disabled="!canEditMarketingFunction || saving"
+                      @update:model-value="marketing[field.key] = $event"
                     />
                   </label>
                 </div>
                 <div
-                  v-for="candidate in detail.candidates"
+                  v-for="candidate in displayDetail.candidates"
                   :key="candidate.ipId"
                   class="ip-candidate"
                 >
@@ -2823,12 +2931,24 @@ onUnmounted(() => {
                         ></span
                       >
                       <el-input
-                        v-model="
-                          marketingCandidates[String(candidate.ipId)][field.key]
+                        :model-value="
+                          canEditMarketingFunction
+                            ? marketingCandidates[String(candidate.ipId)][
+                                field.key
+                              ]
+                            : translatedMarketingCandidate(
+                                candidate.ipId,
+                                field.key
+                              )
                         "
                         :disabled="!canEditMarketingFunction || saving"
                         :placeholder="ipText(field.hint)"
                         :aria-required="requiredMarketingFields.has(field.key)"
+                        @update:model-value="
+                          marketingCandidates[String(candidate.ipId)][
+                            field.key
+                          ] = $event
+                        "
                       />
                     </label>
                   </div>
@@ -2867,8 +2987,11 @@ onUnmounted(() => {
                       ></span
                     >
                     <el-input
-                      v-model="
-                        marketingFunctionDrafts[marketingFunctionKey].comments
+                      :model-value="
+                        canEditMarketingFunction
+                          ? marketingFunctionDrafts[marketingFunctionKey]
+                              .comments
+                          : translatedMarketingComments()
                       "
                       type="textarea"
                       :rows="3"
@@ -2879,6 +3002,10 @@ onUnmounted(() => {
                         ])
                       "
                       aria-required="true"
+                      @update:model-value="
+                        marketingFunctionDrafts[marketingFunctionKey].comments =
+                          $event
+                      "
                     />
                   </label>
                 </div>
@@ -2959,7 +3086,7 @@ onUnmounted(() => {
               ><span
                 >{{ ipText("需求已提交")
                 }}<small>{{
-                  ipText(requestDate(detail.request.createdAt, true))
+                  ipText(requestDate(displayDetail.request.createdAt, true))
                 }}</small></span
               >
             </div>
@@ -2969,7 +3096,7 @@ onUnmounted(() => {
                 >{{ ipText("IP组评估")
                 }}<small>{{
                   ipText(
-                    detail.request.status === "submitted"
+                    displayDetail.request.status === "submitted"
                       ? ipText("待进行")
                       : ipText("已完成")
                   )
@@ -2982,7 +3109,7 @@ onUnmounted(() => {
                 >{{ ipText("营销意见补充")
                 }}<small>{{
                   ipText(
-                    detail.request.status === "marketing_reviewed"
+                    displayDetail.request.status === "marketing_reviewed"
                       ? ipText("已完成")
                       : ipText("待进行")
                   )

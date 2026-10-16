@@ -1,5 +1,19 @@
 import { http } from "@/utils/http";
 import type { AxiosProgressEvent } from "axios";
+import type { IPTranslationUpdate } from "@/utils/ipContentTranslation";
+
+export const getIPContentTranslations = (
+  type: "ip_resource" | "ip_request",
+  id: number,
+  retry = false
+) =>
+  http.request<Result<IPTranslationUpdate[]>>(
+    "post",
+    "/business/ip/translations/status",
+    {
+      data: { type, id, retry }
+    }
+  );
 
 export interface IPResourceInput {
   id?: number;

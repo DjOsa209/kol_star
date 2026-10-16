@@ -332,6 +332,10 @@ func (a *app) ipResourcesList(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	if err := a.attachIPContentTranslations(r.Context(), "ip_resource", rows); err != nil {
+		writeDBError(w, err)
+		return
+	}
 	writeOK(w, map[string]any{"list": rows, "total": total, "pageSize": filter.PageSize,
 		"currentPage": filter.Page, "stats": map[string]int{"total": allResources, "cooperable": cooperable, "pendingFiles": pendingFiles, "recent": recent}})
 }
@@ -392,6 +396,7 @@ func (a *app) ipResourceSave(w http.ResponseWriter, r *http.Request) {
 		}
 		id, _ = result.LastInsertId()
 	}
+	a.queueIPContent(r.Context(), "ip_resource", id)
 	writeOK(w, map[string]any{"id": id})
 }
 
@@ -446,6 +451,14 @@ func (a *app) ipResourceDetail(w http.ResponseWriter, r *http.Request) {
 	if files == nil {
 		files = []map[string]any{}
 	}
+	if err := a.attachIPContentTranslations(r.Context(), "ip_resource", rows); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if err := a.attachIPContentTranslations(r.Context(), "ip_case", cases); err != nil {
+		writeDBError(w, err)
+		return
+	}
 	writeOK(w, map[string]any{"resource": rows[0], "cases": cases, "files": files})
 }
 
@@ -478,6 +491,7 @@ func (a *app) ipCaseSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := result.LastInsertId()
+	a.queueIPContent(r.Context(), "ip_case", id)
 	writeOK(w, map[string]any{"id": id})
 }
 
@@ -888,6 +902,9 @@ func (a *app) ipImport(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
+	for _, row := range created {
+		a.queueIPContent(r.Context(), "ip_resource", row["id"].(int64))
+	}
 	writeOK(w, map[string]any{"imported": imported, "results": results, "created": created})
 }
 
@@ -957,6 +974,10 @@ func (a *app) ipRequestsList(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		a.enrichIPRequestDeadlines(row, time.Now())
 		ipRequestManagementActions(row, userID)
+	}
+	if err := a.attachIPContentTranslations(r.Context(), "ip_request", rows); err != nil {
+		writeDBError(w, err)
+		return
 	}
 	writeOK(w, tableData{List: rows, Total: total, PageSize: filter.PageSize, CurrentPage: filter.Page})
 }
@@ -1163,6 +1184,7 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 	if submissionTransition {
 		a.notifyIPStageAsync(id, "submitted")
 	}
+	a.queueIPContent(r.Context(), "ip_request", id)
 	writeOK(w, map[string]any{"id": id, "status": status})
 }
 
@@ -1205,6 +1227,14 @@ func (a *app) ipRequestDetail(w http.ResponseWriter, r *http.Request) {
 	a.enrichIPRequestDeadlines(rows[0], time.Now())
 	userID, _ := a.currentUserID(r)
 	ipRequestManagementActions(rows[0], userID)
+	if err := a.attachIPContentTranslations(r.Context(), "ip_request", rows); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	if err := a.attachIPContentTranslations(r.Context(), "ip_candidate", candidates); err != nil {
+		writeDBError(w, err)
+		return
+	}
 	writeOK(w, map[string]any{"request": rows[0], "candidates": candidates})
 }
 
@@ -1336,6 +1366,7 @@ func (a *app) ipRequestFeedback(w http.ResponseWriter, r *http.Request) {
 	if !input.SaveDraft {
 		a.notifyIPStageAsync(input.RequestID, "ip_reviewed")
 	}
+	a.queueIPContent(r.Context(), "ip_request", input.RequestID)
 	writeOK(w, nil)
 }
 

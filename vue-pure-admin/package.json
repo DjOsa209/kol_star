@@ -13,6 +13,7 @@
     "preview:build": "pnpm build && vite preview",
     "typecheck": "vue-tsc --noEmit --skipLibCheck",
     "check:ip-locales": "node scripts/check-ip-locales.cjs",
+    "check:ip-translations": "node scripts/check-ip-content-translations.cjs",
     "svgo": "svgo -f . -r",
     "clean:cache": "rimraf .eslintcache && rimraf pnpm-lock.yaml && rimraf node_modules && pnpm store prune && pnpm install",
     "lint:eslint": "eslint --cache --max-warnings 0 src mock build --fix",

@@ -295,5 +295,6 @@ func (a *app) ipRequestMarketing(w http.ResponseWriter, r *http.Request) {
 	if complete {
 		a.notifyIPStageAsync(input.RequestID, "marketing_reviewed")
 	}
+	a.queueIPContent(r.Context(), "ip_request", input.RequestID)
 	writeOK(w, map[string]any{"status": status, "functionKey": input.FunctionKey, "version": ipMarketingState(profile, input.FunctionKey).Version})
 }

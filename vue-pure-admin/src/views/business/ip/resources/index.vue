@@ -2,7 +2,12 @@
 import { canonicalIPImportHeader, canonicalIPOption } from "@/utils/ipI18n";
 import { useIPLocale } from "@/utils/ipI18n";
 const { ipText, locale } = useIPLocale();
-
+import IPTranslationNotice from "../components/IPTranslationNotice.vue";
+import {
+  translatedIPRecord,
+  applyIPTranslationUpdates,
+  type IPTranslationUpdate
+} from "@/utils/ipContentTranslation";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useUserStoreHook } from "@/store/modules/user";
@@ -24,6 +29,8 @@ import {
   uploadIPFile,
   type IPResourceInput
 } from "@/api/ip";
+
+const showOriginal = ref(false);
 
 defineOptions({ name: "IPResources" });
 const router = useRouter();
@@ -425,6 +432,41 @@ function confirmForRequest() {
   localStorage.setItem(key, JSON.stringify(selectedForRequest.value));
   ElMessage.success(ipText("已加入需求意向清单，请返回需求页面"));
   window.close();
+}
+const displayedRows = computed(() =>
+  rows.value.map(row => translatedIPRecord(row, locale.value))
+);
+const displayDetail = computed(() =>
+  detail.value
+    ? {
+        ...detail.value,
+        resource: translatedIPRecord(
+          detail.value.resource,
+          locale.value,
+          showOriginal.value
+        ),
+        cases: detail.value.cases.map(row =>
+          translatedIPRecord(row, locale.value, showOriginal.value)
+        )
+      }
+    : null
+);
+const displayDrawerDetail = computed(() =>
+  drawerDetail.value
+    ? {
+        ...drawerDetail.value,
+        resource: translatedIPRecord(
+          drawerDetail.value.resource,
+          locale.value,
+          showOriginal.value
+        )
+      }
+    : null
+);
+function updateContentTranslations(updates: IPTranslationUpdate[]) {
+  if (!detail.value) return;
+  applyIPTranslationUpdates([detail.value.resource], "ip_resource", updates);
+  applyIPTranslationUpdates(detail.value.cases, "ip_case", updates);
 }
 async function loadDetail(id: number) {
   loading.value = true;
@@ -1146,14 +1188,16 @@ onUnmounted(() => {
       <div>
         <div v-if="mode !== 'list'" class="ip-eyebrow">
           {{ ipText("IP资源库 /") }}
-          {{ mode === "detail" ? detail?.resource.name : ipText("新增IP") }}
+          {{
+            mode === "detail" ? displayDetail?.resource.name : ipText("新增IP")
+          }}
         </div>
         <h1>
           {{
             mode === "list"
               ? ipText("IP资源库")
               : mode === "detail"
-                ? detail?.resource.name || ipText("IP详情")
+                ? displayDetail?.resource.name || ipText("IP详情")
                 : ipText("新增IP")
           }}
         </h1>
@@ -1192,6 +1236,9 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <p v-if="mode !== 'list' && mode !== 'detail'" class="ip-muted">
+      {{ ipText("编辑保留录入原文，保存后自动生成另一语言译文") }}
+    </p>
     <template v-if="mode === 'list'">
       <div class="ip-stats">
         <div class="ip-stat">
@@ -1308,7 +1355,7 @@ onUnmounted(() => {
         </div>
         <el-table
           class="ip-resource-table"
-          :data="rows"
+          :data="displayedRows"
           :empty-text="ipText('暂无IP，点击右上角新增')"
           stripe
         >
@@ -1423,46 +1470,59 @@ onUnmounted(() => {
         class="ip-resource-drawer"
       >
         <div v-loading="drawerLoading" class="ip-drawer-content">
-          <template v-if="drawerDetail">
+          <template v-if="displayDrawerDetail">
             <div class="ip-drawer-intro">
               <img
                 v-if="drawerVisualURL"
                 :src="drawerVisualURL"
-                :alt="drawerDetail.resource.name"
+                :alt="displayDrawerDetail.resource.name"
               />
               <div>
-                <h2>{{ drawerDetail.resource.name }}</h2>
-                <el-tag>{{ ipText(drawerDetail.resource.ipType) }}</el-tag>
+                <h2>{{ displayDrawerDetail.resource.name }}</h2>
+                <el-tag>{{
+                  ipText(displayDrawerDetail.resource.ipType)
+                }}</el-tag>
                 <p>
-                  {{ drawerDetail.resource.audience || ipText("受众待补充") }}
+                  {{
+                    displayDrawerDetail.resource.audience ||
+                    ipText("受众待补充")
+                  }}
                 </p>
               </div>
             </div>
-            <p>{{ drawerDetail.resource.summary || ipText("暂无IP简介") }}</p>
+            <p>
+              {{ displayDrawerDetail.resource.summary || ipText("暂无IP简介") }}
+            </p>
             <div class="ip-drawer-section">
               <h3>{{ ipText("核心信息") }}</h3>
               <dl class="ip-dl">
                 <dt>{{ ipText("版权方") }}</dt>
                 <dd>
-                  {{ drawerDetail.resource.rightsOwner || ipText("待补充") }}
+                  {{
+                    displayDrawerDetail.resource.rightsOwner || ipText("待补充")
+                  }}
                 </dd>
                 <dt>{{ ipText("覆盖市场及渗透率") }}</dt>
-                <dd>{{ ipText(marketCoverageText(drawerDetail.resource)) }}</dd>
+                <dd>
+                  {{ ipText(marketCoverageText(displayDrawerDetail.resource)) }}
+                </dd>
                 <dt>{{ ipText("合作状态") }}</dt>
-                <dd>{{ ipText(drawerDetail.resource.cooperationStatus) }}</dd>
+                <dd>
+                  {{ ipText(displayDrawerDetail.resource.cooperationStatus) }}
+                </dd>
               </dl>
             </div>
             <div class="ip-drawer-section">
               <h3>{{ ipText("参考权益价格") }}</h3>
               <strong class="ip-price">{{
-                ipText(priceText(drawerDetail.resource))
+                ipText(priceText(displayDrawerDetail.resource))
               }}</strong>
               <p class="ip-muted">{{ ipText("供参考，根据具体需求更新") }}</p>
             </div>
             <div class="ip-drawer-section">
               <h3>{{ ipText("可查看资料") }}</h3>
               <div
-                v-for="file in drawerDetail.files.filter(
+                v-for="file in displayDrawerDetail.files.filter(
                   item => item.fileKind !== 'visual'
                 )"
                 :key="file.id"
@@ -1477,7 +1537,9 @@ onUnmounted(() => {
               </div>
               <p
                 v-if="
-                  !drawerDetail.files.some(item => item.fileKind !== 'visual')
+                  !displayDrawerDetail.files.some(
+                    item => item.fileKind !== 'visual'
+                  )
                 "
                 class="ip-muted"
               >
@@ -1486,7 +1548,7 @@ onUnmounted(() => {
             </div>
             <el-button
               class="ip-primary ip-drawer-action"
-              @click="goDetail(Number(drawerDetail.resource.id))"
+              @click="goDetail(Number(displayDrawerDetail.resource.id))"
               >{{ ipText("查看详情 →") }}</el-button
             >
           </template>
@@ -1495,9 +1557,20 @@ onUnmounted(() => {
     </template>
 
     <template v-else-if="mode === 'detail' && detail">
+      <IPTranslationNotice
+        :id="Number(detail.resource.id)"
+        v-model:original="showOriginal"
+        type="ip_resource"
+        :records="[detail.resource, ...detail.cases]"
+        @updated="updateContentTranslations"
+      />
       <div class="ip-card ip-hero">
         <div class="ip-hero-media">
-          <img v-if="visualURL" :src="visualURL" :alt="detail.resource.name" />
+          <img
+            v-if="visualURL"
+            :src="visualURL"
+            :alt="displayDetail.resource.name"
+          />
           <div v-else class="ip-hero-empty">{{ ipText("暂无IP形象") }}</div>
           <label class="ip-hero-upload"
             >{{ ipText("＋ 上传形象")
@@ -1509,23 +1582,25 @@ onUnmounted(() => {
           /></label>
         </div>
         <div class="ip-hero-copy">
-          <strong>{{ detail.resource.name }}</strong>
+          <strong>{{ displayDetail.resource.name }}</strong>
           <p>
             {{
-              detail.resource.summary ||
+              displayDetail.resource.summary ||
               ipText("暂无IP简介，请补充背景、特点和影响力。")
             }}
           </p>
           <div class="ip-hero-tags">
-            <el-tag>{{ ipText(detail.resource.ipType) }}</el-tag>
+            <el-tag>{{ ipText(displayDetail.resource.ipType) }}</el-tag>
             <el-tag type="success">{{
-              ipText(detail.resource.cooperationStatus)
+              ipText(displayDetail.resource.cooperationStatus)
             }}</el-tag>
             <el-tag
-              v-if="objectValue(detail.resource.profile).lifecycle"
+              v-if="objectValue(displayDetail.resource.profile).lifecycle"
               type="info"
             >
-              {{ ipText(objectValue(detail.resource.profile).lifecycle) }}
+              {{
+                ipText(objectValue(displayDetail.resource.profile).lifecycle)
+              }}
             </el-tag>
           </div>
         </div>
@@ -1534,7 +1609,9 @@ onUnmounted(() => {
         <div class="ip-stack">
           <div class="ip-card">
             <h2>{{ ipText("基础权益价格范围") }}</h2>
-            <div class="ip-price">{{ ipText(priceText(detail.resource)) }}</div>
+            <div class="ip-price">
+              {{ ipText(priceText(displayDetail.resource)) }}
+            </div>
             <p class="ip-muted">
               {{ ipText("供参考，根据具体需求更新；最终以版权方报价为准。") }}
             </p>
@@ -1553,7 +1630,7 @@ onUnmounted(() => {
               /></label>
             </div>
             <div
-              v-for="file in detail.files.filter(
+              v-for="file in displayDetail.files.filter(
                 f => f.fileKind === 'copyright'
               )"
               :key="file.id"
@@ -1584,18 +1661,22 @@ onUnmounted(() => {
               </div>
             </div>
             <el-empty
-              v-if="!detail.files.some(f => f.fileKind === 'copyright')"
+              v-if="!displayDetail.files.some(f => f.fileKind === 'copyright')"
               :description="ipText('暂无版权介绍文件')"
               :image-size="68"
             />
           </div>
           <div class="ip-card">
             <h2>{{ ipText("历史合作与结案") }}</h2>
-            <div v-for="item in detail.cases" :key="item.id" class="ip-case">
+            <div
+              v-for="item in displayDetail.cases"
+              :key="item.id"
+              class="ip-case"
+            >
               <strong>{{ item.title }}</strong>
               <p>{{ item.summary || ipText("暂无案例说明") }}</p>
               <div
-                v-for="file in detail.files.filter(
+                v-for="file in displayDetail.files.filter(
                   f => Number(f.caseId) === Number(item.id)
                 )"
                 :key="file.id"
@@ -1620,7 +1701,7 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
-            <p v-if="!detail.cases.length" class="ip-muted">
+            <p v-if="!displayDetail.cases.length" class="ip-muted">
               {{ ipText("暂无历史合作") }}
             </p>
             <div class="ip-case-form">
@@ -1664,23 +1745,25 @@ onUnmounted(() => {
             <h2>{{ ipText("基础信息") }}</h2>
             <dl class="ip-dl">
               <dt>{{ ipText("IP类型") }}</dt>
-              <dd>{{ ipText(detail.resource.ipType) }}</dd>
+              <dd>{{ ipText(displayDetail.resource.ipType) }}</dd>
               <dt>{{ ipText("版权方") }}</dt>
-              <dd>{{ detail.resource.rightsOwner || ipText("待补充") }}</dd>
+              <dd>
+                {{ displayDetail.resource.rightsOwner || ipText("待补充") }}
+              </dd>
               <dt>{{ ipText("联系人") }}</dt>
-              <dd>{{ detail.resource.contact || ipText("待补充") }}</dd>
+              <dd>{{ displayDetail.resource.contact || ipText("待补充") }}</dd>
               <dt>{{ ipText("覆盖市场及渗透率") }}</dt>
-              <dd>{{ ipText(marketCoverageText(detail.resource)) }}</dd>
+              <dd>{{ ipText(marketCoverageText(displayDetail.resource)) }}</dd>
               <dt>{{ ipText("目标受众") }}</dt>
-              <dd>{{ detail.resource.audience || ipText("待补充") }}</dd>
+              <dd>{{ displayDetail.resource.audience || ipText("待补充") }}</dd>
               <dt>{{ ipText("合作状态") }}</dt>
-              <dd>{{ ipText(detail.resource.cooperationStatus) }}</dd>
+              <dd>{{ ipText(displayDetail.resource.cooperationStatus) }}</dd>
               <template v-for="field in profileFields" :key="field.key">
                 <dt>{{ ipText(field.label) }}</dt>
                 <dd>
                   {{
                     ipText(
-                      objectValue(detail.resource.profile)[field.key] ||
+                      objectValue(displayDetail.resource.profile)[field.key] ||
                         ipText("待补充")
                     )
                   }}
@@ -1693,7 +1776,7 @@ onUnmounted(() => {
             <p>
               {{
                 ipText(
-                  objectValue(detail.resource.profile).cooperationTips ||
+                  objectValue(displayDetail.resource.profile).cooperationTips ||
                     ipText("暂无合作建议")
                 )
               }}
@@ -1701,14 +1784,17 @@ onUnmounted(() => {
             <h3>{{ ipText("授权范围与限制") }}</h3>
             <p>
               {{
-                ipText(detail.resource.licenseNotes || ipText("待版权方补充"))
+                ipText(
+                  displayDetail.resource.licenseNotes || ipText("待版权方补充")
+                )
               }}
             </p>
           </div>
           <div class="ip-card">
             <h2>{{ ipText("资料维护") }}</h2>
             <p class="ip-muted">
-              {{ ipText("最近更新：") }}{{ ipText(detail.resource.updatedAt) }}
+              {{ ipText("最近更新：")
+              }}{{ ipText(displayDetail.resource.updatedAt) }}
             </p>
           </div>
         </div>
@@ -2015,14 +2101,14 @@ onUnmounted(() => {
             <div class="ip-card">
               <h2>{{ ipText("历史合作") }}</h2>
               <div
-                v-for="item in detail?.cases || []"
+                v-for="item in displayDetail?.cases || []"
                 :key="item.id"
                 class="ip-case"
               >
                 <strong>{{ item.title }}</strong>
                 <p>{{ item.summary }}</p>
               </div>
-              <p v-if="!detail?.cases?.length" class="ip-muted">
+              <p v-if="!displayDetail?.cases?.length" class="ip-muted">
                 {{ ipText("暂无历史合作案例，可在左侧补充结案资料。") }}
               </p>
             </div>

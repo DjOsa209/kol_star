@@ -1378,5 +1378,17 @@
   "，可执行性、授权范围和费用均须与版权方确认。": ", feasibility, license scope, and fees must all be confirmed with the rights holder.",
   "，可执行性尚待版权方确认；授权地域、渠道、素材和费用也需核实。": ", feasibility still needs confirmation from the rights holder; territories, channels, assets, and fees also need verification.",
   "；可对比「": "; can compare with \"",
-  "；可对比「{0}」的合作方向。": "; compare potential collaboration with {0}."
+  "；可对比「{0}」的合作方向。": "; compare potential collaboration with {0}.",
+  "编辑保留录入原文，保存后自动生成另一语言译文": "Edits retain the original text. Saving automatically generates the other language.",
+  "翻译状态暂时无法更新，原文已保留": "Translation status could not be refreshed. The original text is retained.",
+  "AI正在生成双语内容，未完成部分暂时显示原文": "AI is generating bilingual content. Original text is shown while translations are pending.",
+  "部分内容尚无译文，原文已保留": "Some translations are unavailable. The original text is retained.",
+  "双语内容已就绪，按界面语言展示": "Bilingual content is ready and follows the interface language.",
+  "查看录入原文": "Show original text",
+  "刷新翻译状态": "Refresh translation status",
+  "重试AI翻译": "Retry AI translation",
+  "无效的翻译记录": "Invalid translation record",
+  "记录不存在": "Record not found",
+  "AI 翻译结果不完整": "The AI translation is incomplete",
+  "AI 翻译结果重复": "The AI translation contains duplicate items"
 }
