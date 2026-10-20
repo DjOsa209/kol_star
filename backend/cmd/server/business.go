@@ -2889,6 +2889,11 @@ func (a *app) businessAssistantRecommend(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusOK, 10001, "项目需求不能为空")
 		return
 	}
+	model, modelErr := a.creatorRecommendationModel(r.Context())
+	if modelErr != nil {
+		writeError(w, http.StatusServiceUnavailable, 50301, modelErr.Error())
+		return
+	}
 	parsed := parseAssistantDemand(body, demandText)
 	includeWatch := boolField(body, "includeWatch")
 	budget := floatField(body, "budget")
@@ -2912,26 +2917,29 @@ func (a *app) businessAssistantRecommend(w http.ResponseWriter, r *http.Request)
 	}
 
 	recommendations, filtered := buildLocalRecommendations(rows, parsed, includeWatch, budget)
-	fallback := true
-	message := "当前使用本地规则推荐；AI 模型可在 AI 模型配置中接入。"
-	if model, ok := a.assistantAIModel(r.Context()); ok {
+	message := "资源库暂无符合筛选条件的候选，请调整需求后重试。"
+	if len(recommendations) > 0 {
 		result, err := a.requestAIRecommendations(r.Context(), model, demandText, parsed, recommendations)
 		if err != nil {
-			message = "模型调用失败，已回退本地规则推荐：" + err.Error()
-		} else if len(result.Recommendations) > 0 {
-			recommendations = mergeAIRecommendations(recommendations, result.Recommendations)
-			if len(result.Parsed) > 0 {
-				parsed = mergeParsedDemand(parsed, result.Parsed)
-			}
-			fallback = false
-			message = defaultString(result.Summary, fmt.Sprintf("已调用 %s/%s 生成达人推荐。", model.Provider, model.Model))
+			writeError(w, http.StatusBadGateway, 50201, creatorRecommendationModelError(err).Error())
+			return
 		}
+		recommendations = mergeAIRecommendations(recommendations, result.Recommendations)
+		if len(recommendations) == 0 {
+			writeError(w, http.StatusBadGateway, 50201, "大模型未返回有效推荐，请调整需求后重试")
+			return
+		}
+		if len(result.Parsed) > 0 {
+			parsed = mergeParsedDemand(parsed, result.Parsed)
+		}
+		message = defaultString(result.Summary, fmt.Sprintf("已调用 %s/%s 生成达人推荐。", model.Provider, model.Model))
 	}
 	writeOK(w, map[string]any{
 		"parsed":          parsed,
 		"recommendations": recommendations,
 		"filteredSummary": filtered,
-		"fallback":        fallback,
+		"fallback":        false,
+		"source":          "ai",
 		"message":         message,
 	})
 }
@@ -3250,6 +3258,7 @@ type assistantAIModel struct {
 	EnableDemandParsing        bool
 	EnableRecommendationReason bool
 	Timeout                    time.Duration
+	TimeoutConfigured          bool
 	Temperature                float64
 }
 
@@ -3293,6 +3302,7 @@ func (a *app) assistantAIModel(ctx context.Context) (assistantAIModel, bool) {
 	}
 	if seconds := intField(data, "timeoutSeconds"); seconds > 0 {
 		model.Timeout = time.Duration(seconds) * time.Second
+		model.TimeoutConfigured = true
 	}
 	if model.Timeout > 120*time.Second {
 		model.Timeout = 120 * time.Second
@@ -3316,10 +3326,18 @@ func (a *app) requestAIRecommendations(ctx context.Context, model assistantAIMod
 	if !strings.HasSuffix(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
 	}
+	modelCandidates := make([]map[string]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		facts := cloneMap(candidate)
+		for _, key := range []string{"matchScore", "reason", "priority", "hitRules", "downReasons", "source"} {
+			delete(facts, key)
+		}
+		modelCandidates = append(modelCandidates, facts)
+	}
 	userPayload := map[string]any{
 		"demandText":      demandText,
 		"parsedByRules":   parsed,
-		"candidateKOLs":   candidates,
+		"candidateKOLs":   modelCandidates,
 		"maxReturnCount":  12,
 		"outputLanguage":  "zh-CN",
 		"enabledFeatures": map[string]bool{"demandParsing": model.EnableDemandParsing, "recommendationReason": model.EnableRecommendationReason},
@@ -3447,9 +3465,18 @@ func mergeAIRecommendations(localRows []map[string]any, aiRows []map[string]any)
 		if !ok || used[id] {
 			continue
 		}
-		if score := intField(aiRow, "matchScore"); score > 0 {
-			local["matchScore"] = clampInt(score, 0, 100)
+		score := intField(aiRow, "matchScore")
+		reason := strings.TrimSpace(str(aiRow, "reason"))
+		if score < 1 || score > 100 || reason == "" || reason == "<nil>" {
+			continue
 		}
+		local["matchScore"] = score
+		local["source"] = "ai"
+		local["reason"] = reason
+		// A rule may retrieve a candidate, but its explanation must never be
+		// passed off as model output when the model omits an optional field.
+		local["hitRules"] = []string{}
+		local["downReasons"] = []string{}
 		if priority := str(aiRow, "priority"); priority == "高" || priority == "中" || priority == "低" {
 			local["priority"] = priority
 		} else {
@@ -3470,15 +3497,7 @@ func mergeAIRecommendations(localRows []map[string]any, aiRows []map[string]any)
 		used[id] = true
 		merged = append(merged, local)
 	}
-	for _, row := range localRows {
-		if len(merged) >= 20 {
-			break
-		}
-		id := fmt.Sprint(row["id"])
-		if !used[id] {
-			merged = append(merged, row)
-		}
-	}
+	sortRecommendationRows(merged)
 	return merged
 }
 

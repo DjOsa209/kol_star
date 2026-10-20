@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch
+} from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useI18n } from "vue-i18n";
 import * as XLSX from "xlsx";
@@ -26,12 +33,18 @@ import {
   translateResources
 } from "@/api/business";
 
+import RecommendationWorkbench from "./RecommendationWorkbench.vue";
+import { buildRecentCooperationWorks } from "../resources/recentWorks";
+
 defineOptions({ name: "BusinessAssistant" });
 
 const { locale } = useI18n();
 const isEnglish = computed(() => locale.value === "en");
 
 const loading = ref(false);
+const resultMode = ref<"recent" | "saved">("recent");
+const resultError = ref("");
+let savedRequestSeq = 0;
 const elapsedSeconds = ref(0);
 const parsed = ref<Record<string, any>>({});
 const recommendations = ref<any[]>([]);
@@ -64,7 +77,7 @@ const selectedResourcePostStats = ref<any>({});
 let timer: ReturnType<typeof setInterval> | undefined;
 let requestSeq = 0;
 const recommendationStorageKey = "business-assistant-last-recommendation";
-const recommendationStorageVersion = 2;
+const recommendationStorageVersion = 3;
 
 const form = reactive({
   demandText: "",
@@ -73,6 +86,7 @@ const form = reactive({
   platform: "",
   budget: 0
 });
+const recentCriteria = ref({ ...form });
 
 const defaultMarketOptions = [
   "美国",
@@ -86,15 +100,6 @@ const defaultMarketOptions = [
   "东南亚",
   "拉美"
 ];
-const typeOptions = ["KOL", "创作者", "媒体"];
-const platformOptions = [
-  "YouTube",
-  "TikTok",
-  "Instagram",
-  "Newsletter",
-  "Website"
-];
-
 const parsedItems = computed(() =>
   Object.entries(parsed.value).filter(([, value]) => {
     return value !== "" && value !== 0 && value !== null && value !== undefined;
@@ -121,6 +126,7 @@ const isInterrupted = computed(
 );
 const statusText = computed(() => {
   if (loading.value) return "执行中";
+  if (resultError.value) return "待重试";
   if (stopped.value) return "已停止";
   if (hasResult.value) return "已完成";
   if (isInterrupted.value) return "待重试";
@@ -128,23 +134,80 @@ const statusText = computed(() => {
 });
 const elapsedText = computed(() => {
   if (!hasStarted.value) return "未执行";
-  if (loading.value) return `已用 ${elapsedSeconds.value.toFixed(1)}s · 约 8s`;
+  if (loading.value) return `已用 ${elapsedSeconds.value.toFixed(1)}s`;
   if (stopped.value) return `已停止 · ${elapsedSeconds.value.toFixed(1)}s`;
   if (isInterrupted.value)
     return `未完成 · ${elapsedSeconds.value.toFixed(1)}s`;
   return `完成 · ${elapsedSeconds.value.toFixed(1)}s`;
 });
-const panelTitle = computed(() => {
-  if (loading.value && activeStepIndex.value >= 3) return "等待模型返回...";
-  if (loading.value) return "智能体执行中";
-  if (hasResult.value) return "执行结果";
-  if (isInterrupted.value) return "执行未完成";
-  return "等待执行";
-});
-const topRecommendations = computed(() => recommendations.value.slice(0, 6));
-const matchedRecommendations = computed(() =>
-  topRecommendations.value.filter(item => matchedResourceIds[Number(item.id)])
+const resultCandidates = computed(() =>
+  resultMode.value === "saved"
+    ? savedResults.value.map(savedResource)
+    : recommendations.value
 );
+const matchedRecommendations = computed(() =>
+  resultCandidates.value.filter(item => matchedResourceIds[Number(item.id)])
+);
+const candidateWorks = computed(() =>
+  Object.fromEntries(
+    resultCandidates.value.map(item => [
+      Number(item.id),
+      buildRecentCooperationWorks(
+        cooperations.value.filter(
+          row => Number(row.resourceId) === Number(item.id)
+        )
+      )
+    ])
+  )
+);
+watch(resultCandidates, () => {
+  Object.keys(matchedResourceIds).forEach(
+    key => delete matchedResourceIds[Number(key)]
+  );
+});
+function applySavedCriteria(item: RecommendationSubscription) {
+  Object.assign(form, {
+    demandText: item.query,
+    targetMarket: item.markets?.[0] || "",
+    resourceType: item.resourceTypes?.[0] || "",
+    platform: item.platforms?.[0] || "",
+    budget: Number(item.budgetMax || 0)
+  });
+}
+function selectSavedSearch(item: RecommendationSubscription) {
+  resultMode.value = "saved";
+  selectedSubscriptionId.value = item.id;
+  applySavedCriteria(item);
+  savedView.value = "all";
+  loadSavedResults();
+}
+function changeResultMode(mode: "recent" | "saved") {
+  resultMode.value = mode;
+  resultError.value = "";
+  if (mode === "recent") Object.assign(form, recentCriteria.value);
+  if (mode === "saved" && selectedSavedSubscription.value)
+    selectSavedSearch(selectedSavedSubscription.value);
+}
+async function manageSavedSearch(
+  action: string,
+  item: RecommendationSubscription
+) {
+  if (action === "refresh") {
+    selectedSubscriptionId.value = item.id;
+    resultMode.value = "saved";
+    applySavedCriteria(item);
+    await refreshSavedSearch();
+  } else if (action === "toggle") await toggleSavedSearch(item);
+  else if (action === "delete") await removeSavedSearch(item);
+}
+function changeSavedView(view: "new" | "all") {
+  savedView.value = view;
+  loadSavedResults();
+}
+function feedbackById(id: number) {
+  const item = savedResults.value.find(row => row.id === id);
+  if (item) feedbackSavedResult(item);
+}
 const selectedSavedSubscription = computed(() =>
   savedSubscriptions.value.find(
     item => item.id === selectedSubscriptionId.value
@@ -176,70 +239,22 @@ const selectedResourceCooperationStats = computed(() => {
   });
   return result;
 });
-const recommendationLogic = computed(() => {
-  if (topRecommendations.value.length === 0) {
-    return "输入项目需求后，系统会结合目标市场、平台、资源类型、预算与风险等级生成推荐逻辑。";
-  }
-  const names = topRecommendations.value
-    .slice(0, 3)
-    .map(item => item.name)
-    .join("、");
-  const market = parsed.value.targetMarket || form.targetMarket || "目标市场";
-  const budget = Number(parsed.value.budget || form.budget || 0);
-  return `本次推广目标市场为${market}${budget ? `，预算约 ${moneyText(budget)} 美元` : ""}。系统优先选择与市场、平台和内容方向匹配度更高的资源：${names}。其余资源会因平台、地区、风险或预算匹配度较弱而降权或过滤。`;
-});
-
-const activeStepIndex = computed(() => {
-  if (!hasStarted.value) return -1;
-  if (!loading.value && hasResult.value) return 5;
-  if (elapsedSeconds.value < 0.6) return 0;
-  if (elapsedSeconds.value < 1.2) return 1;
-  if (elapsedSeconds.value < 2.0) return 2;
-  return 3;
-});
-
-const analysisSteps = computed(() => {
-  const steps = [
-    {
-      title: "理解需求",
-      details: `读取目标、筛选条件和${attachedFiles.value.length} 份资料 · 市场 ${form.targetMarket || "全部"} · 类型 ${form.resourceType || "全部"} · 平台 ${form.platform || "全部"}`
-    },
-    {
-      title: "检索资源池",
-      details: recommendations.value.length
-        ? `候选资源已整理（${recommendations.value.length} 条）`
-        : "整理候选资源、平台特征与预算约束"
-    },
-    {
-      title: "发送给模型",
-      details: "把需求、产品信息、策略方案、筛选条件和候选资源打包给配置模型"
-    },
-    {
-      title: "等待模型返回...",
-      details: loading.value
-        ? "模型正在分析资源匹配度、推荐理由与过滤逻辑"
-        : "模型响应完成或已进入本地规则回退"
-    },
-    {
-      title: "整理推荐结论",
-      details: hasResult.value
-        ? "已生成推荐排序、匹配理由与过滤逻辑"
-        : "生成推荐排序、匹配理由与风险提示"
-    }
-  ];
-
-  return steps.map((step, index) => ({
-    ...step,
-    status: stepStatus(index)
-  }));
-});
-
 async function generate() {
   if (!form.demandText.trim() && attachedFiles.value.length === 0) {
     ElMessage.warning("请输入项目需求或上传产品资料");
     return;
   }
   const current = ++requestSeq;
+  resultError.value = "";
+  recommendations.value = [];
+  parsed.value = {};
+  filteredSummary.value = {};
+  message.value = "";
+  localStorage.removeItem(recommendationStorageKey);
+  resultMode.value = "recent";
+  Object.keys(matchedResourceIds).forEach(
+    key => delete matchedResourceIds[Number(key)]
+  );
   submittedDemand.value = buildDemandWithAttachments();
   stopped.value = false;
   loading.value = true;
@@ -259,17 +274,27 @@ async function generate() {
 
     if (current !== requestSeq) return;
     if (res.code === 0) {
+      if (
+        res.data.fallback !== false ||
+        (res.data.recommendations || []).some(item => item.source !== "ai")
+      ) {
+        resultError.value = "本页面仅展示大模型推荐，请确认后端模型配置后重试";
+        return;
+      }
+      recentCriteria.value = { ...form };
       parsed.value = res.data.parsed || {};
       recommendations.value = res.data.recommendations || [];
       filteredSummary.value = res.data.filteredSummary || {};
       message.value = res.data.message || "";
       saveLastRecommendation();
     } else {
-      ElMessage.warning(res.message || "推荐生成失败，请稍后重试");
+      resultError.value = res.message || "推荐生成失败，请稍后重试";
+      ElMessage.warning(resultError.value);
     }
   } catch (error) {
     if (current === requestSeq) {
-      ElMessage.warning(resolveRecommendError(error));
+      resultError.value = resolveRecommendError(error);
+      ElMessage.warning(resultError.value);
     }
   } finally {
     if (current === requestSeq) {
@@ -290,6 +315,9 @@ async function loadSavedSubscriptions(preferredId?: number) {
     )
       ? nextId
       : savedSubscriptions.value[0]?.id || null;
+    if (resultMode.value === "saved" && selectedSavedSubscription.value) {
+      applySavedCriteria(selectedSavedSubscription.value);
+    }
     await loadSavedResults();
   } catch (error) {
     ElMessage.warning(
@@ -299,26 +327,35 @@ async function loadSavedSubscriptions(preferredId?: number) {
 }
 
 async function loadSavedResults() {
-  if (!selectedSubscriptionId.value) {
+  const current = ++savedRequestSeq;
+  const subscriptionId = selectedSubscriptionId.value;
+  if (!subscriptionId) {
     savedResults.value = [];
+    savedLoading.value = false;
     return;
   }
   savedLoading.value = true;
+  resultError.value = "";
   try {
     const response = await listRecommendationResults(
       "creator",
-      selectedSubscriptionId.value,
+      subscriptionId,
       savedView.value
     );
+    if (current !== savedRequestSeq) return;
     if (response.code !== 0) throw new Error(response.message);
-    savedResults.value = response.data?.list || [];
-  } catch (error) {
-    savedResults.value = [];
-    ElMessage.warning(
-      error instanceof Error ? error.message : "推荐结果加载失败"
+    savedResults.value = (response.data?.list || []).filter(
+      item => item.source === "ai" && item.adviceSource === "ai"
     );
+  } catch (error) {
+    if (current !== savedRequestSeq) return;
+    savedResults.value = [];
+    const errorMessage =
+      error instanceof Error ? error.message : "推荐结果加载失败";
+    if (resultMode.value === "saved") resultError.value = errorMessage;
+    ElMessage.warning(errorMessage);
   } finally {
-    savedLoading.value = false;
+    if (current === savedRequestSeq) savedLoading.value = false;
   }
 }
 
@@ -343,11 +380,13 @@ async function saveCurrentSearch() {
       active: true
     });
     if (response.code !== 0) throw new Error(response.message);
+    resultMode.value = "saved";
     selectedSubscriptionId.value = Number(response.data?.id || 0) || null;
     savedView.value = "all";
     await loadSavedSubscriptions(selectedSubscriptionId.value || undefined);
     subscriptionName.value = "";
     if (response.data?.warning) {
+      resultError.value = response.data.warning;
       ElMessage.warning(response.data.warning);
     } else {
       ElMessage.success(
@@ -366,6 +405,8 @@ async function saveCurrentSearch() {
 async function refreshSavedSearch() {
   if (!selectedSubscriptionId.value) return;
   savedLoading.value = true;
+  resultError.value = "";
+  savedResults.value = [];
   try {
     const response = await runRecommendationSubscription(
       "creator",
@@ -376,7 +417,8 @@ async function refreshSavedSearch() {
     await loadSavedResults();
     ElMessage.success("推荐已更新");
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "更新推荐失败");
+    resultError.value = resolveRecommendError(error);
+    ElMessage.error(resultError.value);
   } finally {
     savedLoading.value = false;
   }
@@ -419,36 +461,17 @@ function savedResource(item: RecommendationResult) {
   return {
     ...item.resource,
     id: item.resourceId,
+    resultId: item.id,
     name: item.resourceName,
+    matchScore: item.score,
+    source: item.source,
+    advice: item.advice,
+    adviceSource: item.adviceSource,
+    scenarios: item.scenarios,
     reason: item.reason,
     riskTip: Array.isArray(item.risks) ? item.risks.join("；") : item.risks,
     priority: Number(item.score) >= 80 ? "高" : "中"
   };
-}
-
-function confirmedProductNames(item: RecommendationResult) {
-  const values = item.resource?.confirmedProducts;
-  if (!Array.isArray(values)) return [];
-  return values
-    .map(value =>
-      typeof value === "string" ? value : String(value?.name || "")
-    )
-    .filter(Boolean)
-    .slice(0, 3);
-}
-
-function savedScenarioItems(item: RecommendationResult): string[] {
-  return Array.isArray(item.scenarios)
-    ? item.scenarios.filter(
-        scenario => typeof scenario === "string" && scenario.trim()
-      )
-    : [];
-}
-
-function savedAdviceHeading(item: RecommendationResult): string {
-  if (item.adviceSource === "ai") return "AI 合作建议";
-  if (item.adviceSource === "rule") return "规则合作建议";
-  return "合作建议";
 }
 
 async function feedbackSavedResult(item: RecommendationResult) {
@@ -467,18 +490,23 @@ async function feedbackSavedResult(item: RecommendationResult) {
 }
 
 async function loadBusinessContext() {
-  const [projectRes, cooperationRes] = await Promise.all([
+  const [projectResult, cooperationResult] = await Promise.allSettled([
     getProjectList(),
     getCooperationList()
   ]);
-  if (projectRes.code === 0) {
-    projects.value = projectRes.data.list || [];
+  if (projectResult.status === "fulfilled" && projectResult.value.code === 0) {
+    projects.value = projectResult.value.data.list || [];
     if (!selectedProjectId.value && projects.value.length > 0) {
       selectedProjectId.value = projects.value[0].id;
     }
+  } else {
+    ElMessage.warning("Campaign 列表加载失败，请刷新页面重试");
   }
-  if (cooperationRes.code === 0) {
-    cooperations.value = cooperationRes.data.list || [];
+  if (
+    cooperationResult.status === "fulfilled" &&
+    cooperationResult.value.code === 0
+  ) {
+    cooperations.value = cooperationResult.value.data.list || [];
   }
 }
 
@@ -617,6 +645,7 @@ function saveLastRecommendation() {
       recommendationStorageKey,
       JSON.stringify({
         version: recommendationStorageVersion,
+        form: { ...form },
         parsed: parsed.value,
         recommendations: recommendations.value,
         filteredSummary: filteredSummary.value,
@@ -640,9 +669,20 @@ function loadLastRecommendation() {
       localStorage.removeItem(recommendationStorageKey);
       return;
     }
+    Object.assign(
+      form,
+      cache.form || {
+        demandText: cache.submittedDemand || "",
+        targetMarket: cache.parsed?.targetMarket || "",
+        resourceType: cache.parsed?.resourceType || "",
+        platform: cache.parsed?.platform || "",
+        budget: Number(cache.parsed?.budget || 0)
+      }
+    );
+    recentCriteria.value = { ...form };
     parsed.value = cache.parsed || {};
     recommendations.value = Array.isArray(cache.recommendations)
-      ? cache.recommendations
+      ? cache.recommendations.filter(item => item.source === "ai")
       : [];
     filteredSummary.value = cache.filteredSummary || {};
     message.value = cache.message || "";
@@ -655,6 +695,7 @@ function loadLastRecommendation() {
 
 function clearLastRecommendation() {
   localStorage.removeItem(recommendationStorageKey);
+  resultError.value = "";
   parsed.value = {};
   recommendations.value = [];
   filteredSummary.value = {};
@@ -677,22 +718,6 @@ function startTimer() {
 function stopTimer() {
   if (timer) clearInterval(timer);
   timer = undefined;
-}
-
-function priorityType(priority: string) {
-  if (priority === "高") return "success";
-  if (priority === "中") return "warning";
-  return "info";
-}
-
-function stepStatus(index: number) {
-  if (!hasStarted.value) return "pending";
-  if (!loading.value && hasResult.value) return "done";
-  if (stopped.value) return index < activeStepIndex.value ? "done" : "pending";
-  if (!loading.value) return index < activeStepIndex.value ? "done" : "pending";
-  if (index < activeStepIndex.value) return "done";
-  if (index === activeStepIndex.value) return "active";
-  return "pending";
 }
 
 function moneyText(value: unknown) {
@@ -781,28 +806,38 @@ async function addMatchedToCampaign() {
     ElMessage.warning("请先选择 Campaign");
     return;
   }
-  if (matchedRecommendations.value.length === 0) {
-    ElMessage.warning("请先标记匹配达人");
-    return;
-  }
+  const selected = [...matchedRecommendations.value];
+  if (!selected.length || addingToCampaign.value) return;
   addingToCampaign.value = true;
-  const results = await Promise.all(
-    matchedRecommendations.value.map(item =>
-      addProjectResource({
-        projectId: selectedProjectId.value,
-        resourceId: item.id,
-        status: "候选",
-        source: "AI 推荐",
-        reason: item.reason,
-        priority: item.priority,
-        estimatedCost: item.estimatedCost,
-        riskTip: item.riskTip
-      })
-    )
-  );
-  addingToCampaign.value = false;
-  const successCount = results.filter(item => item.code === 0).length;
-  ElMessage.success(`已将 ${successCount} 位达人加入 Campaign 候选池`);
+  try {
+    const results = await Promise.allSettled(
+      selected.map(item =>
+        addProjectResource({
+          projectId: selectedProjectId.value,
+          resourceId: item.id,
+          status: "候选",
+          source: "AI 推荐",
+          reason: item.reason,
+          priority: item.priority,
+          estimatedCost: item.estimatedCost,
+          riskTip: item.riskTip
+        })
+      )
+    );
+    let successCount = 0;
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled" && result.value.code === 0) {
+        delete matchedResourceIds[Number(selected[index].id)];
+        successCount++;
+      }
+    });
+    if (successCount)
+      ElMessage.success(`已将 ${successCount} 位资源加入 Campaign 候选池`);
+    if (successCount < selected.length)
+      ElMessage.warning("部分资源加入失败，已保留选择，请重试");
+  } finally {
+    addingToCampaign.value = false;
+  }
 }
 
 async function addResourceToCampaign(item: any) {
@@ -823,7 +858,7 @@ async function addResourceToCampaign(item: any) {
       riskTip: item.riskTip
     });
     if (res.code !== 0) throw new Error(res.message || "加入 Campaign 失败");
-    matchedResourceIds[Number(item.id)] = true;
+    delete matchedResourceIds[Number(item.id)];
     ElMessage.success(`${item.name} 已加入 Campaign 候选池`);
   } catch (error) {
     ElMessage.error(
@@ -929,582 +964,69 @@ onMounted(() => {
   loadLastRecommendation();
   loadMarkets();
   loadBusinessContext();
-  loadSavedSubscriptions();
+  loadSavedSubscriptions().then(() => {
+    if (
+      !hasStarted.value &&
+      !recommendations.value.length &&
+      selectedSavedSubscription.value
+    )
+      selectSavedSearch(selectedSavedSubscription.value);
+  });
 });
 onBeforeUnmount(stopTimer);
 </script>
 
 <template>
   <div class="assistant-page">
-    <header class="assistant-header">
-      <div class="brand-block">
-        <div class="brand-icon">
-          <IconifyIconOnline icon="ri:sparkling-2-line" />
-        </div>
-        <div>
-          <h1>达人/媒体 AI 推荐</h1>
-          <p>从全球资源库寻找候选，保存条件后每周推送新匹配</p>
-        </div>
-      </div>
-      <div class="status-pill" :class="{ 'is-loading': loading }">
-        {{ fieldLabel(statusText) }}
-      </div>
-    </header>
-
-    <section class="intro-panel">
-      描述你的项目和寻找目标，填写<strong>市场、平台、资源类型与预算</strong>。
-      推荐仅来自现有达人/媒体资源库，可查看匹配依据并加入 Campaign。
-    </section>
-
-    <section class="composer-card">
-      <el-input
-        v-model="form.demandText"
-        type="textarea"
-        :rows="5"
-        maxlength="1000"
-        resize="none"
-        show-word-limit
-        :placeholder="fieldLabel('输入市场、产品、预算、平台和投放目标...')"
-      />
-
-      <div class="upload-panel">
-        <div>
-          <strong>{{ fieldLabel("产品信息 / 策略方案") }}</strong>
-          <span>{{
-            fieldLabel(
-              "支持 TXT、Markdown、CSV、Excel；PDF/Docx 暂只读取文件名，不解析正文。"
-            )
-          }}</span>
-        </div>
-        <el-upload
-          accept=".txt,.md,.csv,.xlsx,.xls,.pdf,.doc,.docx"
-          :auto-upload="false"
-          :show-file-list="false"
-          :on-change="handleAttachmentChange"
-        >
-          <el-button>
-            <IconifyIconOnline icon="ri:attachment-2" class="mr-1" />
-            {{ fieldLabel("上传资料") }}
-          </el-button>
-        </el-upload>
-      </div>
-
-      <div v-if="attachedFiles.length" class="attachment-list">
-        <div v-for="file in attachedFiles" :key="file.uid">
-          <IconifyIconOnline icon="ri:file-text-line" />
-          <div>
-            <strong>{{ file.name }}</strong>
-            <span>{{ file.summary }}</span>
-          </div>
-          <el-button link type="danger" @click="removeAttachment(file.uid)">
-            {{ fieldLabel("移除") }}
-          </el-button>
-        </div>
-      </div>
-
-      <div class="composer-toolbar">
-        <div class="filter-group">
-          <el-select
-            v-model="form.targetMarket"
-            allow-create
-            filterable
-            default-first-option
-            class="filter-select"
-            @change="handleMarketChange"
-          >
-            <template #prefix>{{ fieldLabel("市场") }}</template>
-            <el-option
-              v-for="market in marketOptions"
-              :key="market"
-              :label="fieldLabel(market)"
-              :value="market"
-            >
-              <div class="market-option">
-                <span>{{ fieldLabel(market) }}</span>
-                <el-button
-                  link
-                  type="danger"
-                  @mousedown.stop
-                  @click="removeMarketOption(market, $event)"
-                >
-                  {{ fieldLabel("删除") }}
-                </el-button>
-              </div>
-            </el-option>
-          </el-select>
-          <el-select
-            v-model="form.resourceType"
-            clearable
-            class="filter-select"
-            :placeholder="fieldLabel('全部')"
-          >
-            <template #prefix>{{ fieldLabel("类型") }}</template>
-            <el-option
-              v-for="type in typeOptions"
-              :key="type"
-              :label="fieldLabel(type)"
-              :value="type"
-            />
-          </el-select>
-          <el-select
-            v-model="form.platform"
-            clearable
-            class="filter-select"
-            :placeholder="fieldLabel('全部')"
-          >
-            <template #prefix>{{ fieldLabel("平台") }}</template>
-            <el-option
-              v-for="platform in platformOptions"
-              :key="platform"
-              :label="platform"
-              :value="platform"
-            />
-          </el-select>
-        </div>
-
-        <div class="action-group">
-          <el-input
-            v-model="subscriptionName"
-            class="subscription-name-input"
-            placeholder="寻找条件名称（选填）"
-            maxlength="60"
-          />
-          <el-button :loading="subscriptionSaving" @click="saveCurrentSearch">
-            保存寻找条件
-          </el-button>
-          <el-button
-            class="stop-button"
-            :disabled="!loading"
-            @click="stopGeneration"
-          >
-            {{ fieldLabel("停止") }}
-          </el-button>
-          <el-button type="primary" :loading="loading" @click="generate">
-            {{ fieldLabel(loading ? "生成中..." : "生成推荐") }}
-          </el-button>
-        </div>
-      </div>
-    </section>
-
-    <section class="saved-recommendation-section">
-      <div class="saved-section-heading">
-        <div>
-          <span class="section-kicker">WEEKLY DISCOVERY</span>
-          <h2>我的达人/媒体推荐</h2>
-          <p>每周一 09:00 更新；有新匹配时会出现在顶部通知中。</p>
-        </div>
-        <div class="saved-actions">
-          <el-select
-            v-model="selectedProjectId"
-            placeholder="选择 Campaign"
-            class="saved-campaign-select"
-          >
-            <el-option
-              v-for="project in projects"
-              :key="project.id"
-              :label="project.name"
-              :value="project.id"
-            />
-          </el-select>
-          <el-select
-            v-model="selectedSubscriptionId"
-            placeholder="选择寻找条件"
-            class="saved-subscription-select"
-            @change="loadSavedResults"
-          >
-            <el-option
-              v-for="item in savedSubscriptions"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </el-select>
-          <el-button
-            :disabled="!selectedSubscriptionId"
-            :loading="savedLoading"
-            @click="refreshSavedSearch"
-            >立即更新</el-button
-          >
-        </div>
-      </div>
-      <div v-if="selectedSavedSubscription" class="saved-subscription-summary">
-        <span>{{ selectedSavedSubscription.name }}</span>
-        <el-tag
-          :type="selectedSavedSubscription.active ? 'success' : 'info'"
-          size="small"
-        >
-          {{ selectedSavedSubscription.active ? "每周推荐中" : "已暂停" }}
-        </el-tag>
-        <el-button link @click="toggleSavedSearch(selectedSavedSubscription)">{{
-          selectedSavedSubscription.active ? "暂停" : "恢复"
-        }}</el-button>
-        <el-button
-          link
-          type="danger"
-          @click="removeSavedSearch(selectedSavedSubscription)"
-          >删除</el-button
-        >
-      </div>
-      <div class="saved-view-tabs">
-        <button
-          type="button"
-          :class="{ active: savedView === 'new' }"
-          @click="
-            savedView = 'new';
-            loadSavedResults();
-          "
-        >
-          本周新推荐
-        </button>
-        <button
-          type="button"
-          :class="{ active: savedView === 'all' }"
-          @click="
-            savedView = 'all';
-            loadSavedResults();
-          "
-        >
-          全部结果
-        </button>
-      </div>
-      <div v-loading="savedLoading" class="saved-result-list">
-        <el-empty
-          v-if="savedResults.length === 0"
-          :description="
-            selectedSubscriptionId
-              ? '暂无匹配结果，试试调整寻找条件'
-              : '保存寻找条件后，推荐结果会显示在这里'
-          "
-          :image-size="72"
-        />
-        <article
-          v-for="item in savedResults"
-          :key="item.id"
-          class="saved-result-card"
-        >
-          <div class="saved-resource-head">
-            <div class="saved-resource-identity">
-              <img
-                v-if="item.resource?.avatarUrl"
-                :src="item.resource.avatarUrl"
-                :alt="item.resourceName"
-              />
-              <span v-else class="saved-avatar-fallback">{{
-                initials(item.resourceName)
-              }}</span>
-              <div>
-                <strong>{{ item.resourceName }}</strong>
-                <span
-                  >{{ item.resource?.platform || "平台待补充" }} ·
-                  {{ item.resource?.country || "地区待补充" }}</span
-                >
-              </div>
-            </div>
-            <div class="saved-match-score">
-              <strong>{{ item.score }}</strong
-              ><span>/100 规则匹配</span>
-            </div>
-          </div>
-          <div class="saved-result-details">
-            <p>
-              <strong>规则匹配依据</strong>
-              {{ item.reason || "综合匹配当前寻找条件" }}
-            </p>
-            <div
-              v-if="item.advice?.trim() || savedScenarioItems(item).length"
-              class="saved-advice"
-            >
-              <strong>{{ savedAdviceHeading(item) }}</strong>
-              <p v-if="item.advice?.trim()">{{ item.advice }}</p>
-              <div
-                v-if="savedScenarioItems(item).length"
-                class="saved-scenarios"
-              >
-                <span>适用场景</span>
-                <ul>
-                  <li
-                    v-for="(scenario, index) in savedScenarioItems(item)"
-                    :key="`${item.id}-${index}`"
-                  >
-                    {{ scenario }}
-                  </li>
-                </ul>
-              </div>
-            </div>
-            <div v-else class="saved-advice-empty">
-              <span>该历史结果尚无合作建议。</span>
-              <el-button
-                link
-                :loading="savedLoading"
-                @click="refreshSavedSearch"
-                >立即更新建议 →</el-button
-              >
-            </div>
-            <p v-if="confirmedProductNames(item).length">
-              <strong>已确认合作产品</strong>
-              {{ confirmedProductNames(item).join("、") }}
-            </p>
-            <p v-if="item.resource?.publishedCooperations">
-              <strong>已发布合作</strong>
-              {{ item.resource.publishedCooperations }} 次 · 历史曝光
-              {{ compactNumber(item.resource?.historicalImpressions) }}
-            </p>
-            <p v-if="item.risks">
-              <strong>注意</strong>
-              {{
-                Array.isArray(item.risks) ? item.risks.join("；") : item.risks
-              }}
-            </p>
-            <small
-              >{{ item.source === "ai" ? "AI 排序" : "规则排序" }} ·
-              合作产品依据来自已确认记录；预估费用需最终报价确认</small
-            >
-          </div>
-          <div class="saved-result-actions">
-            <el-button @click="openResourceProfile(savedResource(item))"
-              >查看档案</el-button
-            >
-            <el-button
-              type="primary"
-              :loading="addingToCampaign"
-              @click="addResourceToCampaign(savedResource(item))"
-              >加入 Campaign</el-button
-            >
-            <el-button link @click="feedbackSavedResult(item)"
-              >不感兴趣</el-button
-            >
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section class="analysis-panel">
-      <div class="panel-heading">
-        <div class="panel-title">
-          <span class="panel-icon">
-            <IconifyIconOnline icon="ri:sparkling-2-line" />
-          </span>
-          <strong>{{ panelTitle }}</strong>
-        </div>
-        <div class="elapsed-pill">{{ elapsedText }}</div>
-      </div>
-
-      <div v-if="hasStarted" class="step-list">
-        <div
-          v-for="step in analysisSteps"
-          :key="step.title"
-          class="step-item"
-          :class="`is-${step.status}`"
-        >
-          <span class="step-dot">
-            <IconifyIconOnline
-              :icon="
-                step.status === 'done'
-                  ? 'ri:check-line'
-                  : step.status === 'active'
-                    ? 'ri:loader-4-line'
-                    : 'ri:circle-line'
-              "
-            />
-          </span>
-          <div>
-            <strong>{{ fieldLabel(step.title) }}</strong>
-            <p>{{ fieldLabel(step.details) }}</p>
-          </div>
-        </div>
-      </div>
-
-      <div v-else class="agent-empty">
-        <span class="agent-empty-icon">
-          <IconifyIconOnline icon="ri:play-circle-line" />
-        </span>
-        <div>
-          <strong>{{ fieldLabel("等待执行") }}</strong>
-          <p>
-            {{ fieldLabel("填写需求后点击生成推荐，智能体才会开始分析步骤。") }}
-          </p>
-        </div>
-      </div>
-
-      <div v-if="hasResult" class="draft-box">
-        {{ recommendationLogic }}
-      </div>
-    </section>
-
-    <el-alert
-      v-if="hasResult"
-      class="review-alert"
-      type="warning"
-      :closable="false"
-      show-icon
-      :title="
-        fieldLabel('以下内容由智能助手基于资源库与需求生成，请按需复核与调整。')
+    <RecommendationWorkbench
+      :form="form"
+      :items="resultCandidates"
+      :selected="matchedResourceIds"
+      :markets="marketOptions"
+      :subscriptions="savedSubscriptions"
+      :subscription-id="selectedSubscriptionId"
+      :mode="resultMode"
+      :recent-available="hasResult"
+      :saved-view="savedView"
+      :projects="projects"
+      :project-id="selectedProjectId"
+      :loading="loading"
+      :saved-loading="resultMode === 'saved' && savedLoading"
+      :search-name="subscriptionName"
+      :saving="subscriptionSaving"
+      :adding="addingToCampaign"
+      :attachments="attachedFiles"
+      :status="
+        resultMode === 'saved'
+          ? savedLoading
+            ? '读取中'
+            : '已保存的推荐'
+          : statusText
       "
+      :message="message"
+      :error="resultError"
+      :elapsed="elapsedText"
+      :works="candidateWorks"
+      @update-form="Object.assign(form, $event)"
+      @generate="generate"
+      @stop="stopGeneration"
+      @search-name-change="subscriptionName = $event"
+      @save="saveCurrentSearch"
+      @clear="clearLastRecommendation"
+      @upload="handleAttachmentChange"
+      @remove-attachment="removeAttachment"
+      @market-change="handleMarketChange"
+      @remove-market="removeMarketOption"
+      @select-search="selectSavedSearch"
+      @search-action="manageSavedSearch"
+      @mode-change="changeResultMode"
+      @saved-view-change="changeSavedView"
+      @project-change="selectedProjectId = $event"
+      @toggle="toggleMatched"
+      @profile="openResourceProfile"
+      @feedback="feedbackById"
+      @add="addMatchedToCampaign"
     />
-
-    <section class="recommend-section">
-      <div class="section-heading">
-        <div>
-          <h2>{{ fieldLabel("AI 推荐达人") }}</h2>
-          <span>{{
-            fieldLabel("根据需求、平台数据、历史表现与风险信息生成")
-          }}</span>
-        </div>
-        <div class="recommend-actions">
-          <el-select
-            v-model="selectedProjectId"
-            :placeholder="fieldLabel('选择 Campaign')"
-            class="campaign-select"
-          >
-            <el-option
-              v-for="project in projects"
-              :key="project.id"
-              :label="project.name"
-              :value="project.id"
-            />
-          </el-select>
-          <el-button
-            type="primary"
-            :loading="addingToCampaign"
-            :disabled="matchedRecommendations.length === 0"
-            @click="addMatchedToCampaign"
-          >
-            {{ fieldLabel("加入 Campaign") }}（{{
-              matchedRecommendations.length
-            }}）
-          </el-button>
-          <el-button
-            v-if="hasResult"
-            link
-            type="danger"
-            :disabled="loading"
-            @click="clearLastRecommendation"
-          >
-            {{ fieldLabel("清空") }}
-          </el-button>
-        </div>
-      </div>
-      <div v-if="topRecommendations.length === 0" class="empty-block">
-        {{ fieldLabel("暂无推荐结果") }}
-      </div>
-      <div v-else class="resource-grid">
-        <article
-          v-for="item in topRecommendations"
-          :key="item.id"
-          :class="{ matched: matchedResourceIds[Number(item.id)] }"
-        >
-          <div class="resource-head">
-            <button
-              type="button"
-              class="resource-identity"
-              @click="openResourceProfile(item)"
-            >
-              <span class="resource-avatar">
-                <span>{{ initials(item.name) }}</span>
-                <img
-                  v-if="item.avatarUrl && !avatarLoadFailed[avatarKey(item)]"
-                  v-show="avatarLoaded[avatarKey(item)]"
-                  :src="item.avatarUrl"
-                  :alt="item.name"
-                  @load="markAvatarLoaded(item)"
-                  @error="markAvatarFailed(item)"
-                />
-              </span>
-              <span class="resource-title">
-                <span>
-                  <strong>{{ item.name }}</strong>
-                  <span>
-                    {{ item.resourceType || "-" }} · {{ item.platform || "-" }}
-                  </span>
-                </span>
-                <span class="match-score">
-                  {{ item.matchScore || item.score || 0 }}
-                  <small>/ 100 {{ fieldLabel("匹配") }}</small>
-                </span>
-              </span>
-            </button>
-            <div class="card-actions">
-              <el-tag :type="priorityType(item.priority)" effect="light">
-                {{ fieldLabel(item.priority || "-") }}{{ fieldLabel("优先级") }}
-              </el-tag>
-              <el-button link type="primary" @click="openResourceProfile(item)">
-                {{ fieldLabel("查看详情") }}
-              </el-button>
-            </div>
-          </div>
-
-          <div class="metric-grid">
-            <div>
-              <strong>{{ compactNumber(item.followers) }}</strong>
-              <span>{{ fieldLabel("粉丝 / 订阅") }}</span>
-            </div>
-            <div>
-              <strong>{{ compactNumber(item.avgViews) }}</strong>
-              <span>{{ fieldLabel("平均播放 / 阅读") }}</span>
-            </div>
-            <div>
-              <strong>{{ percentText(item.engagementRate) }}</strong>
-              <span>{{ fieldLabel("互动率") }}</span>
-            </div>
-            <div>
-              <strong>{{ moneyWithCurrency(item.estimatedCost) }}</strong>
-              <span>{{ fieldLabel("预估合作价") }}</span>
-            </div>
-          </div>
-
-          <div class="reason-box">
-            <strong>{{ fieldLabel("推荐理由") }}</strong>
-            <span>{{
-              item.reason || fieldLabel("综合匹配度较高，适合进入候选池。")
-            }}</span>
-          </div>
-          <div class="recommend-card-footer">
-            <span>
-              {{ item.country || fieldLabel("未设置地区") }} ·
-              {{ item.language || fieldLabel("未设置语言") }} ·
-              {{ fieldLabel("风险") }}
-              {{ fieldLabel(item.riskLevel || "低") }}
-            </span>
-            <button
-              type="button"
-              :class="{ active: matchedResourceIds[Number(item.id)] }"
-              @click="toggleMatched(item)"
-            >
-              <IconifyIconOnline
-                :icon="
-                  matchedResourceIds[Number(item.id)]
-                    ? 'ri:check-line'
-                    : 'ri:thumb-up-line'
-                "
-              />
-              {{
-                fieldLabel(
-                  matchedResourceIds[Number(item.id)] ? "已匹配" : "匹配"
-                )
-              }}
-            </button>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section class="logic-section">
-      <h2>{{ fieldLabel("推荐逻辑") }}</h2>
-      <p>{{ recommendationLogic }}</p>
-      <div class="filter-row">
-        <el-tag
-          v-for="[reason, count] in filterItems"
-          :key="reason"
-          type="warning"
-          effect="plain"
-        >
-          {{ reason }}：{{ count }}
-        </el-tag>
-        <span v-if="filterItems.length === 0">{{
-          fieldLabel("无过滤记录")
-        }}</span>
-      </div>
-    </section>
 
     <el-drawer
       v-model="profileDrawerVisible"
@@ -1518,7 +1040,11 @@ onBeforeUnmount(stopTimer);
         class="creator-profile"
       >
         <header class="creator-profile-header">
-          <el-button circle @click="profileDrawerVisible = false">
+          <el-button
+            circle
+            :aria-label="fieldLabel('关闭档案')"
+            @click="profileDrawerVisible = false"
+          >
             <IconifyIconOnline icon="ri:arrow-left-line" />
           </el-button>
           <div class="profile-avatar-large">
@@ -1830,832 +1356,21 @@ onBeforeUnmount(stopTimer);
 <style scoped>
 .assistant-page {
   min-height: 100%;
-  padding: 16px;
+  padding: 20px 18px 0;
   color: #171717;
-  background: #f7f8fa;
+  background: #f7f7f5 !important;
 }
 
-.assistant-header {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
+/* Let the selection bar stick to the real scrollbar, rather than an
+   overflow-hidden intermediate view. This selector only affects this page. */
+:global(.el-scrollbar__view:has(.assistant-page)) {
+  overflow: visible !important;
 }
 
-.brand-block {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.brand-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  font-size: 22px;
-  color: #fff;
-  background: #171717;
-  border-radius: 8px;
-}
-
-.brand-block h1 {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 760;
-  line-height: 1.2;
-  letter-spacing: 0;
-}
-
-.brand-block p {
-  margin: 5px 0 0;
-  font-size: 13px;
-  color: #7a7a7a;
-}
-
-.status-pill,
-.elapsed-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 32px;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #737373;
-  background: #fff;
-  border: 1px solid #dedede;
-  border-radius: 999px;
-}
-
-.status-pill.is-loading {
-  color: #171717;
-}
-
-.intro-panel,
-.composer-card,
-.analysis-panel,
-.recommend-section,
-.logic-section,
-.saved-recommendation-section {
-  background: #fff;
-  border: 1px solid #e2e2e2;
-  border-radius: 8px;
-  box-shadow: 0 8px 22px rgb(15 23 42 / 4%);
-}
-
-.subscription-name-input {
-  width: 184px;
-}
-.saved-recommendation-section {
-  padding: 20px;
-  margin: 14px 0;
-}
-.saved-section-heading,
-.saved-actions,
-.saved-subscription-summary,
-.saved-resource-head,
-.saved-resource-identity,
-.saved-result-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.saved-section-heading,
-.saved-resource-head {
-  justify-content: space-between;
-}
-.saved-section-heading {
-  align-items: flex-start;
-}
-.saved-section-heading h2 {
-  margin: 3px 0 5px;
-  font-size: 20px;
-}
-.saved-section-heading p {
-  margin: 0;
-  color: #81847e;
-  font-size: 13px;
-}
-.section-kicker {
-  color: #718600;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-}
-.saved-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.saved-subscription-select,
-.saved-campaign-select {
-  width: 190px;
-}
-.saved-subscription-summary {
-  flex-wrap: wrap;
-  margin-top: 15px;
-  padding: 10px 13px;
-  border-radius: 8px;
-  background: #f8f9f0;
-  font-size: 13px;
-}
-.saved-subscription-summary > span:first-child {
-  font-weight: 700;
-}
-.saved-view-tabs {
-  display: flex;
-  gap: 22px;
-  margin: 20px 0 14px;
-  border-bottom: 1px solid #e8e9e2;
-}
-.saved-view-tabs button {
-  padding: 0 2px 11px;
-  border: 0;
-  border-bottom: 3px solid transparent;
-  background: none;
-  color: #777;
-  font-weight: 700;
-  cursor: pointer;
-}
-.saved-view-tabs button.active {
-  border-bottom-color: #c8ec00;
-  color: #16181a;
-}
-.saved-result-list {
-  display: grid;
-  gap: 12px;
-  min-height: 90px;
-}
-.saved-result-card {
-  display: grid;
-  grid-template-columns: minmax(175px, 1fr) minmax(250px, 2fr) auto;
-  gap: 18px;
-  padding: 16px;
-  border: 1px solid #e9e9e3;
-  border-radius: 9px;
-}
-.saved-resource-head {
-  align-items: flex-start;
-  gap: 10px;
-}
-.saved-resource-identity img,
-.saved-avatar-fallback {
-  width: 48px;
-  height: 48px;
-  object-fit: cover;
-  border-radius: 50%;
-}
-.saved-avatar-fallback {
-  display: grid;
-  place-items: center;
-  background: #edf4bc;
-  font-weight: 700;
-}
-.saved-resource-identity strong,
-.saved-resource-identity span {
-  display: block;
-}
-.saved-resource-identity strong {
-  margin-bottom: 5px;
-  font-size: 15px;
-}
-.saved-resource-identity span {
-  color: #777;
-  font-size: 12px;
-}
-.saved-match-score {
-  white-space: nowrap;
-  color: #648000;
-}
-.saved-match-score strong {
-  font-size: 24px;
-}
-.saved-match-score span {
-  margin-left: 2px;
-  font-size: 11px;
-}
-.saved-result-details p {
-  margin: 0 0 5px;
-  color: #555;
-  font-size: 12px;
-  line-height: 1.5;
-}
-.saved-result-details p strong {
-  margin-right: 7px;
-  color: #17181b;
-}
-.saved-advice {
-  padding: 10px 12px;
-  margin: 9px 0;
-  background: #f7faed;
-  border-left: 3px solid #b4e600;
-  border-radius: 5px;
-}
-.saved-advice > strong {
-  font-size: 12px;
-  color: #3e5f0d;
-}
-.saved-result-details .saved-advice p {
-  margin: 5px 0 0;
-  line-height: 1.6;
-  white-space: pre-line;
-}
-.saved-scenarios {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-  font-size: 12px;
-}
-.saved-scenarios > span {
-  flex: none;
-  color: #71805b;
-}
-.saved-scenarios ul {
-  display: grid;
-  gap: 3px;
-  padding-left: 16px;
-  margin: 0;
-}
-.saved-advice-empty {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 7px 0;
-  font-size: 12px;
-  color: #858d82;
-}
-.saved-advice-empty :deep(.el-button) {
-  margin: 0;
-}
-.saved-result-details small {
-  color: #999;
-}
-.saved-result-actions {
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  min-width: 120px;
-}
-.saved-result-actions :deep(.el-button) {
-  margin: 0;
-}
-.saved-result-actions :deep(.el-button--primary) {
-  background: #d4fb00;
-  border-color: #d4fb00;
-  color: #17181b;
-  font-weight: 700;
-}
-@media (max-width: 1180px) {
-  .saved-result-card {
-    grid-template-columns: 1fr;
+@media (width <= 760px) {
+  .assistant-page {
+    padding: 16px 10px 0;
   }
-  .saved-result-actions {
-    flex-direction: row;
-    justify-content: flex-start;
-  }
-}
-@media (max-width: 760px) {
-  .saved-section-heading {
-    flex-direction: column;
-  }
-  .saved-actions,
-  .saved-campaign-select,
-  .saved-subscription-select,
-  .subscription-name-input {
-    width: 100%;
-  }
-}
-
-.intro-panel {
-  padding: 16px 18px;
-  margin-bottom: 12px;
-  font-size: 14px;
-  font-weight: 520;
-  line-height: 1.75;
-}
-
-.intro-panel strong {
-  font-weight: 780;
-}
-
-.composer-card {
-  padding: 12px;
-  margin-bottom: 14px;
-}
-
-.upload-panel {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px;
-  margin-top: 10px;
-  background: #fbfbfb;
-  border: 1px solid #e8e8e8;
-  border-radius: 8px;
-}
-
-.upload-panel > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.upload-panel strong {
-  font-size: 13px;
-  color: #171717;
-}
-
-.upload-panel span {
-  font-size: 12px;
-  color: #7a7a7a;
-}
-
-.attachment-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.attachment-list > div {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 12px;
-  background: #fff;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-}
-
-.attachment-list svg {
-  color: #ea580c;
-}
-
-.attachment-list strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 13px;
-  color: #171717;
-}
-
-.attachment-list span {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-line-clamp: 2;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #7a7a7a;
-  -webkit-box-orient: vertical;
-}
-
-.composer-toolbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  padding-top: 10px;
-  margin-top: 8px;
-  border-top: 1px solid #e8e8e8;
-}
-
-.filter-group,
-.action-group,
-.panel-heading,
-.panel-title,
-.resource-head,
-.resource-title,
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.filter-group {
-  flex-wrap: wrap;
-}
-
-.filter-select {
-  width: 148px;
-}
-
-.action-group {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.stop-button {
-  color: #ef4444;
-  border-color: #fecaca;
-}
-
-.mr-1 {
-  margin-right: 4px;
-}
-
-.market-option {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.analysis-panel {
-  padding: 16px 18px;
-  margin-bottom: 14px;
-}
-
-.panel-heading {
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.panel-title strong {
-  font-size: 15px;
-}
-
-.panel-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  font-size: 15px;
-  color: #ea580c;
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
-  border-radius: 8px;
-}
-
-.step-list {
-  display: grid;
-  gap: 0;
-}
-
-.step-item {
-  position: relative;
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  min-height: 64px;
-}
-
-.step-item::before {
-  position: absolute;
-  top: 26px;
-  bottom: -4px;
-  left: 12px;
-  width: 2px;
-  content: "";
-  background: #d9f99d;
-}
-
-.step-item:last-child::before {
-  display: none;
-}
-
-.step-dot {
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  font-size: 14px;
-  color: #a3a3a3;
-  background: #fff;
-  border: 2px solid #d4d4d4;
-  border-radius: 99px;
-}
-
-.step-item.is-done .step-dot {
-  color: #fff;
-  background: #059669;
-  border-color: #059669;
-}
-
-.step-item.is-active .step-dot {
-  color: #ea580c;
-  border-color: #ea580c;
-  animation: agent-pulse 1.2s ease-in-out infinite;
-}
-
-.step-item.is-active strong {
-  color: #c2410c;
-}
-
-.step-item strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 14px;
-  color: #171717;
-}
-
-.step-item p {
-  margin: 7px 0 0;
-  font-size: 13px;
-  line-height: 1.55;
-  color: #8a8a8a;
-}
-
-.agent-empty {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 14px;
-  color: #737373;
-  background: #fbfbfb;
-  border: 1px dashed #d8d8d8;
-  border-radius: 8px;
-}
-
-.agent-empty-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  font-size: 18px;
-  color: #171717;
-  background: #fff;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-}
-
-.agent-empty strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 14px;
-  color: #171717;
-}
-
-.agent-empty p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.draft-box {
-  padding: 12px 14px;
-  margin-left: 32px;
-  font-size: 13px;
-  line-height: 1.75;
-  color: #333;
-  background: #fbfbfb;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-}
-
-.review-alert {
-  margin-bottom: 14px;
-}
-
-.recommend-section,
-.logic-section {
-  padding: 16px 18px;
-  margin-bottom: 14px;
-}
-
-.recommend-section h2,
-.logic-section h2 {
-  margin: 0;
-  font-size: 16px;
-  letter-spacing: 0;
-}
-
-.section-heading {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.section-heading > div:first-child {
-  display: grid;
-  gap: 4px;
-}
-
-.section-heading > div:first-child span {
-  font-size: 12px;
-  color: #8a8a8a;
-}
-
-.recommend-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.campaign-select {
-  width: 220px;
-}
-
-.resource-grid {
-  display: grid;
-  gap: 12px;
-}
-
-.resource-grid article {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid #e2e2e2;
-  border-radius: 12px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-.resource-grid article:hover,
-.resource-grid article.matched {
-  border-color: #ff6a2a;
-  box-shadow: 0 10px 28px rgb(234 88 12 / 8%);
-}
-
-.resource-grid article.matched {
-  background: #fffaf7;
-}
-
-.resource-identity {
-  display: flex;
-  flex: 1;
-  gap: 12px;
-  align-items: center;
-  min-width: 0;
-  padding: 0;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  background: transparent;
-  border: 0;
-}
-
-.resource-avatar {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  overflow: hidden;
-  font-size: 16px;
-  font-weight: 780;
-  color: #059669;
-  background: #ecfdf5;
-  border-radius: 50%;
-}
-
-.resource-avatar img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.resource-identity .resource-title {
-  display: flex;
-  flex: 1;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.resource-identity .resource-title > span:first-child {
-  display: grid;
-  gap: 4px 8px;
-  min-width: 0;
-}
-
-.resource-identity .resource-title strong {
-  font-size: 16px;
-  color: #171717;
-}
-
-.resource-identity .resource-title span,
-.metric-grid span,
-.reason-box span,
-.logic-section p,
-.filter-row span {
-  color: #7a7a7a;
-}
-
-.resource-identity .resource-title span,
-.metric-grid span,
-.reason-box span,
-.filter-row span {
-  font-size: 12px;
-}
-
-.match-score {
-  display: grid;
-  flex: 0 0 auto;
-  justify-items: end;
-  font-size: 22px !important;
-  font-weight: 780;
-  color: #171717 !important;
-}
-
-.match-score small {
-  margin-top: 2px;
-  font-size: 11px;
-  font-weight: 500;
-  color: #8a8a8a;
-}
-
-.card-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  overflow: hidden;
-  border: 1px solid #ececec;
-  border-radius: 10px;
-}
-
-.metric-grid > div {
-  padding: 12px;
-  border-right: 1px solid #ececec;
-}
-
-.metric-grid > div:last-child {
-  border-right: 0;
-}
-
-.metric-grid strong {
-  display: block;
-  font-size: 16px;
-  color: #171717;
-}
-
-.metric-grid span {
-  display: block;
-  margin-top: 4px;
-}
-
-.reason-box {
-  padding: 10px 12px;
-  font-size: 13px;
-  line-height: 1.65;
-  background: #fbfbfb;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-}
-
-.reason-box strong {
-  margin-right: 8px;
-  color: #c2410c;
-}
-
-.recommend-card-footer {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.recommend-card-footer > span {
-  font-size: 12px;
-  color: #8a8a8a;
-}
-
-.recommend-card-footer button {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  justify-content: center;
-  min-width: 104px;
-  min-height: 40px;
-  padding: 0 18px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  color: #171717;
-  cursor: pointer;
-  background: #fff;
-  border: 1px solid #d8d8d8;
-  border-radius: 10px;
-}
-
-.recommend-card-footer button:hover,
-.recommend-card-footer button.active {
-  color: #fff;
-  background: #ff5a1f;
-  border-color: #ff5a1f;
 }
 
 .creator-profile {
@@ -2981,84 +1696,7 @@ onBeforeUnmount(stopTimer);
   line-height: 1.85;
 }
 
-.filter-row {
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-
-.empty-block {
-  padding: 22px;
-  font-size: 13px;
-  color: #8a8a8a;
-  text-align: center;
-  border: 1px dashed #d4d4d4;
-  border-radius: 8px;
-}
-
-:deep(.composer-card .el-textarea__inner) {
-  min-height: 150px !important;
-  padding: 14px 16px;
-  font-size: 14px;
-  line-height: 1.75;
-  border: 0;
-  box-shadow: none;
-}
-
-:deep(.filter-select .el-select__wrapper) {
-  min-height: 34px;
-  border-radius: 999px;
-  box-shadow: 0 0 0 1px #e5e5e5 inset;
-}
-
-:deep(.filter-select .el-select__prefix) {
-  margin-right: 8px;
-  font-weight: 700;
-  color: #9a9a9a;
-}
-
-:deep(.action-group .el-button) {
-  min-height: 34px;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 700;
-  border-radius: 8px;
-}
-
-:deep(.action-group .el-button--primary) {
-  --el-button-bg-color: #171717;
-  --el-button-border-color: #171717;
-  --el-button-hover-bg-color: #2a2a2a;
-  --el-button-hover-border-color: #2a2a2a;
-  --el-button-active-bg-color: #000;
-  --el-button-active-border-color: #000;
-}
-
-@keyframes agent-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-
-  50% {
-    transform: scale(1.08);
-  }
-}
-
 @media (width <= 1180px) {
-  .composer-toolbar {
-    align-items: flex-start;
-  }
-
-  .composer-toolbar,
-  .upload-panel,
-  .panel-heading {
-    display: grid;
-  }
-
-  .action-group {
-    justify-content: flex-start;
-  }
-
   .creator-profile-header {
     grid-template-columns: auto auto minmax(0, 1fr);
   }
@@ -3068,72 +1706,9 @@ onBeforeUnmount(stopTimer);
   }
 }
 
-@media (width <= 720px) {
-  .assistant-page {
-    padding: 12px;
-  }
-
-  .assistant-header,
-  .brand-block,
-  .resource-head,
-  .resource-title,
-  .recommend-card-footer {
-    align-items: flex-start;
-  }
-
-  .assistant-header,
-  .composer-toolbar,
-  .upload-panel,
-  .filter-group,
-  .action-group,
-  .resource-head,
-  .resource-title {
-    display: grid;
-  }
-
-  .section-heading,
-  .recommend-actions,
-  .recommend-card-footer,
-  .profile-header-actions {
-    align-items: stretch;
-  }
-
-  .section-heading,
-  .recommend-actions,
-  .recommend-card-footer,
-  .creator-profile-header,
-  .profile-header-actions {
-    display: grid;
-  }
-
-  .campaign-select,
-  .recommend-actions .el-button {
-    width: 100%;
-  }
-
-  .status-pill,
-  .filter-select,
-  .action-group .el-button {
-    width: 100%;
-  }
-
-  .intro-panel,
-  .analysis-panel,
-  .recommend-section,
-  .logic-section {
-    padding: 14px;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .metric-grid > div:nth-child(2) {
-    border-right: 0;
-  }
-
-  .metric-grid > div:nth-child(-n + 2) {
-    border-bottom: 1px solid #ececec;
+@media (width <= 760px) {
+  :global(.creator-profile-drawer) {
+    width: 100% !important;
   }
 
   .quality-strip,
@@ -3143,16 +1718,9 @@ onBeforeUnmount(stopTimer);
   }
 
   .quality-strip > div,
-  .key-metrics > div,
-  .key-metrics > div:nth-child(3n),
-  .key-metrics > div:nth-last-child(-n + 3) {
+  .key-metrics > div {
     border-right: 0;
     border-bottom: 1px solid #e8e8e8;
-  }
-
-  .quality-strip > div:last-child,
-  .key-metrics > div:last-child {
-    border-bottom: 0;
   }
 
   .creator-profile {
@@ -3163,20 +1731,18 @@ onBeforeUnmount(stopTimer);
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .profile-avatar-large {
-    grid-column: 1;
-  }
-
   .profile-heading {
     grid-column: 2;
   }
 
-  .profile-header-actions {
-    grid-column: 1 / -1;
+  .profile-avatar-large {
+    grid-column: 1;
   }
 
-  .draft-box {
-    margin-left: 0;
+  .profile-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    grid-column: 1 / -1;
   }
 }
 </style>

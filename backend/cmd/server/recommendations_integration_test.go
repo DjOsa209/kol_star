@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,8 +41,75 @@ func TestRecommendationDBSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	base := db
+	t.Cleanup(func() { _ = base.Close() })
+	// Clone only the schema and authorization seeds; model tests never alter
+	// the development database's configuration or recommendation history.
+	if !regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString(cfg.MySQL.Database) {
+		t.Fatal("invalid schema")
+	}
+	temp := fmt.Sprintf("creator_recommendation_test_%d", time.Now().UnixNano())
+	if _, err := base.Exec("create database `" + temp + "` character set utf8mb4"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = base.Exec("drop database `" + temp + "`") })
+	for _, table := range []string{"sys_users", "sys_roles", "sys_user_roles", "sys_sessions", "sys_menus", "sys_role_menus", "biz_resources", "biz_ip_resources", "biz_ip_files", "biz_cooperations", "biz_recommendation_subscriptions", "biz_recommendation_runs", "biz_recommendation_results", "biz_recommendation_notifications", "biz_governance_rules"} {
+		if _, err := base.Exec("create table `" + temp + "`.`" + table + "` like `" + cfg.MySQL.Database + "`.`" + table + "`"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, table := range []string{"sys_users", "sys_roles", "sys_user_roles"} {
+		if _, err := base.Exec("insert into `" + temp + "`.`" + table + "` select * from `" + cfg.MySQL.Database + "`.`" + table + "`"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg.MySQL.Database = temp
+	db, err = openDB(cfg.MySQL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = db.Close() })
-	cfg.AIModel.APIKey = "" // verify the honest rule fallback, never call an external model
+	var modelUnavailable atomic.Bool
+	fakeModel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if modelUnavailable.Load() {
+			http.Error(w, "test model outage", http.StatusServiceUnavailable)
+			return
+		}
+		var request struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		var input struct {
+			Domain     string `json:"domain"`
+			Candidates []struct {
+				ID int64 `json:"id"`
+			} `json:"candidates"`
+		}
+		if len(request.Messages) < 2 {
+			http.Error(w, "missing input", 400)
+			return
+		}
+		_ = json.Unmarshal([]byte(request.Messages[1].Content), &input)
+		// Keep the IP domain's existing fallback behavior under coverage.
+		if input.Domain != "creator" {
+			http.Error(w, "test model unavailable", 503)
+			return
+		}
+		ranks := []recommendationAIRank{}
+		for _, c := range input.Candidates {
+			ranks = append(ranks, recommendationAIRank{ID: c.ID, Score: 83, Reason: "模型判断：科技视频适合产品体验", Advice: "适用场景：可考虑新品体验测评内容。匹配原因：候选资料显示为 YouTube 科技达人，可评估产品演示；报价与排期需确认。", Scenarios: []string{"可考虑产品体验视频"}})
+		}
+		content, _ := json.Marshal(map[string]any{"recommendations": ranks})
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(content)}}}})
+	}))
+	t.Cleanup(fakeModel.Close)
+	config, _ := json.Marshal(map[string]any{"provider": "test", "model": "test", "baseUrl": fakeModel.URL})
+	if _, err := db.Exec(`insert into biz_governance_rules(rule_type,name,enabled,content) values ('ai_model','test model',1,?)`, string(config)); err != nil {
+		t.Fatal(err)
+	}
+	cfg.AIModel.APIKey = "test-key"
 	a := newApp(db, cfg)
 	ctx := context.Background()
 	var adminID int
@@ -140,8 +210,15 @@ func TestRecommendationDBSmoke(t *testing.T) {
 		if domain == "ip" {
 			want = ipOne
 		}
-		if int64(row["resourceId"].(float64)) != want || row["source"] != "rule" || row["isNew"] != false {
+		wantSource := "rule"
+		if domain == "creator" {
+			wantSource = "ai"
+		}
+		if int64(row["resourceId"].(float64)) != want || row["source"] != wantSource || row["isNew"] != false {
 			t.Fatalf("unexpected immediate %s result: %+v", domain, row)
+		}
+		if domain == "creator" && (row["score"] != float64(83) || row["scoreSource"] != "ai" || row["adviceSource"] != "ai") {
+			t.Fatalf("model scores and advice must survive reload: %+v", row)
 		}
 		if domain == "ip" {
 			resultID := int64(row["id"].(float64))
@@ -163,6 +240,52 @@ func TestRecommendationDBSmoke(t *testing.T) {
 			}
 		}
 	}
+	t.Run("creator failures never write rules or report a successful run", func(t *testing.T) {
+		id := subscriptionIDs[0]
+		for _, mode := range []string{"disabled", "outage"} {
+			if mode == "disabled" {
+				_, err = db.Exec(`update biz_governance_rules set enabled=0 where rule_type='ai_model'`)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				modelUnavailable.Store(true)
+			}
+			_, runErr := a.executeRecommendationRun(ctx, id, adminID, "creator", "failure-"+mode, false)
+			modelUnavailable.Store(false)
+			_, err = db.Exec(`update biz_governance_rules set enabled=1 where rule_type='ai_model'`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(runErr, errCreatorRecommendationModel) {
+				t.Fatalf("missing explicit model error: %v", runErr)
+			}
+		}
+		var count int
+		if err := db.QueryRow(`select count(*) from biz_recommendation_runs where subscription_id=?`, id).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("failed generation wrote run: count=%d err=%v", count, err)
+		}
+		if _, err := db.Exec(`update biz_recommendation_results set source='rule',advice_source='rule' where subscription_id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+		list, err := a.recommendationResultsData(ctx, adminID, "creator", id, "all")
+		if err != nil || len(list) != 0 {
+			t.Fatalf("historical rules remain visible: %+v %v", list, err)
+		}
+		if _, err := db.Exec(`update biz_recommendation_results set source='ai',advice_source='ai' where subscription_id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`update biz_resources set followers=12345 where id=?`, creatorOne); err != nil {
+			t.Fatal(err)
+		}
+		list, err = a.recommendationResultsData(ctx, adminID, "creator", id, "all")
+		if err != nil || len(list) != 0 {
+			t.Fatalf("stale model assessment replaced with rules: %+v %v", list, err)
+		}
+		if _, err := db.Exec(`update biz_resources set followers=0 where id=?`, creatorOne); err != nil {
+			t.Fatal(err)
+		}
+	})
 	for i := 2; i <= 7; i++ {
 		_ = addCreator(fmt.Sprintf("%s_creator_%d", marker, i))
 	}
@@ -314,6 +437,10 @@ func TestRecommendationDBSmoke(t *testing.T) {
 		}
 	}
 	t.Run("external search stays in owned conversation without altering library results", func(t *testing.T) {
+		withoutModel := cfg
+		withoutModel.AIModel.APIKey = ""
+		withoutModel.WebSearch = WebSearchConfig{}
+		a := newApp(db, withoutModel)
 		id := subscriptionIDs[1]
 		before, err := scanRecommendationSubscription(db.QueryRowContext(ctx, `select `+recommendationSubscriptionColumns+` from biz_recommendation_subscriptions where id=?`, id))
 		if err != nil {
