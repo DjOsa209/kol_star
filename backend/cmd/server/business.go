@@ -3061,18 +3061,40 @@ func detectPlatform(text string) string {
 		"YouTube":   {"youtube", "油管"},
 		"TikTok":    {"tiktok", "抖音"},
 		"Instagram": {"instagram", "ins"},
-		"媒体网站":      {"媒体", "media", "网站", "报道"},
+		"媒体网站":      {"网站", "website"},
 	}
-	return detectByKeywords(text, rules)
+	// The form supports one platform. A brief naming several platforms must
+	// remain broad; map iteration must not choose a different one on reread.
+	matched := ""
+	for platform, keywords := range rules {
+		if detectByKeywords(text, map[string][]string{platform: keywords}) == "" {
+			continue
+		}
+		if matched != "" {
+			return ""
+		}
+		matched = platform
+	}
+	return matched
 }
 
 func detectResourceType(text string) string {
-	rules := map[string][]string{
-		"媒体":  {"媒体", "media", "报道"},
-		"创作者": {"创作者", "creator", "youtube", "tiktok", "评测"},
-		"KOL": {"kol", "达人", "博主"},
+	media := detectByKeywords(text, map[string][]string{"媒体": {"媒体", "media", "报道"}}) != ""
+	kol := detectByKeywords(text, map[string][]string{"KOL": {"kol", "达人", "博主"}}) != ""
+	creator := detectByKeywords(text, map[string][]string{"创作者": {"创作者", "creator", "评测"}}) != ""
+	if media && (kol || creator) {
+		return ""
 	}
-	return detectByKeywords(text, rules)
+	if media {
+		return "媒体"
+	}
+	if kol {
+		return "KOL"
+	}
+	if creator || detectByKeywords(text, map[string][]string{"创作者": {"youtube", "tiktok"}}) != "" {
+		return "创作者"
+	}
+	return ""
 }
 
 func detectIndustry(text string) string {

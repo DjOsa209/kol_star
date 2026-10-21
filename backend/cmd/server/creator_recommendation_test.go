@@ -12,6 +12,40 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+func TestCreatorMixedBriefDoesNotNarrowSavedSearch(t *testing.T) {
+	criteria := deriveCreatorRecommendationCriteria(recommendationSubscription{
+		Query: "寻找美国市场适合科技新品推广的达人或媒体，优先科技评测与消费电子内容。",
+	})
+	if len(criteria.resourceTypes) != 0 || len(criteria.platforms) != 0 {
+		t.Fatalf("mixed creator/media request must retain both types and all platforms: types=%v platforms=%v", criteria.resourceTypes, criteria.platforms)
+	}
+	for _, resourceType := range []string{"KOL", "媒体"} {
+		row := map[string]any{"country": "美国", "platform": "YouTube", "resourceType": resourceType}
+		if !recommendationCreatorFilters(row, criteria.markets, criteria.platforms, criteria.resourceTypes) {
+			t.Fatalf("mixed brief excluded %s", resourceType)
+		}
+	}
+	explicit := deriveCreatorRecommendationCriteria(recommendationSubscription{
+		Query: "寻找达人或媒体", Platforms: []string{"YouTube"}, ResourceTypes: []string{"KOL"},
+	})
+	if len(explicit.platforms) != 1 || explicit.platforms[0] != "YouTube" || recommendationCreatorFilters(map[string]any{"resourceType": "媒体", "platform": "YouTube"}, nil, explicit.platforms, explicit.resourceTypes) {
+		t.Fatalf("explicit single-type/platform selection must still apply: %+v", explicit)
+	}
+}
+
+func TestCreatorPlatformInferenceKeepsAmbiguousBriefBroad(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		{"寻找科技达人或媒体", ""},
+		{"考虑 YouTube 或 TikTok", ""},
+		{"寻找 YouTube 科技达人", "YouTube"},
+		{"寻找科技网站做新品报道", "媒体网站"},
+	} {
+		if got := detectPlatform(tc.text); got != tc.want {
+			t.Errorf("%q: platform=%q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
 func TestCreatorBudgetDoesNotDiscardUnknownQuotesBeforeModel(t *testing.T) {
 	row := map[string]any{
 		"id": 1, "name": "Iraq creator", "resourceType": "KOL", "country": "伊拉克",
