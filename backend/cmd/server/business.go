@@ -2896,10 +2896,6 @@ func (a *app) businessAssistantRecommend(w http.ResponseWriter, r *http.Request)
 	}
 	parsed := parseAssistantDemand(body, demandText)
 	includeWatch := boolField(body, "includeWatch")
-	budget := floatField(body, "budget")
-	if budget <= 0 {
-		budget = floatField(parsed, "budget")
-	}
 
 	rows, err := a.queryMaps(r.Context(),
 		`select id, name, avatar_url as avatarUrl, resource_type as resourceType, country, language, platform,
@@ -2916,9 +2912,12 @@ func (a *app) businessAssistantRecommend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	recommendations, filtered := buildLocalRecommendations(rows, parsed, includeWatch, budget)
+	recommendations, filtered := buildLocalRecommendations(rows, parsed, includeWatch)
 	message := "资源库暂无符合筛选条件的候选，请调整需求后重试。"
+	modelInvoked := false
+	source := "none"
 	if len(recommendations) > 0 {
+		modelInvoked = true
 		result, err := a.requestAIRecommendations(r.Context(), model, demandText, parsed, recommendations)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, 50201, creatorRecommendationModelError(err).Error())
@@ -2933,19 +2932,21 @@ func (a *app) businessAssistantRecommend(w http.ResponseWriter, r *http.Request)
 			parsed = mergeParsedDemand(parsed, result.Parsed)
 		}
 		message = defaultString(result.Summary, fmt.Sprintf("已调用 %s/%s 生成达人推荐。", model.Provider, model.Model))
+		source = "ai"
 	}
 	writeOK(w, map[string]any{
 		"parsed":          parsed,
 		"recommendations": recommendations,
 		"filteredSummary": filtered,
 		"fallback":        false,
-		"source":          "ai",
+		"source":          source,
+		"modelInvoked":    modelInvoked,
 		"message":         message,
 	})
 }
 
-func buildLocalRecommendations(rows []map[string]any, parsed map[string]any, includeWatch bool, budget float64) ([]map[string]any, map[string]int) {
-	var recommendations []map[string]any
+func buildLocalRecommendations(rows []map[string]any, parsed map[string]any, includeWatch bool) ([]map[string]any, map[string]int) {
+	recommendations := make([]map[string]any, 0, len(rows))
 	filtered := map[string]int{}
 	for _, row := range rows {
 		status := fmt.Sprint(row["status"])
@@ -2962,11 +2963,8 @@ func buildLocalRecommendations(rows []map[string]any, parsed map[string]any, inc
 			filtered["匹配度不足"]++
 			continue
 		}
-		estimatedCost := estimateResourceCost(row)
-		if budget > 0 && float64(estimatedCost) > budget {
-			filtered["预算超限"]++
-			continue
-		}
+		// We have no resource quote in this query. Budget belongs in the model
+		// brief; a formula based on followers/grade cannot prove unaffordability.
 		priority := recommendationPriority(score)
 		recommendations = append(recommendations, map[string]any{
 			"id":             row["id"],
@@ -2988,7 +2986,8 @@ func buildLocalRecommendations(rows []map[string]any, parsed map[string]any, inc
 			"avgViews":       row["avgViews"],
 			"owner":          row["owner"],
 			"notes":          row["notes"],
-			"estimatedCost":  estimatedCost,
+			"estimatedCost":  nil,
+			"quoteStatus":    "unknown",
 			"matchScore":     score,
 			"priority":       priority,
 			"reason":         strings.Join(reasons, "；"),
@@ -3189,29 +3188,6 @@ func matchText(row, parsed map[string]any, rowKey string, points int, reason str
 	return 0
 }
 
-func estimateResourceCost(row map[string]any) int {
-	followers := intField(row, "followers")
-	avgViews := intField(row, "avgViews")
-	base := 1000
-	if avgViews > 0 {
-		base += avgViews / 20
-	} else {
-		base += followers / 250
-	}
-	switch fmt.Sprint(row["level"]) {
-	case "S":
-		base += 4000
-	case "A":
-		base += 2500
-	case "B":
-		base += 1200
-	}
-	if base < 500 {
-		base = 500
-	}
-	return base
-}
-
 func riskTip(row map[string]any) string {
 	switch fmt.Sprint(row["riskLevel"]) {
 	case "高":
@@ -3405,7 +3381,7 @@ func assistantRecommendationSystemPrompt() string {
 1. 解析用户自然语言需求，补全目标市场、语言、平台、资源类型、行业方向、投放目标和预算等字段。
 2. 只允许从用户提供的 candidateKOLs 中选择推荐对象，严禁编造不存在的达人、媒体、账号、数据或资源 id。
 3. 根据市场/语言/平台/内容方向/资源类型/粉丝或均观看/内部评分/等级/风险/预估成本综合排序。
-4. 高风险资源只能在理由充分时保留，并必须写明 riskTip；预算明显不匹配、市场平台不匹配或风险过高的资源要降权。
+4. 高风险资源只能在理由充分时保留，并必须写明 riskTip；市场平台不匹配或风险过高的资源要降权。quoteStatus 为 unknown 或 estimatedCost 为空表示尚无真实报价，不能据此认定超预算、排除候选或编造价格；仍评估需求适配，并在 riskTip 中明确预算是否可行需询价确认。
 5. 推荐理由要面向运营人员，具体说明“为什么适合本项目”，避免空泛词。
 
 输出要求：

@@ -1429,23 +1429,32 @@ h2 {
 
 .candidate-works {
   display: flex;
-  gap: 5px;
+  gap: 8px;
+  align-items: flex-start;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .candidate-works button {
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
+  max-width: min(199px, 100%);
+  height: 112px;
   padding: 0;
+  overflow: hidden;
   cursor: pointer;
-  background: none;
+  background: #f6f6f6;
   border: 0;
+  border-radius: 4px;
 }
 
 .candidate-works img {
-  width: 100%;
-  height: 42px;
-  object-fit: cover;
-  border-radius: 4px;
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .view-content {

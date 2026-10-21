@@ -12,6 +12,25 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+func TestCreatorBudgetDoesNotDiscardUnknownQuotesBeforeModel(t *testing.T) {
+	row := map[string]any{
+		"id": 1, "name": "Iraq creator", "resourceType": "KOL", "country": "伊拉克",
+		"platform": "Instagram", "status": "可合作", "score": 90, "level": "A", "riskLevel": "低",
+		"followers": 10000,
+	}
+	parsed := parseAssistantDemand(map[string]any{"budget": 1000}, "我想在伊拉克做推广手机")
+	got, filtered := buildLocalRecommendations([]map[string]any{row}, parsed, false)
+	if len(got) != 1 {
+		t.Fatalf("unknown quote must reach model at USD 1000; candidates=%d filtered=%v", len(got), filtered)
+	}
+	if got[0]["estimatedCost"] != nil || got[0]["quoteStatus"] != "unknown" {
+		t.Fatalf("invented quote: %+v", got[0])
+	}
+	if _, ok := scoreCreatorRecommendation(cloneMap(row), recommendationSubscription{BudgetMax: 1000, BudgetCurrency: "USD"}, creatorRecommendationCriteria{parsed: parsed}); !ok {
+		t.Fatal("saved recommendation also discarded unknown quote before model")
+	}
+}
+
 func TestCreatorRecommendationsNeverBackfillRuleCandidates(t *testing.T) {
 	local := []map[string]any{
 		{"id": 1, "matchScore": 99, "reason": "rule reason", "hitRules": []string{"rule hint"}, "downReasons": []string{"rule downgrade"}},
@@ -61,7 +80,7 @@ func TestCreatorAIRanksRequireModelAdvice(t *testing.T) {
 }
 
 func TestCreatorRecommendEndpointRequiresSuccessfulModel(t *testing.T) {
-	for _, state := range []string{"missing", "disabled", "unavailable", "malformed", "unknown_ids", "success"} {
+	for _, state := range []string{"missing", "disabled", "empty_pool", "unavailable", "malformed", "unknown_ids", "success"} {
 		t.Run(state, func(t *testing.T) {
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if state == "unavailable" {
@@ -72,6 +91,18 @@ func TestCreatorRecommendEndpointRequiresSuccessfulModel(t *testing.T) {
 				_ = json.NewDecoder(r.Body).Decode(&input)
 				if len(input.Messages) < 2 || strings.Contains(input.Messages[1].Content, "matchScore") || strings.Contains(input.Messages[1].Content, "hitRules") {
 					t.Error("model must receive resource facts without rule recommendations")
+				}
+				var payload struct {
+					Parsed     map[string]any   `json:"parsedByRules"`
+					Candidates []map[string]any `json:"candidateKOLs"`
+				}
+				if err := json.Unmarshal([]byte(input.Messages[1].Content), &payload); err != nil || payload.Parsed["budget"] != float64(1000) || len(payload.Candidates) != 2 {
+					t.Errorf("USD 1000 brief and eligible resources must reach model: %+v %v", payload, err)
+				}
+				for _, candidate := range payload.Candidates {
+					if candidate["estimatedCost"] != nil || candidate["quoteStatus"] != "unknown" {
+						t.Error("invented price sent to model")
+					}
 				}
 				content := `{"recommendations":[{"id":1,"matchScore":77,"reason":"模型认为科技测评与项目匹配"}]}`
 				if state == "malformed" {
@@ -95,26 +126,35 @@ func TestCreatorRecommendEndpointRequiresSuccessfulModel(t *testing.T) {
 				query.WillReturnRows(sqlmock.NewRows([]string{"enabled", "content"}).AddRow(1, string(config)))
 			}
 			if state != "missing" && state != "disabled" {
-				mock.ExpectQuery("select id, name, avatar_url").WillReturnRows(sqlmock.NewRows([]string{"id", "name", "resourceType", "status", "score", "level", "riskLevel", "followers"}).
-					AddRow(1, "Creator One", "KOL", "可合作", 95, "A", "低", 10000).
-					AddRow(2, "Creator Two", "KOL", "可合作", 90, "A", "低", 10000))
+				rows := sqlmock.NewRows([]string{"id", "name", "resourceType", "status", "score", "level", "riskLevel", "followers"})
+				if state != "empty_pool" {
+					rows.AddRow(1, "Creator One", "KOL", "可合作", 95, "A", "低", 10000).
+						AddRow(2, "Creator Two", "KOL", "可合作", 90, "A", "低", 10000)
+				}
+				mock.ExpectQuery("select id, name, avatar_url").WillReturnRows(rows)
 			}
 			a := newApp(db, Config{AIModel: AIModelConfig{APIKey: "test-key"}})
 			recorder := httptest.NewRecorder()
-			a.businessAssistantRecommend(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"demandText":"寻找科技测评达人"}`)))
+			a.businessAssistantRecommend(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"demandText":"我想在伊拉克做推广手机","budget":1000}`)))
 			var response struct {
 				Code int `json:"code"`
 				Data struct {
 					Recommendations []map[string]any `json:"recommendations"`
 					Fallback        bool             `json:"fallback"`
+					ModelInvoked    bool             `json:"modelInvoked"`
+					Source          string           `json:"source"`
 				} `json:"data"`
 			}
 			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
 			if state == "success" {
-				if response.Code != 0 || response.Data.Fallback || len(response.Data.Recommendations) != 1 || response.Data.Recommendations[0]["source"] != "ai" {
+				if response.Code != 0 || response.Data.Fallback || !response.Data.ModelInvoked || response.Data.Source != "ai" || len(response.Data.Recommendations) != 1 || response.Data.Recommendations[0]["source"] != "ai" {
 					t.Fatalf("unexpected successful response: %s", recorder.Body.String())
+				}
+			} else if state == "empty_pool" {
+				if response.Code != 0 || response.Data.ModelInvoked || response.Data.Source == "ai" || len(response.Data.Recommendations) != 0 {
+					t.Fatalf("empty retrieval incorrectly attributed to model: %s", recorder.Body.String())
 				}
 			} else if response.Code == 0 || len(response.Data.Recommendations) != 0 {
 				t.Fatalf("model failure returned recommendations: %s", recorder.Body.String())
