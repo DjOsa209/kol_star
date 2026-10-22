@@ -147,6 +147,10 @@ export const getTagList = () => {
   return http.request<Result<any[]>>("get", "/business/tags");
 };
 
+export const getResourceTagOptions = () => {
+  return http.request<Result<any[]>>("get", "/business/resources/tag-options");
+};
+
 export const createTag = (data?: object) => {
   return http.request<Result>("post", "/business/tags/create", { data });
 };

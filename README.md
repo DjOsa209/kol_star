@@ -73,7 +73,7 @@ flowchart LR
 1. 在 **资源运营 → 达人/媒体 AI 推荐 → AI 推荐** 输入推广需求，点击 **生成推荐**。
 2. 页面自动显示寻找候选、读取公开资料和模型分析的进度，完成后展示推荐；平台仅作为每位达人的来源信息。
 3. 查看模型评分、推荐理由、平台公开数据和作品，点击 **查看证据并核实入库**；所在地与受众地域分别判断，报价、档期和品牌安全仍需核实。
-4. 核实所在地、语言、内容方向并填写证据后确认入库。同一平台账号按稳定 ID 复用已有档案，保留原有业务资料；入库后仍可继续查看推荐。
+4. 核实所在地、语言、内容方向并填写证据，可补充行业、资源领域和已有资源标签后确认入库。同一平台账号按稳定 ID 复用已有档案，已有业务资料保留、空字段补齐、标签合并；入库后仍可继续查看推荐。
 5. **已保存的寻找条件** 保留库内推荐、保存条件、合作建议和加入 Campaign 的原有流程。
 
 **真实验收**：2026-10-22 在本地已登录页面只提交上述自然语言需求，后台实际调用配置的 `OpenAI/gpt-5` 规划检索词，经 YouTube Data API 采集 **12 位候选、72 条最近作品**，再调用大模型自动生成推荐。当时没有对本轮候选执行任何入库操作，推荐已经展示。页面及数据库的来源为 `ai`、`modelInvoked=true`、`fallback=false`。此前同一实现的人工核实流程已将 iMAD Tech、Mohammed Alhaddad 与 Tech Time H&M 的真实资料及 18 条作品写入资源库，未使用 Mock 数据。
@@ -84,14 +84,36 @@ flowchart LR
 
 ![推荐后核实入库：复用 iMAD Tech 档案并保留推荐](./docs/screenshots/ai-creator-discovery-verification.jpg)
 
+#### 入库后与全球资源库保持一致
+
+核实抽屉使用资源库的行业、领域与标签，确认后可回看原核实记录。头像同时保留展示地址与来源地址；达人层级沿用资源库受众量规则，与业务评分的 A–D 等级分开。复用已有档案时保留已维护字段，只补空值并合并标签。
+
+2026-10-22 的字段对齐验收使用上述真实采集资料：修复并补全 iMAD Tech、Mohammed Alhaddad、Tech Time H&M 三条旧档案，再从实际模型推荐中核实 **Hamadaalmansoor**，生成资源 **#990148** 和6条作品。四位达人共24条已采集作品；行业为「消费电子」、领域为「科技」、资源标签为「消费电子 / 测评」，均依据频道简介与已采集手机评测内容人工确认。新候选重新打开核实记录后字段仍完整，频道身份只有一条资源记录。
+
+![真实候选核实：行业、领域、标签和证据回显](./docs/screenshots/ai-creator-resource-verification.jpg)
+
+列表和档案使用同一近30天作品样本计算，验收值与数据库逐条汇总一致：
+
+| 真实达人 | 层级 | 频道总视频数 | 已采集 / 近30天样本 | 样本平均播放 | 样本平均互动 | 样本互动率 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| iMAD Tech | 头部 | 1,198 | 6 / 6 | 227,152.67 | 7,185.33 | 3.16% |
+| Hamadaalmansoor | 腰部 | 567 | 6 / 6 | 2,746.17 | 88.17 | 3.21% |
+
+这些均值是近30天内发布且已采集作品的当前累计计数均值，不代表全频道30天完整表现或这30天新增播放。无样本时显示「未知」，真实零播放仍纳入均值；旧手填指标保留为「口径未核实」，不混入样本统计。资源标签与从作品文本提取的内容主题分开展示。
+
+![全球资源库：真实新入库达人及统一样本统计](./docs/screenshots/ai-creator-resource-list.jpg)
+
+![真实资源档案：头像、行业标签、腰部层级与样本口径](./docs/screenshots/ai-creator-resource-profile.jpg)
+
 | 实现环节 | 当前机制 | 代码入口 |
 | --- | --- | --- |
 | 需求规划 | 配置的大模型生成 1–3 条检索词，严格校验结构；用户无需填写关键词，失败不使用固定关键词兜底 | [`creator_discovery_planner.go`](./backend/cmd/server/creator_discovery_planner.go) |
 | 真实采集 | 搜索作品发现作者，按频道 ID 去重，读取公开资料及最近 6 条作品，保存来源和时间；缺失数据保持未知 | [`creator_discovery_youtube.go`](./backend/cmd/server/creator_discovery_youtube.go) |
 | 自动推荐 | 新发现的待核实候选直接交给模型，排除已拒绝及库内不可合作资源，输出必须命中本轮候选 ID；失败保留原因 | [`creator_discovery.go`](./backend/cmd/server/creator_discovery.go) |
-| 人工沉淀 | 用户归属及资源页权限校验，证据关联验证，事务内去重复用档案与作品；确认入库后保留推荐 | [`creator_discovery_import.go`](./backend/cmd/server/creator_discovery_import.go) |
+| 人工沉淀 | 用户归属及资源页权限校验，证据关联验证，事务内去重复用档案与作品；头像、行业、领域、标签及达人层级对齐全球资源库 | [`creator_discovery_import.go`](./backend/cmd/server/creator_discovery_import.go) |
+| 统计口径 | 列表与档案统一读取近30天已采集作品样本；展示样本数，区分频道总视频数与已采集作品数，无样本均值显示未知 | [`resource_metrics.go`](./backend/cmd/server/resource_metrics.go) |
 
-**当前范围**：统一入口目前接入的公开发现数据源是 YouTube，尚不代表全平台或全网覆盖。频道声明国家不等于受众地域，模型匹配分也不代表投放效果。任务采用单进程后台 worker，部署前需执行 `055_creator_discovery.sql` 并配置平台 API 与模型；配置、重启恢复和并发限制见 [后端部署说明](./backend/README.md#ai-creator-discovery-and-recommendation)。
+**当前范围**：统一入口目前接入的公开发现数据源是 YouTube，尚不代表全平台或全网覆盖。频道声明国家不等于受众地域，模型匹配分也不代表投放效果。任务采用单进程后台 worker，部署前需执行 `055_creator_discovery.sql`、`056_creator_discovery_resource_alignment.sql` 并配置平台 API 与模型；配置、重启恢复和并发限制见 [后端部署说明](./backend/README.md#ai-creator-discovery-and-recommendation)。
 
 #### 已保存的寻找条件与 Campaign 候选池
 

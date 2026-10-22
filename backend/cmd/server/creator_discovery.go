@@ -40,6 +40,9 @@ type creatorDiscoveryCandidate struct {
 	ResourceID  int64                    `json:"resourceId,omitempty"`
 	Country     string                   `json:"country"`
 	Language    string                   `json:"language"`
+	Industry    string                   `json:"industry"`
+	Category    string                   `json:"category"`
+	TagIDs      []int64                  `json:"tagIds"`
 	Note        string                   `json:"note"`
 	EvidenceURL string                   `json:"evidenceUrl"`
 	Snapshot    creatorDiscoverySnapshot `json:"snapshot"`
@@ -199,7 +202,7 @@ func (a *app) creatorDiscoveryList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) creatorDiscoveryCandidates(ctx context.Context, id int64) ([]creatorDiscoveryCandidate, error) {
-	rows, err := a.DB().QueryContext(ctx, `select id,job_id,channel_id,status,coalesce(resource_id,0),country,language,coalesce(note,''),evidence_url,snapshot from biz_creator_discovery_candidates where job_id=? order by id`, id)
+	rows, err := a.DB().QueryContext(ctx, `select id,job_id,channel_id,status,coalesce(resource_id,0),country,language,industry,category,coalesce(tag_ids,json_array()),coalesce(note,''),evidence_url,snapshot from biz_creator_discovery_candidates where job_id=? order by id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -207,11 +210,14 @@ func (a *app) creatorDiscoveryCandidates(ctx context.Context, id int64) ([]creat
 	candidates := []creatorDiscoveryCandidate{}
 	for rows.Next() {
 		var c creatorDiscoveryCandidate
-		var raw []byte
-		if err = rows.Scan(&c.ID, &c.JobID, &c.ChannelID, &c.Status, &c.ResourceID, &c.Country, &c.Language, &c.Note, &c.EvidenceURL, &raw); err != nil {
+		var raw, tagIDs []byte
+		if err = rows.Scan(&c.ID, &c.JobID, &c.ChannelID, &c.Status, &c.ResourceID, &c.Country, &c.Language, &c.Industry, &c.Category, &tagIDs, &c.Note, &c.EvidenceURL, &raw); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(raw, &c.Snapshot); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(tagIDs, &c.TagIDs); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, c)

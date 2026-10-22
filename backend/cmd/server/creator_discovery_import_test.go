@@ -19,6 +19,7 @@ func discoveryReviewTestSnapshot() creatorDiscoverySnapshot {
 	return creatorDiscoverySnapshot{
 		ChannelID: discoveryReviewTestChannel, Name: "Public channel", Handle: "@public-channel",
 		ProfileURL: "https://www.youtube.com/channel/" + discoveryReviewTestChannel,
+		AvatarURL:  "https://yt3.googleusercontent.com/public-channel-avatar",
 		Followers:  &followers, TotalViews: 20000, VideoCount: 12,
 		RecentPosts: []platformPost{{PlatformPostID: "abcdefghijk", Title: "Phone review", PostURL: "https://www.youtube.com/watch?v=abcdefghijk", ViewCount: 1000}},
 		Evidence:    []creatorDiscoveryEvidence{{URL: "https://www.youtube.com/watch?v=lmnopqrstuv"}},
@@ -64,7 +65,7 @@ func TestCreatorDiscoveryReviewRequiresCollectedEvidence(t *testing.T) {
 		input.EvidenceURL = evidence
 		requireDiscoveryReviewError(t, validateCreatorDiscoveryReview(&input, snapshot), http.StatusBadRequest)
 	}
-	for _, field := range []string{"country", "language", "note", "topic"} {
+	for _, field := range []string{"country", "language", "note", "topic", "industry", "category", "tags"} {
 		input := discoveryReviewTestInput()
 		switch field {
 		case "country":
@@ -75,6 +76,12 @@ func TestCreatorDiscoveryReviewRequiresCollectedEvidence(t *testing.T) {
 			input.Note = " "
 		case "topic":
 			input.TopicConfirmed = false
+		case "industry":
+			input.Industry = "科技\n游戏"
+		case "category":
+			input.Category = strings.Repeat("类", 129)
+		case "tags":
+			input.TagIDs = []int64{-1}
 		}
 		requireDiscoveryReviewError(t, validateCreatorDiscoveryReview(&input, snapshot), http.StatusBadRequest)
 	}
@@ -159,12 +166,21 @@ func TestCreatorDiscoveryApprovalReusesIdentityAndPreservesRecommendation(t *tes
 	snapshot.RecentPosts = nil
 	input := discoveryReviewTestInput()
 	input.EvidenceURL = snapshot.ProfileURL
+	input.Industry, input.Category = "数码评测", "科技"
+	input.TagIDs = []int64{8, 3, 8}
 	expectDiscoveryCandidateLock(t, mock, "pending", "partial", nil, snapshot)
+	mock.ExpectQuery(`select id from biz_tags where status='启用'.*for update`).WithArgs(int64(3), int64(8)).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3).AddRow(8))
 	mock.ExpectExec(`insert into biz_creator_discovery_identities.*`).WithArgs(snapshot.ChannelID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`(?s)select resource_id from biz_creator_discovery_identities.*for update`).WithArgs(snapshot.ChannelID).WillReturnRows(sqlmock.NewRows([]string{"resource_id"}).AddRow(72))
 	mock.ExpectQuery(`(?s)select id from biz_resources where id=\?.*for update`).WithArgs(int64(72), snapshot.ChannelID, snapshot.ProfileURL, snapshot.ProfileURL+"/", strings.Replace(snapshot.ProfileURL, "www.", "", 1), strings.Replace(snapshot.ProfileURL, "www.", "", 1)+"/").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(72))
+	mock.ExpectExec(`(?s)update biz_resources set.*avatar_url=if\(trim\(avatar_url\)=''.*industry=if\(trim\(industry\)=''.*where id=\?`).
+		WithArgs(snapshot.AvatarURL, snapshot.AvatarURL, input.Country, input.Language, input.Industry, input.Category, int64(72)).WillReturnResult(sqlmock.NewResult(0, 1))
+	for _, tagID := range []int64{3, 8} {
+		mock.ExpectExec(`insert into biz_resource_tags.*on duplicate key update`).WithArgs(int64(72), tagID).WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	mock.ExpectExec(`(?s)update biz_resources r join.*r.tier=if\(trim\(r.tier\)<>''.*where r.id=\?`).WithArgs(int64(72), int64(72)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`update biz_creator_discovery_identities`).WithArgs(int64(72), snapshot.ChannelID).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`(?s)update biz_creator_discovery_candidates.*status='approved'`).WithArgs(int64(72), input.Country, input.Language, input.Note, input.EvidenceURL, 7, int64(12)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)update biz_creator_discovery_candidates.*status='approved'`).WithArgs(int64(72), input.Country, input.Language, input.Industry, input.Category, "[3,8]", input.Note, input.EvidenceURL, 7, int64(12)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	result, err := newApp(db, Config{}).reviewCreatorDiscoveryCandidate(context.Background(), 7, input)
 	if err != nil || result.ResourceID != 72 || !result.Reused {
@@ -197,21 +213,44 @@ func TestCreatorDiscoveryReviewRejectInvalidatesRecommendation(t *testing.T) {
 	}
 }
 
+func TestCreatorDiscoveryReviewRejectsUnavailableResourceTagsBeforeImport(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	input := discoveryReviewTestInput()
+	input.TagIDs = []int64{3, 999}
+	expectDiscoveryCandidateLock(t, mock, "pending", "completed", nil, discoveryReviewTestSnapshot())
+	// The taxonomy lookup excludes nonexistent and disabled tags. No resource
+	// or identity may be inserted when even one selected tag is unavailable.
+	mock.ExpectQuery(`select id from biz_tags where status='启用'.*for update`).
+		WithArgs(int64(3), int64(999)).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3))
+	mock.ExpectRollback()
+	_, err = newApp(db, Config{}).reviewCreatorDiscoveryCandidate(context.Background(), 7, input)
+	requireDiscoveryReviewError(t, err, http.StatusBadRequest)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreatorDiscoveryImportRollsBackResourceWhenPostsFail(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()
 	snapshot := discoveryReviewTestSnapshot()
 	snapshot.Warning = "近期作品只采集到部分结果"
 	input := discoveryReviewTestInput()
+	input.Industry, input.Category = "移动产品评测", "科技"
 	expectDiscoveryCandidateLock(t, mock, "pending", "completed", nil, snapshot)
 	mock.ExpectExec(`insert into biz_creator_discovery_identities`).WithArgs(snapshot.ChannelID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)select resource_id from biz_creator_discovery_identities.*for update`).WithArgs(snapshot.ChannelID).WillReturnRows(sqlmock.NewRows([]string{"resource_id"}).AddRow(nil))
 	mock.ExpectQuery(`(?s)select id from biz_resources.*platform='YouTube'.*for update`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`(?s)insert into biz_resources.*'观察中'.*'YouTube Data API',0,\?,'待核实'`).
-		WithArgs(snapshot.Name, input.Country, input.Language, *snapshot.Followers, *snapshot.Followers,
-			snapshot.ChannelID, snapshot.Handle, snapshot.ProfileURL, "", snapshot.TotalViews, snapshot.VideoCount,
+		WithArgs(snapshot.Name, input.Country, input.Language, input.Industry, input.Category, *snapshot.Followers, *snapshot.Followers,
+			snapshot.ChannelID, snapshot.Handle, snapshot.ProfileURL, snapshot.AvatarURL, snapshot.AvatarURL, snapshot.TotalViews, snapshot.VideoCount,
 			calcLevel(0), sqlmock.AnyArg(), "部分成功", snapshot.Warning, parsePlatformTime(snapshot.CollectedAt)).
 		WillReturnResult(sqlmock.NewResult(73, 1))
+	mock.ExpectExec(`(?s)update biz_resources r join.*where r.id=\?`).WithArgs(int64(73), int64(73)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`update biz_creator_discovery_identities`).WithArgs(int64(73), snapshot.ChannelID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`insert into biz_resource_platform_posts`).WillReturnError(errors.New("posts write failed"))
 	mock.ExpectRollback()

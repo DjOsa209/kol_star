@@ -56,13 +56,13 @@ func expectDiscoveryRecommendationInputs(t *testing.T, mock sqlmock.Sqlmock, mod
 	}
 	mock.ExpectQuery(`(?s)select enabled, content.*where rule_type = 'ai_model'`).
 		WillReturnRows(sqlmock.NewRows([]string{"enabled", "content"}).AddRow(1, string(content)))
-	rows := sqlmock.NewRows([]string{"id", "job_id", "channel_id", "status", "resource_id", "country", "language", "note", "evidence_url", "snapshot"})
+	rows := sqlmock.NewRows([]string{"id", "job_id", "channel_id", "status", "resource_id", "country", "language", "industry", "category", "tag_ids", "note", "evidence_url", "snapshot"})
 	for _, candidate := range candidates {
 		raw, err := json.Marshal(candidate.Snapshot)
 		if err != nil {
 			t.Fatal(err)
 		}
-		rows.AddRow(candidate.ID, candidate.JobID, candidate.ChannelID, candidate.Status, candidate.ResourceID, candidate.Country, candidate.Language, candidate.Note, candidate.EvidenceURL, string(raw))
+		rows.AddRow(candidate.ID, candidate.JobID, candidate.ChannelID, candidate.Status, candidate.ResourceID, candidate.Country, candidate.Language, candidate.Industry, candidate.Category, `[]`, candidate.Note, candidate.EvidenceURL, string(raw))
 	}
 	mock.ExpectQuery(`from biz_creator_discovery_candidates where job_id=\? order by id`).WithArgs(11).WillReturnRows(rows)
 	for _, candidate := range candidates {

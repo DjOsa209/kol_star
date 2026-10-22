@@ -137,6 +137,15 @@ func TestCreatorRecommendEndpointRequiresSuccessfulModel(t *testing.T) {
 					if candidate["estimatedCost"] != nil || candidate["quoteStatus"] != "unknown" {
 						t.Error("invented price sent to model")
 					}
+					if candidate["recentMetrics"] == nil || candidate["legacyMetrics"] != nil {
+						t.Error("model must receive explicit collected sample provenance without legacy averages")
+					}
+					if candidate["id"] == float64(1) && candidate["avgViews"] != float64(50) {
+						t.Errorf("model got a different sample average: %#v", candidate)
+					}
+					if candidate["id"] == float64(2) && (candidate["avgViews"] != nil || candidate["engagementRate"] != nil) {
+						t.Errorf("unknown recent sample must not fall back to stored lifetime metrics: %#v", candidate)
+					}
 				}
 				content := `{"recommendations":[{"id":1,"matchScore":77,"reason":"模型认为科技测评与项目匹配"}]}`
 				if state == "malformed" {
@@ -160,12 +169,16 @@ func TestCreatorRecommendEndpointRequiresSuccessfulModel(t *testing.T) {
 				query.WillReturnRows(sqlmock.NewRows([]string{"enabled", "content"}).AddRow(1, string(config)))
 			}
 			if state != "missing" && state != "disabled" {
-				rows := sqlmock.NewRows([]string{"id", "name", "resourceType", "status", "score", "level", "riskLevel", "followers"})
+				rows := sqlmock.NewRows([]string{"id", "name", "resourceType", "status", "score", "level", "riskLevel", "followers", "avgViews", "engagementRate"})
 				if state != "empty_pool" {
-					rows.AddRow(1, "Creator One", "KOL", "可合作", 95, "A", "低", 10000).
-						AddRow(2, "Creator Two", "KOL", "可合作", 90, "A", "低", 10000)
+					rows.AddRow(1, "Creator One", "KOL", "可合作", 95, "A", "低", 10000, 99999, 0.9).
+						AddRow(2, "Creator Two", "KOL", "可合作", 90, "A", "低", 10000, 88888, 0.8)
 				}
-				mock.ExpectQuery("select id, name, avatar_url").WillReturnRows(rows)
+				mock.ExpectQuery("select id, name, coalesce").WillReturnRows(rows)
+				if state != "empty_pool" {
+					mock.ExpectQuery(resourceRecentMetricsQueryPattern).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 1, 2).
+						WillReturnRows(resourceMetricsTestRows().AddRow(1, 5, 2, 100, 10, nil))
+				}
 			}
 			a := newApp(db, Config{AIModel: AIModelConfig{APIKey: "test-key"}})
 			recorder := httptest.NewRecorder()

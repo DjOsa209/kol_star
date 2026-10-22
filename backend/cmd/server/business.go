@@ -80,7 +80,7 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		        engagement_rate as engagementRate, avg_views as avgViews,
 		        content_types as contentTypes, platform_url as platformUrl,
 		        platform_user_id as platformUserId, platform_handle as platformHandle,
-		        avatar_url as avatarUrl, avatar_remote_url as avatarRemoteUrl,
+		        coalesce(nullif(avatar_url, ''), avatar_remote_url, '') as avatarUrl, avatar_remote_url as avatarRemoteUrl,
 		        umv_month as umvMonth, umv_country as umvCountry, umv_web_source as umvWebSource,
 		        monthly_visits as monthlyVisits, monthly_page_views as monthlyPageViews,
 		        website_bounce_rate as websiteBounceRate,
@@ -104,11 +104,11 @@ func (a *app) businessResources(w http.ResponseWriter, r *http.Request) {
 		writeDBError(w, err)
 		return
 	}
-	if err := a.attachResourceWeeklyDeltas(r.Context(), rows); err != nil {
+	if err := a.attachResourcePlatformAccounts(r.Context(), rows); err != nil {
 		writeDBError(w, err)
 		return
 	}
-	if err := a.attachResourcePlatformAccounts(r.Context(), rows); err != nil {
+	if err := a.attachResourceWeeklyDeltas(r.Context(), rows); err != nil {
 		writeDBError(w, err)
 		return
 	}
@@ -195,6 +195,15 @@ func (a *app) attachResourceWeeklyDeltas(ctx context.Context, rows []map[string]
 				currentAudience = anyFloat64(row["audienceSize"])
 			}
 		}
+		if _, hasSampleScope := row["recentMetrics"]; hasSampleScope {
+			// Historical snapshots do not record a sample or window, so their
+			// content averages cannot be compared with collected-post samples.
+			row["weeklyDeltas"] = map[string]any{
+				"audience": weeklyPercentDelta(currentAudience, anyFloat64(previous["audienceSize"])),
+				"views":    nil, "interactions": nil, "interactionRate": nil,
+			}
+			continue
+		}
 		currentViews := anyFloat64(row["avgViews"])
 		currentInteractions := anyFloat64(row["avgInteractions"])
 		if currentInteractions <= 0 {
@@ -229,7 +238,7 @@ func (a *app) attachResourcePlatformAccounts(ctx context.Context, rows []map[str
 	seen := map[string]bool{}
 	for _, row := range rows {
 		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(row["name"])))
-		if name == "" || seen[name] {
+		if name == "" || name == "<nil>" || seen[name] {
 			continue
 		}
 		seen[name] = true
@@ -237,7 +246,7 @@ func (a *app) attachResourcePlatformAccounts(ctx context.Context, rows []map[str
 		placeholders = append(placeholders, "?")
 	}
 	if len(names) == 0 {
-		return nil
+		return a.attachResourceRecentMetrics(ctx, rows)
 	}
 	accounts, err := a.queryMaps(ctx,
 		`select r.id, lower(trim(r.name)) as resourceName, r.resource_type as resourceType,
@@ -248,26 +257,10 @@ func (a *app) attachResourcePlatformAccounts(ctx context.Context, rows []map[str
 		          then greatest(coalesce(r.umv_month, 0), coalesce(r.monthly_visits, 0), coalesce(r.audience_size, 0))
 		          else coalesce(nullif(r.followers, 0), r.audience_size, 0)
 		        end as platformAudience,
-		        coalesce(nullif(stats.averageViews, 0), r.avg_views, 0) as avgViews,
-		        coalesce(stats.averageInteractions,
-		          round(coalesce(r.avg_views, 0) * case when r.engagement_rate > 1 then r.engagement_rate / 100 else r.engagement_rate end),
-		          0) as avgInteractions,
-		        coalesce(stats.engagementRate, r.engagement_rate, 0) as engagementRate,
-		        coalesce(stats.contentCount, 0) as contentCount,
+		        r.avg_views as avgViews, r.engagement_rate as engagementRate,
+		        r.video_count as videoCount,
 		        volatility.viewVolatility as viewVolatility
 		   from biz_resources r
-		   left join (
-		     select resource_id,
-		            round(avg(view_count)) as averageViews,
-		            round(avg(like_count + comment_count + share_count + save_count)) as averageInteractions,
-		            case when sum(view_count) > 0
-		              then sum(like_count + comment_count + share_count + save_count) / sum(view_count)
-		              else 0 end as engagementRate,
-		            count(*) as contentCount
-		       from biz_resource_platform_posts
-		      where published_at >= date_sub(curdate(), interval 30 day)
-		      group by resource_id
-		   ) stats on stats.resource_id = r.id
 		   left join (
 		     select daily.resource_id,
 		            case when count(*) >= 2 and avg(daily.dailyViews) > 0
@@ -289,6 +282,10 @@ func (a *app) attachResourcePlatformAccounts(ctx context.Context, rows []map[str
 	if err != nil {
 		return err
 	}
+	metricRows := append(append([]map[string]any{}, rows...), accounts...)
+	if err := a.attachResourceRecentMetrics(ctx, metricRows); err != nil {
+		return err
+	}
 	if err := a.attachResourceWeeklyDeltas(ctx, accounts); err != nil {
 		return err
 	}
@@ -296,18 +293,22 @@ func (a *app) attachResourcePlatformAccounts(ctx context.Context, rows []map[str
 	for _, account := range accounts {
 		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(account["resourceName"])))
 		byName[name] = append(byName[name], map[string]any{
-			"resourceId":      account["id"],
-			"platform":        account["platform"],
-			"platformUrl":     account["platformUrl"],
-			"platformHandle":  account["platformHandle"],
-			"contact":         account["contact"],
-			"followers":       account["platformAudience"],
-			"avgViews":        account["avgViews"],
-			"avgInteractions": account["avgInteractions"],
-			"engagementRate":  account["engagementRate"],
-			"contentCount":    account["contentCount"],
-			"viewVolatility":  account["viewVolatility"],
-			"weeklyDeltas":    account["weeklyDeltas"],
+			"resourceId":         account["id"],
+			"platform":           account["platform"],
+			"platformUrl":        account["platformUrl"],
+			"platformHandle":     account["platformHandle"],
+			"contact":            account["contact"],
+			"followers":          account["platformAudience"],
+			"avgViews":           account["avgViews"],
+			"avgInteractions":    account["avgInteractions"],
+			"engagementRate":     account["engagementRate"],
+			"contentCount":       account["contentCount"],
+			"collectedPostCount": account["collectedPostCount"],
+			"videoCount":         account["videoCount"],
+			"recentMetrics":      account["recentMetrics"],
+			"legacyMetrics":      account["legacyMetrics"],
+			"viewVolatility":     account["viewVolatility"],
+			"weeklyDeltas":       account["weeklyDeltas"],
 		})
 	}
 	for _, row := range rows {
@@ -592,7 +593,8 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 	queryArgs := append([]any{}, args...)
 	queryArgs = append(queryArgs, pageSize, offset)
 	rows, err := a.queryMaps(r.Context(),
-		`select p.id, p.resource_id as resourceId, r.name as resourceName, r.avatar_url as resourceAvatarUrl,
+		`select p.id, p.resource_id as resourceId, r.name as resourceName,
+		        coalesce(nullif(r.avatar_url, ''), r.avatar_remote_url, '') as resourceAvatarUrl,
 		        r.platform_handle as platformHandle, p.platform, p.platform_post_id as platformPostId,
 		        p.title, p.description, p.post_url as postUrl,
 		        coalesce(nullif(p.cover_url, ''), nullif(p.cover_remote_url, ''), '') as coverUrl,
@@ -625,7 +627,7 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 		resourceRows, err := a.queryMaps(r.Context(),
 			`select id, name, resource_type as resourceType, country, language, platform,
 			        platform_user_id as platformUserId, platform_handle as platformHandle,
-			        avatar_url as avatarUrl, followers, total_views as totalViews,
+			        coalesce(nullif(avatar_url, ''), avatar_remote_url, '') as avatarUrl, followers, total_views as totalViews,
 			        video_count as videoCount, avg_views as avgViews,
 			        engagement_rate as engagementRate, last_sync_status as lastSyncStatus,
 			        last_sync_error as lastSyncError,
@@ -638,6 +640,10 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(resourceRows) > 0 {
+			if err := a.attachResourceRecentMetrics(r.Context(), resourceRows); err != nil {
+				writeDBError(w, err)
+				return
+			}
 			resource = resourceRows[0]
 		}
 		statsRows, err := a.queryMaps(r.Context(),
@@ -647,7 +653,7 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 			        coalesce(sum(comment_count), 0) as totalComments,
 			        coalesce(sum(share_count), 0) as totalShares,
 			        coalesce(sum(save_count), 0) as totalSaves,
-			        coalesce(round(avg(nullif(view_count, 0))), 0) as avgViews,
+			        avg(view_count) as avgViews,
 			        cast(unix_timestamp(max(published_at)) * 1000 as unsigned) as latestPublishedAt
 			   from biz_resource_platform_posts
 			  where resource_id = ?`,
@@ -659,6 +665,11 @@ func (a *app) businessResourcePosts(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(statsRows) > 0 {
 			stats = statsRows[0]
+			stats["source"] = "collected_posts"
+			stats["coverage"] = "sample"
+			stats["windowDays"] = nil
+			stats["sampleCount"] = stats["postCount"]
+			stats["recentMetrics"] = resource["recentMetrics"]
 		}
 	}
 
@@ -1179,10 +1190,6 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	}
 	totalViews := parseCount(item.Statistics.ViewCount)
 	videoCount := parseCount(item.Statistics.VideoCount)
-	avgViews := int64(0)
-	if videoCount > 0 {
-		avgViews = totalViews / videoCount
-	}
 	avatarRemoteURL := bestThumbnailURL(item.Snippet.Thumbnails)
 	avatarURL := localizeResourceImage(ctx, id, "avatar", avatarRemoteURL)
 	if !isLocalResourceImageURL(avatarURL) {
@@ -1193,13 +1200,13 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 		`update biz_resources set
 		  name = if(? <> '', ?, name),
 		  country = if(country = '' and ? <> '', ?, country),
-		  followers = if(?, ?, followers), total_views = ?, video_count = ?, avg_views = ?,
+		  followers = if(?, ?, followers), total_views = ?, video_count = ?,
 		  platform_user_id = ?, platform_handle = ?, avatar_url = ?,
 		  avatar_remote_url = if(? <> '', ?, avatar_remote_url),
 		  last_sync_at = now()
 		 where id = ?`,
 		resourceName, resourceName, item.Snippet.Country, item.Snippet.Country,
-		subscriberCountAvailable, followers, totalViews, videoCount, avgViews,
+		subscriberCountAvailable, followers, totalViews, videoCount,
 		item.ID, item.Snippet.CustomURL, avatarURL, avatarRemoteURL, avatarRemoteURL, id,
 	)
 	if err != nil {
@@ -1219,10 +1226,11 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 			posts = nil
 		}
 	}
-	if avgViews == 0 && len(posts) > 0 {
-		avgViews = averagePostViews(posts)
+	metricRow := map[string]any{"id": id}
+	if err := a.attachResourceRecentMetrics(ctx, []map[string]any{metricRow}); err != nil {
+		return nil, err
 	}
-	engagementRate := platformPostEngagementRate(posts, followers)
+	avgViews, engagementRate := metricRow["avgViews"], metricRow["engagementRate"]
 	status := "成功"
 	statusMessage := ""
 	if !subscriberCountAvailable {
@@ -1235,29 +1243,33 @@ func (a *app) syncYouTubeResource(ctx context.Context, id int, name, platformURL
 	}
 	_, err = a.DB().ExecContext(ctx,
 		`update biz_resources set
-		  avg_views = ?, engagement_rate = if(? > 0, ?, engagement_rate),
+		  avg_views = coalesce(?, avg_views), engagement_rate = coalesce(?, engagement_rate),
 		  last_sync_status = ?, last_sync_error = ?, last_sync_at = now()
 		 where id = ?`,
-		avgViews, engagementRate, engagementRate, status, statusMessage, id,
+		avgViews, engagementRate, status, statusMessage, id,
 	)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"platform":       "YouTube",
-		"platformUserId": item.ID,
-		"platformHandle": item.Snippet.CustomURL,
-		"name":           resourceName,
-		"followers":      followers,
-		"totalViews":     totalViews,
-		"videoCount":     videoCount,
-		"avgViews":       avgViews,
-		"engagementRate": engagementRate,
-		"avatarUrl":      avatarURL,
-		"warning":        statusMessage,
-		"syncedPosts":    len(posts),
-		"posts":          posts,
-		"syncedAt":       time.Now().Format(time.RFC3339),
+		"platform":           "YouTube",
+		"platformUserId":     item.ID,
+		"platformHandle":     item.Snippet.CustomURL,
+		"name":               resourceName,
+		"followers":          followers,
+		"totalViews":         totalViews,
+		"videoCount":         videoCount,
+		"avgViews":           avgViews,
+		"avgInteractions":    metricRow["avgInteractions"],
+		"engagementRate":     engagementRate,
+		"recentMetrics":      metricRow["recentMetrics"],
+		"contentCount":       metricRow["contentCount"],
+		"collectedPostCount": metricRow["collectedPostCount"],
+		"avatarUrl":          avatarURL,
+		"warning":            statusMessage,
+		"syncedPosts":        len(posts),
+		"posts":              posts,
+		"syncedAt":           time.Now().Format(time.RFC3339),
 	}, nil
 }
 
@@ -2898,7 +2910,7 @@ func (a *app) businessAssistantRecommend(w http.ResponseWriter, r *http.Request)
 	includeWatch := boolField(body, "includeWatch")
 
 	rows, err := a.queryMaps(r.Context(),
-		`select id, name, avatar_url as avatarUrl, resource_type as resourceType, country, language, platform,
+		`select id, name, coalesce(nullif(avatar_url, ''), avatar_remote_url, '') as avatarUrl, resource_type as resourceType, country, language, platform,
 		        industry, category, content_types as contentTypes, status, followers,
 		        engagement_rate as engagementRate, avg_views as avgViews, score, level,
 		        risk_level as riskLevel, owner, notes
@@ -2911,7 +2923,10 @@ func (a *app) businessAssistantRecommend(w http.ResponseWriter, r *http.Request)
 		writeDBError(w, err)
 		return
 	}
-
+	if err := a.attachResourceRecentMetrics(r.Context(), rows); err != nil {
+		writeDBError(w, err)
+		return
+	}
 	recommendations, filtered := buildLocalRecommendations(rows, parsed, includeWatch)
 	message := "资源库暂无符合筛选条件的候选，请调整需求后重试。"
 	modelInvoked := false
@@ -2967,33 +2982,37 @@ func buildLocalRecommendations(rows []map[string]any, parsed map[string]any, inc
 		// brief; a formula based on followers/grade cannot prove unaffordability.
 		priority := recommendationPriority(score)
 		recommendations = append(recommendations, map[string]any{
-			"id":             row["id"],
-			"name":           row["name"],
-			"avatarUrl":      row["avatarUrl"],
-			"resourceType":   row["resourceType"],
-			"country":        row["country"],
-			"language":       row["language"],
-			"platform":       row["platform"],
-			"industry":       row["industry"],
-			"category":       row["category"],
-			"contentTypes":   row["contentTypes"],
-			"status":         row["status"],
-			"level":          row["level"],
-			"score":          row["score"],
-			"riskLevel":      row["riskLevel"],
-			"followers":      row["followers"],
-			"engagementRate": row["engagementRate"],
-			"avgViews":       row["avgViews"],
-			"owner":          row["owner"],
-			"notes":          row["notes"],
-			"estimatedCost":  nil,
-			"quoteStatus":    "unknown",
-			"matchScore":     score,
-			"priority":       priority,
-			"reason":         strings.Join(reasons, "；"),
-			"hitRules":       reasons,
-			"downReasons":    downgrades,
-			"riskTip":        riskTip(row),
+			"id":                 row["id"],
+			"name":               row["name"],
+			"avatarUrl":          row["avatarUrl"],
+			"resourceType":       row["resourceType"],
+			"country":            row["country"],
+			"language":           row["language"],
+			"platform":           row["platform"],
+			"industry":           row["industry"],
+			"category":           row["category"],
+			"contentTypes":       row["contentTypes"],
+			"status":             row["status"],
+			"level":              row["level"],
+			"score":              row["score"],
+			"riskLevel":          row["riskLevel"],
+			"followers":          row["followers"],
+			"engagementRate":     row["engagementRate"],
+			"avgViews":           row["avgViews"],
+			"avgInteractions":    row["avgInteractions"],
+			"recentMetrics":      row["recentMetrics"],
+			"contentCount":       row["contentCount"],
+			"collectedPostCount": row["collectedPostCount"],
+			"owner":              row["owner"],
+			"notes":              row["notes"],
+			"estimatedCost":      nil,
+			"quoteStatus":        "unknown",
+			"matchScore":         score,
+			"priority":           priority,
+			"reason":             strings.Join(reasons, "；"),
+			"hitRules":           reasons,
+			"downReasons":        downgrades,
+			"riskTip":            riskTip(row),
 		})
 	}
 	sortRecommendationRows(recommendations)

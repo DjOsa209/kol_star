@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -9,6 +10,31 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func TestCreatorDiscoveryCandidatesRetainReviewedClassification(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows := sqlmock.NewRows([]string{"id", "job_id", "channel_id", "status", "resource_id", "country", "language", "industry", "category", "tag_ids", "note", "evidence_url", "snapshot"}).
+		AddRow(1, 11, "channel", "approved", 101, "伊拉克", "阿拉伯语", "消费电子", "科技", `[6,7]`, "公开作品已核对", "https://www.youtube.com/channel/channel", `{}`).
+		AddRow(2, 11, "legacy", "approved", 102, "伊拉克", "阿拉伯语", "", "", `[]`, "旧记录", "https://www.youtube.com/channel/legacy", `{}`)
+	mock.ExpectQuery(`from biz_creator_discovery_candidates where job_id=\? order by id`).WithArgs(11).WillReturnRows(rows)
+	candidates, err := newApp(db, Config{}).creatorDiscoveryCandidates(context.Background(), 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 || candidates[0].Industry != "消费电子" || candidates[0].Category != "科技" || len(candidates[0].TagIDs) != 2 || candidates[0].TagIDs[1] != 7 {
+		t.Fatalf("reviewed classification was lost: %+v", candidates)
+	}
+	if candidates[1].TagIDs == nil || len(candidates[1].TagIDs) != 0 {
+		t.Fatal("legacy candidate must expose an empty tag list")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestCreatorDiscoveryOnlyAcceptsBriefAndKeepsStrategyServerSide(t *testing.T) {
 	in := creatorDiscoveryInput{Market: "美国", Query: " 伊拉克手机达人 ", Queries: []string{"client-injected keywords"}, MaxCandidates: 1000}

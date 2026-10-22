@@ -136,13 +136,16 @@ Marketing feedback is now submitted independently by IMC, brand, user, media and
 
 ## AI creator discovery and recommendation
 
-For an existing database, apply [migration 055](migrations/055_creator_discovery.sql) before deploying the updated API and frontend, then restart the API:
+For an existing database, apply [migration 055](migrations/055_creator_discovery.sql) and [migration 056](migrations/056_creator_discovery_resource_alignment.sql) before deploying the updated API and frontend, then restart the API:
 
 ```bash
 mysql -uroot -p < migrations/055_creator_discovery.sql
+mysql -uroot -p < migrations/056_creator_discovery_resource_alignment.sql
 ```
 
 New installations already receive these tables from `migrations/all.sql`. The migration adds discovery jobs, candidate snapshots and a stable platform identity mapping for duplicate-safe resource imports. It does not seed creator data.
+
+Migration 056 stores reviewed industry, category and tag IDs on candidates. It also fills missing avatars and audience tiers only for approved discovery imports whose current channel identity still matches; existing nonempty values are preserved. It can be rerun safely. Classification and tags are confirmed from evidence during review, not inferred by the migration.
 
 Configure the existing integrations before use:
 
@@ -158,6 +161,10 @@ The unified **AI 推荐** entry accepts a natural-language requirement. Users do
 The configured model plans one to three content searches from that requirement. The current discovery provider is **YouTube Data API v3**: it searches public videos, identifies their authors, and collects channel details, available metrics, recent works and source URLs for up to 12 distinct channels per job. These snapshots are stored as `pending` candidates. The model then evaluates the collected candidates and automatically produces recommendations; prior approval or entry in the resource library is not required. This implementation covers YouTube discovery, not all websites or social platforms. Missing configuration, failed provider calls and unusable model responses produce explicit errors or partial results rather than mock creators or rule-generated recommendations.
 
 Human review follows the recommendation. Before importing a candidate, the operator confirms the market, content language and topic, supplies a review note, and selects evidence from that candidate's collected profile or works. Approval creates a resource with status `观察中`, score `0`, level `D` and risk `待核实`; pricing remains unconfirmed. A stable YouTube channel identity prevents duplicate imports across jobs, and an existing resource's business fields are preserved. Approval retains the current AI assessment and links the candidate to its resource; rejection invalidates the saved recommendation so it can be regenerated without that candidate. Discovery and recommendation alone never write a formal resource.
+
+Review optionally accepts `industry`, `category` and `tagIds`. Only existing enabled resource tags are accepted; invalid tags reject the transaction. New resources use type `达人`, retain both avatar URLs and receive the library's audience tier (`头部` above 1 million followers, `腰部` from 100,000 through 1 million, otherwise `尾部`; unknown audience stays unclassified). This tier is distinct from the business score's `level`. Reusing an existing resource fills empty fields and unions tags without replacing curated values. `GET /business/resources/tag-options` provides enabled tag choices to users with resource-library access; tag creation and management retain their separate permissions.
+
+Resource lists, profiles and library recommendation candidates share `recentMetrics`: counters on collected works published within the rolling 30-day window, with `coverage: "sample"`, sample count, window bounds and collection time. Averages include actual zero values; absent samples return null rather than a lifetime average. Engagement rate is the sum of available interaction counters divided by sampled views, and is unknown when views are zero. These are observed cumulative counters on sampled works, not views accrued during the window or a complete inventory of channel activity. `videoCount` is the channel's public total, `collectedPostCount` is stored works, and `contentCount` is the recent sample count. Legacy manual/provider averages remain separately labeled with unknown scope; weekly comparisons of incompatible averages are omitted.
 
 All job operations and candidate reviews check the authenticated owner's user ID and require access to the creator recommendation menu (`/business/assistant`). Import approval additionally requires resource-library menu access (`/business/resources`). Candidate IDs, source evidence and resource permissions are checked on the server. Discovery request and response bodies are omitted from system request logs, as with existing recommendation endpoints.
 

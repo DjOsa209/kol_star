@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { fieldLabel as t } from "@/utils/fieldI18n";
+import { getResourceList, getResourceTagOptions } from "@/api/business";
+import { resourceAvatarCandidates } from "../resources/resourcePresentation";
 import {
   cancelDiscoveryJob,
   createDiscoveryJob,
@@ -35,6 +37,12 @@ const filter = ref("all");
 const drawerVisible = ref(false);
 const selectedCandidateId = ref<number | null>(null);
 const brokenImages = reactive<Record<string, boolean>>({});
+const taxonomyLoading = ref(false);
+const taxonomyError = ref("");
+const taxonomyLoaded = ref(false);
+const industryOptions = ref<string[]>([]);
+const categoryOptions = ref<string[]>([]);
+const tags = ref<{ id: number; name: string; status: string }[]>([]);
 const form = reactive({
   query: ""
 });
@@ -43,6 +51,9 @@ const review = reactive({
   language: "",
   note: "",
   evidenceUrl: "",
+  industry: "",
+  category: "",
+  tagIds: [] as number[],
   topicConfirmed: false
 });
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -94,6 +105,44 @@ const validReview = computed(
     safeUrl(review.evidenceUrl) &&
     review.topicConfirmed
 );
+const reviewTagOptions = computed(() =>
+  tags.value.filter(
+    tag => tag.status === "启用" || review.tagIds.includes(tag.id)
+  )
+);
+
+async function loadTaxonomy() {
+  if (taxonomyLoaded.value || taxonomyLoading.value) return;
+  taxonomyLoading.value = true;
+  taxonomyError.value = "";
+  const results = await Promise.allSettled([
+    getResourceTagOptions(),
+    getResourceList({ currentPage: 1, pageSize: 200 })
+  ]);
+  try {
+    if (results[0].status === "fulfilled") {
+      tags.value = check(results[0].value) || [];
+    } else throw results[0].reason;
+    if (results[1].status === "fulfilled") {
+      const rows = check(results[1].value)?.list || [];
+      const values = (key: string) =>
+        [
+          ...new Set<string>(
+            rows.map(row => String(row[key] || "").trim()).filter(Boolean)
+          )
+        ].sort();
+      industryOptions.value = values("industry");
+      categoryOptions.value = values("category");
+    }
+    taxonomyLoaded.value = true;
+  } catch {
+    taxonomyError.value = t(
+      "分类与标签选项暂未加载，请重试。行业和资源领域也可手动填写。"
+    );
+  } finally {
+    taxonomyLoading.value = false;
+  }
+}
 
 function safeUrl(value?: string) {
   if (!value) return "";
@@ -223,6 +272,7 @@ async function cancelJob() {
   }
 }
 function openReview(candidate: DiscoveryCandidate) {
+  void loadTaxonomy();
   selectedCandidateId.value = candidate.id;
   Object.assign(review, {
     country:
@@ -235,6 +285,9 @@ function openReview(candidate: DiscoveryCandidate) {
         : candidate.snapshot.language || ""),
     note: candidate.note || "",
     evidenceUrl: candidate.evidenceUrl || candidate.snapshot.profileUrl || "",
+    industry: candidate.industry || "",
+    category: candidate.category || "",
+    tagIds: [...(candidate.tagIds || [])],
     topicConfirmed: candidate.status === "approved"
   });
   reviewError.value = "";
@@ -250,6 +303,13 @@ async function submitReview(action: "approve" | "reject") {
   }
   if (action === "reject" && !review.note.trim()) {
     reviewError.value = t("请填写排除原因，保留审核记录。");
+    return;
+  }
+  if (
+    Array.from(review.industry).length > 128 ||
+    Array.from(review.category).length > 128
+  ) {
+    reviewError.value = t("行业和资源领域最多填写 128 个字。");
     return;
   }
   reviewing.value = true;
@@ -316,7 +376,18 @@ function recommendationPosts(item: Record<string, any>): DiscoveryPost[] {
   return recommendationSnapshot(item)?.recentPosts || item.recentPosts || [];
 }
 function recommendationAvatar(item: Record<string, any>) {
-  return safeUrl(recommendationSnapshot(item)?.avatarUrl || item.avatarUrl);
+  return (
+    resourceAvatarCandidates(recommendationSnapshot(item) || item).find(
+      url => !brokenImages[url]
+    ) || ""
+  );
+}
+function candidateAvatar(candidate: DiscoveryCandidate) {
+  return (
+    resourceAvatarCandidates(candidate.snapshot).find(
+      url => !brokenImages[url]
+    ) || ""
+  );
 }
 function recommendationStatus(item: Record<string, any>) {
   return candidateFor(item)?.status || "pending";
@@ -833,14 +904,11 @@ onBeforeUnmount(() => {
                 <div class="candidate-top">
                   <div class="avatar">
                     <img
-                      v-if="
-                        safeUrl(candidate.snapshot.avatarUrl) &&
-                        !brokenImages[candidate.snapshot.avatarUrl]
-                      "
-                      :src="candidate.snapshot.avatarUrl"
+                      v-if="candidateAvatar(candidate)"
+                      :src="candidateAvatar(candidate)"
                       :alt="candidate.snapshot.name"
                       loading="lazy"
-                      @error="brokenImages[candidate.snapshot.avatarUrl] = true"
+                      @error="brokenImages[candidateAvatar(candidate)] = true"
                     /><IconifyIconOnline v-else icon="ri:user-line" />
                   </div>
                   <div class="candidate-identity">
@@ -1132,6 +1200,58 @@ onBeforeUnmount(() => {
                   maxlength="64"
                   :placeholder="t('如：阿拉伯语')"
               /></el-form-item>
+            </div>
+            <div class="review-form-row">
+              <el-form-item :label="t('行业')"
+                ><el-select
+                  v-model="review.industry"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  :placeholder="t('选择或输入行业')"
+                  ><el-option
+                    v-for="value in industryOptions"
+                    :key="value"
+                    :value="value"
+                    :label="value" /></el-select
+              ></el-form-item>
+              <el-form-item :label="t('资源领域')"
+                ><el-select
+                  v-model="review.category"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  :placeholder="t('选择或输入资源领域')"
+                  ><el-option
+                    v-for="value in categoryOptions"
+                    :key="value"
+                    :value="value"
+                    :label="value" /></el-select
+              ></el-form-item>
+            </div>
+            <el-form-item :label="t('资源标签')"
+              ><el-select
+                v-model="review.tagIds"
+                multiple
+                filterable
+                clearable
+                collapse-tags
+                collapse-tags-tooltip
+                :multiple-limit="50"
+                :loading="taxonomyLoading"
+                :placeholder="t('选择已有资源标签')"
+                ><el-option
+                  v-for="tag in reviewTagOptions"
+                  :key="tag.id"
+                  :value="tag.id"
+                  :label="tag.name"
+                  :disabled="tag.status !== '启用'" /></el-select
+            ></el-form-item>
+            <div v-if="taxonomyError" class="notice">
+              <span>{{ taxonomyError }}</span
+              ><el-button text @click="loadTaxonomy">{{ t("重试") }}</el-button>
             </div>
             <el-form-item :label="t('核实证据链接')" required
               ><el-input

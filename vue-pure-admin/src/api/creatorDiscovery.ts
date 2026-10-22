@@ -31,6 +31,7 @@ export interface DiscoverySnapshot {
   handle: string;
   profileUrl: string;
   avatarUrl?: string;
+  avatarRemoteUrl?: string;
   description?: string;
   country?: string;
   language?: string;
@@ -53,6 +54,9 @@ export interface DiscoveryCandidate {
   language?: string;
   note?: string;
   evidenceUrl?: string;
+  industry?: string;
+  category?: string;
+  tagIds?: number[];
   snapshot: DiscoverySnapshot;
 }
 
@@ -130,6 +134,9 @@ export const reviewDiscoveryCandidate = (data: {
   note: string;
   evidenceUrl: string;
   topicConfirmed: boolean;
+  industry?: string;
+  category?: string;
+  tagIds?: number[];
 }) =>
   http.request<Result<{ resourceId?: number; status: string }>>(
     "post",

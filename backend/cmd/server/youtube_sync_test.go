@@ -27,7 +27,7 @@ func TestYouTubeSyncSavesFollowersBeforeFetchingPosts(t *testing.T) {
 	mock.ExpectExec("update biz_resources set").
 		WithArgs(
 			"diag", "diag", "", "",
-			true, int64(123456), int64(1000000), int64(10), int64(100000),
+			true, int64(123456), int64(1000000), int64(10),
 			"UCdiag", "@diag", "", "", "", 42,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -39,8 +39,10 @@ func TestYouTubeSyncSavesFollowersBeforeFetchingPosts(t *testing.T) {
 	mock.ExpectQuery("select sync_posts, post_limit from biz_platform_sync_settings").
 		WithArgs("YouTube").
 		WillReturnRows(sqlmock.NewRows([]string{"sync_posts", "post_limit"}).AddRow(1, 25))
+	mock.ExpectQuery(resourceRecentMetricsQueryPattern).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 42).
+		WillReturnRows(resourceMetricsTestRows())
 	mock.ExpectExec("update biz_resources set").
-		WithArgs(int64(100000), float64(0), float64(0), "部分成功", "YouTube 账号资料已更新，但作品列表同步失败：YouTube API 请求失败：{\"error\":{\"message\":\"post sync failed\"}}", 42).
+		WithArgs(nil, nil, "部分成功", "YouTube 账号资料已更新，但作品列表同步失败：YouTube API 请求失败：{\"error\":{\"message\":\"post sync failed\"}}", 42).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	fakeAPI := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +82,9 @@ func TestYouTubeSyncSavesFollowersBeforeFetchingPosts(t *testing.T) {
 	if result["warning"] == "" {
 		t.Fatal("playlist failure must be returned as a profile synchronization warning")
 	}
+	if result["avgViews"] != nil || result["engagementRate"] != nil || result["contentCount"] != int64(0) {
+		t.Fatalf("missing collected posts must not become a lifetime average: %#v", result)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +111,7 @@ func TestYouTubeSyncResolvesLegacyCustomChannelURLFromPage(t *testing.T) {
 	mock.ExpectQuery("select content from biz_governance_rules").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("update biz_resources set").
 		WithArgs(
-			"Legacy Creator", "Legacy Creator", "", "", true, int64(88000), int64(1000), int64(10), int64(100),
+			"Legacy Creator", "Legacy Creator", "", "", true, int64(88000), int64(1000), int64(10),
 			"UClegacy", "@legacy_creator", "", "", "", 44,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -115,8 +120,10 @@ func TestYouTubeSyncResolvesLegacyCustomChannelURLFromPage(t *testing.T) {
 	mock.ExpectExec("update biz_resources r").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("select sync_posts, post_limit from biz_platform_sync_settings").WithArgs("YouTube").
 		WillReturnRows(sqlmock.NewRows([]string{"sync_posts", "post_limit"}).AddRow(0, 25))
+	mock.ExpectQuery(resourceRecentMetricsQueryPattern).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 44).
+		WillReturnRows(resourceMetricsTestRows().AddRow(44, 6, 2, 400, 20, nil))
 	mock.ExpectExec("update biz_resources set").
-		WithArgs(int64(100), float64(0), float64(0), "成功", "", 44).
+		WithArgs(float64(200), float64(0.05), "成功", "", 44).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	fakeAPI := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +172,7 @@ func TestYouTubeSyncPreservesFollowersWhenSubscriberCountIsHidden(t *testing.T) 
 	mock.ExpectExec("update biz_resources set").
 		WithArgs(
 			"hidden", "hidden", "", "",
-			false, int64(0), int64(1000), int64(10), int64(100),
+			false, int64(0), int64(1000), int64(10),
 			"UChidden", "@hidden", "", "", "", 43,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -177,8 +184,10 @@ func TestYouTubeSyncPreservesFollowersWhenSubscriberCountIsHidden(t *testing.T) 
 	mock.ExpectQuery("select sync_posts, post_limit from biz_platform_sync_settings").
 		WithArgs("YouTube").
 		WillReturnRows(sqlmock.NewRows([]string{"sync_posts", "post_limit"}).AddRow(0, 25))
+	mock.ExpectQuery(resourceRecentMetricsQueryPattern).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), 43).
+		WillReturnRows(resourceMetricsTestRows())
 	mock.ExpectExec("update biz_resources set").
-		WithArgs(int64(100), float64(0), float64(0), "部分成功", "YouTube 频道已隐藏订阅数，已保留原粉丝数", 43).
+		WithArgs(nil, nil, "部分成功", "YouTube 频道已隐藏订阅数，已保留原粉丝数", 43).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	fakeAPI := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

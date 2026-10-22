@@ -7,6 +7,15 @@ import * as XLSX from "xlsx";
 import CooperationTypeTags from "@/components/CooperationTypeTags/index.vue";
 import PlatformIconBadge from "@/components/PlatformIconBadge/index.vue";
 import { fieldLabel } from "@/utils/fieldI18n";
+import {
+  recentMetric,
+  recentSampleCount,
+  resourceAvatarCandidates,
+  resolveResourceTagIds,
+  sampleMetricText,
+  sampleSummary,
+  type ResourceTagReference
+} from "./resourcePresentation";
 import { buildRecentCooperationWorks } from "./recentWorks";
 import ProductDiscovery from "./ProductDiscovery.vue";
 import {
@@ -21,7 +30,7 @@ import {
   getResourceExtraFields,
   importResources,
   translateResources,
-  getTagList,
+  getResourceTagOptions,
   createTag,
   getCooperationList,
   getProjectList,
@@ -101,6 +110,7 @@ const workbookSheets = ref<any[]>([]);
 const selectedSheets = ref<string[]>([]);
 const importFileName = ref("");
 const tagOptions = ref<any[]>([]);
+const originalResourceTags = ref<ResourceTagReference[]>([]);
 const extraFieldDefinitions = ref<any[]>([]);
 const translatingPage = ref(false);
 const translationWarningShown = ref(false);
@@ -142,16 +152,16 @@ const defaultPlatformOptions = [
 ];
 const profileMetricDefinitions = [
   { key: "followers", label: "粉丝量", icon: "ri:user-3-line" },
-  { key: "views", label: "近30天平均播放量", icon: "ri:play-circle-line" },
-  { key: "interactions", label: "近30天平均互动量", icon: "ri:chat-3-line" },
+  { key: "views", label: "近30天样本平均播放", icon: "ri:play-circle-line" },
+  { key: "interactions", label: "近30天样本平均互动", icon: "ri:chat-3-line" },
   {
     key: "interactionRate",
-    label: "近30天平均互动率",
+    label: "近30天样本互动率",
     icon: "ri:heart-3-line"
   },
   {
     key: "contentCount",
-    label: "近30天内容发布数",
+    label: "近30天样本数",
     icon: "ri:file-list-3-line"
   }
 ];
@@ -411,10 +421,13 @@ function platformAccounts(row: any) {
       platformHandle: row.platformHandle,
       contact: row.contact,
       followers: resourceAudience(row),
-      avgViews: numberValue(row.avgViews),
-      avgInteractions: avgInteractions(row),
-      engagementRate: numberValue(row.engagementRate),
-      contentCount: numberValue(row.videoCount),
+      recentMetrics: row.recentMetrics,
+      collectedPostCount: row.collectedPostCount,
+      videoCount: row.videoCount,
+      avgViews: recentMetric(row, "avgViews"),
+      avgInteractions: recentMetric(row, "avgInteractions"),
+      engagementRate: recentMetric(row, "engagementRate"),
+      contentCount: recentSampleCount(row),
       weeklyDeltas: row.weeklyDeltas,
       viewVolatility: row.viewVolatility
     });
@@ -431,6 +444,7 @@ function platformAccounts(row: any) {
 }
 
 function metricDelta(row: any, key: string) {
+  if (key !== "followers" && key !== "audience") return null;
   const aliases: Record<string, string[]> = {
     audience: ["audience", "followers", "visits", "audienceSize"],
     views: ["views", "avgViews", "averageViews"],
@@ -508,10 +522,13 @@ function recentCooperationPosts(row: any) {
 function profileMetricValue(account: any, key: string) {
   if (!account) return "-";
   if (key === "followers") return compactCount(account.followers);
-  if (key === "views") return compactCount(account.avgViews);
-  if (key === "interactions") return compactCount(account.avgInteractions);
-  if (key === "interactionRate") return percentText(account.engagementRate);
-  if (key === "contentCount") return formatCount(account.contentCount);
+  if (key === "views")
+    return sampleMetricText(account, "avgViews", locale.value);
+  if (key === "interactions")
+    return sampleMetricText(account, "avgInteractions", locale.value);
+  if (key === "interactionRate")
+    return sampleMetricText(account, "engagementRate", locale.value);
+  if (key === "contentCount") return String(recentSampleCount(account));
   return "-";
 }
 
@@ -734,7 +751,7 @@ function removePlatformOption(value: string, event?: Event) {
 }
 
 async function loadTags() {
-  const res = await getTagList();
+  const res = await getResourceTagOptions();
   if (res.code === 0) {
     tagOptions.value = res.data.filter(item => item.status === "启用");
   }
@@ -807,10 +824,12 @@ async function ensureTagIds(names: string[]) {
   );
   const tagIds: number[] = [];
   for (const name of normalizedNames) {
-    let tag = tagOptions.value.find(
-      item => String(item.name).toLowerCase() === name.toLowerCase()
+    let resolvedIds = resolveResourceTagIds(
+      name,
+      originalResourceTags.value,
+      tagOptions.value
     );
-    if (!tag) {
+    if (!resolvedIds.length) {
       const res = await createTag({
         name,
         category: "自定义标签",
@@ -822,13 +841,15 @@ async function ensureTagIds(names: string[]) {
         continue;
       }
       await loadTags();
-      tag = tagOptions.value.find(
-        item => String(item.name).toLowerCase() === name.toLowerCase()
+      resolvedIds = resolveResourceTagIds(
+        name,
+        originalResourceTags.value,
+        tagOptions.value
       );
     }
-    if (tag?.id) tagIds.push(Number(tag.id));
+    tagIds.push(...resolvedIds);
   }
-  return tagIds;
+  return [...new Set(tagIds)];
 }
 
 async function loadData() {
@@ -1062,7 +1083,7 @@ function cooperationCpmText(row: any) {
 
 function performanceDeltaText(row: any) {
   const stat = cooperationStats(row);
-  const avgPlatformViews = numberValue(row.avgViews);
+  const avgPlatformViews = recentMetric(row, "avgViews") ?? 0;
   if (stat.count <= 0 || avgPlatformViews <= 0 || stat.totalViews <= 0) {
     return "暂无可比均值";
   }
@@ -1133,8 +1154,14 @@ function mediaAccountSub(row: any) {
     .join(" · ");
 }
 
+function avatarUrl(row: any) {
+  return (
+    resourceAvatarCandidates(row).find(url => !avatarLoadFailed[url]) || ""
+  );
+}
+
 function avatarKey(row: any) {
-  return String(row.id || row.platformUrl || row.name || "");
+  return avatarUrl(row);
 }
 
 function avatarText(row: any) {
@@ -1221,6 +1248,7 @@ function handleSizeChange(size: number) {
 }
 
 function resetForm() {
+  originalResourceTags.value = [];
   editingId.value = null;
   Object.assign(form, {
     name: "",
@@ -1261,14 +1289,17 @@ function openCreate() {
 
 function openEdit(row: any) {
   resetForm();
+  originalResourceTags.value = Array.isArray(row.tags) ? [...row.tags] : [];
   editingId.value = row.id;
   Object.assign(form, row);
   form.resourceType = isMediaResource(row) ? "媒体" : "达人";
   form.followers = /媒体|media/i.test(String(row.resourceType || ""))
     ? numberValue(row.audienceSize)
     : numberValue(row.followers);
-  form.avgViews = numberValue(row.avgViews);
-  form.engagementRate = numberValue(row.engagementRate);
+  form.avgViews = numberValue(row.legacyMetrics?.avgViews ?? row.avgViews);
+  form.engagementRate = numberValue(
+    row.legacyMetrics?.engagementRate ?? row.engagementRate
+  );
   form.score = numberValue(row.score);
   cooperationEditorVisible.value = false;
   dialogVisible.value = true;
@@ -2118,9 +2149,9 @@ onUnmounted(() => {
               <span class="avatar-box compact-avatar">
                 <span class="avatar-letter">{{ avatarText(row) }}</span>
                 <img
-                  v-if="row.avatarUrl && !avatarLoadFailed[avatarKey(row)]"
+                  v-if="avatarUrl(row)"
                   v-show="avatarLoaded[avatarKey(row)]"
-                  :src="row.avatarUrl"
+                  :src="avatarUrl(row)"
                   :alt="row.name"
                   @load="markAvatarLoaded(row)"
                   @error="markAvatarFailed(row)"
@@ -2178,8 +2209,8 @@ onUnmounted(() => {
               </div>
               <div v-if="!isMediaResource(row)" class="metric-row">
                 <div>
-                  <dt>{{ fieldLabel("近30天平均播放量") }}</dt>
-                  <dd>{{ compactCount(row.avgViews) }}</dd>
+                  <dt>{{ fieldLabel("近30天样本平均播放") }}</dt>
+                  <dd>{{ sampleMetricText(row, "avgViews", locale) }}</dd>
                 </div>
                 <span :class="['metric-delta', deltaClass(row, 'views')]">
                   <IconifyIconOnline
@@ -2191,8 +2222,10 @@ onUnmounted(() => {
               </div>
               <div v-if="!isMediaResource(row)" class="metric-row">
                 <div>
-                  <dt>{{ fieldLabel("近30天平均互动量") }}</dt>
-                  <dd>{{ compactCount(avgInteractions(row)) }}</dd>
+                  <dt>{{ fieldLabel("近30天样本平均互动") }}</dt>
+                  <dd>
+                    {{ sampleMetricText(row, "avgInteractions", locale) }}
+                  </dd>
                 </div>
                 <span
                   :class="['metric-delta', deltaClass(row, 'interactions')]"
@@ -2204,9 +2237,7 @@ onUnmounted(() => {
                   {{ deltaText(metricDelta(row, "interactions")) }}
                 </span>
               </div>
-              <p class="weekly-note">
-                * {{ fieldLabel("数据按配置周期刷新，百分比为周环比") }}
-              </p>
+              <p class="weekly-note">* {{ sampleSummary(row, locale) }}</p>
             </dl>
 
             <div class="compact-cooperation">
@@ -2387,20 +2418,32 @@ onUnmounted(() => {
                       </dd>
                     </div>
                     <div>
-                      <dt>{{ fieldLabel("月均播放量") }}</dt>
-                      <dd>{{ formatCount(row.avgViews) }}</dd>
+                      <dt>{{ fieldLabel("近30天样本平均播放") }}</dt>
+                      <dd>{{ sampleMetricText(row, "avgViews", locale) }}</dd>
                     </div>
                     <div>
                       <dt>{{ fieldLabel("平均互动率") }}</dt>
-                      <dd>{{ percentText(row.engagementRate) }}</dd>
+                      <dd>
+                        {{ sampleMetricText(row, "engagementRate", locale) }}
+                      </dd>
                     </div>
                     <div>
                       <dt>{{ fieldLabel("累计平台播放") }}</dt>
                       <dd>{{ formatCount(row.totalViews) }}</dd>
                     </div>
                     <div>
-                      <dt>{{ fieldLabel("已同步内容数") }}</dt>
+                      <dt>{{ fieldLabel("频道总视频数") }}</dt>
                       <dd>{{ formatCount(row.videoCount) }}</dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("已采集作品数") }}</dt>
+                      <dd>
+                        {{ row.collectedPostCount ?? fieldLabel("未知") }}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{{ fieldLabel("近30天样本数") }}</dt>
+                      <dd>{{ recentSampleCount(row) }}</dd>
                     </div>
                     <div>
                       <dt>{{ fieldLabel("合作效果分数") }}</dt>
@@ -2577,9 +2620,9 @@ onUnmounted(() => {
                 <span class="avatar-box">
                   <span class="avatar-letter">{{ avatarText(row) }}</span>
                   <img
-                    v-if="row.avatarUrl && !avatarLoadFailed[avatarKey(row)]"
+                    v-if="avatarUrl(row)"
                     v-show="avatarLoaded[avatarKey(row)]"
-                    :src="row.avatarUrl"
+                    :src="avatarUrl(row)"
                     :alt="row.name"
                     @load="markAvatarLoaded(row)"
                     @error="markAvatarFailed(row)"
@@ -2635,13 +2678,16 @@ onUnmounted(() => {
               </div>
             </template>
           </el-table-column>
-          <el-table-column :label="fieldLabel('月均播放 / 互动')" width="160">
+          <el-table-column
+            :label="fieldLabel('近30天样本播放 / 互动')"
+            width="160"
+          >
             <template #default="{ row }">
               <div class="metric-cell">
-                <strong>{{ formatCount(row.avgViews) }}</strong>
+                <strong>{{ sampleMetricText(row, "avgViews", locale) }}</strong>
                 <span
                   >{{ fieldLabel("互动率") }}
-                  {{ percentText(row.engagementRate) }}</span
+                  {{ sampleMetricText(row, "engagementRate", locale) }}</span
                 >
               </div>
             </template>
@@ -3080,6 +3126,12 @@ onUnmounted(() => {
                 />
               </el-select>
             </el-form-item>
+            <el-form-item :label="fieldLabel('行业')"
+              ><el-input
+                v-model="form.industry"
+                maxlength="128"
+                :placeholder="fieldLabel('填写行业')"
+            /></el-form-item>
             <el-form-item :label="fieldLabel('资源领域')">
               <el-select
                 v-model="form.category"
@@ -3231,20 +3283,20 @@ onUnmounted(() => {
                 class="w-full!"
               />
             </el-form-item>
-            <el-form-item :label="fieldLabel('月均播放量')">
+            <el-form-item :label="fieldLabel('历史录入平均播放（口径未核实）')">
               <el-input-number
                 v-model="form.avgViews"
                 :min="0"
                 class="w-full!"
               />
             </el-form-item>
-            <el-form-item :label="fieldLabel('月均互动量')">
+            <el-form-item :label="fieldLabel('历史录入估算互动（口径未核实）')">
               <el-input
                 :model-value="formatCount(avgInteractions(form))"
                 disabled
               />
             </el-form-item>
-            <el-form-item :label="fieldLabel('互动率（计算月均互动量）')">
+            <el-form-item :label="fieldLabel('历史录入互动率（口径未核实）')">
               <el-input-number
                 v-model="form.engagementRate"
                 :min="0"
@@ -3690,12 +3742,9 @@ onUnmounted(() => {
               avatarText(selectedResource)
             }}</span>
             <img
-              v-if="
-                selectedResource.avatarUrl &&
-                !avatarLoadFailed[avatarKey(selectedResource)]
-              "
+              v-if="avatarUrl(selectedResource)"
               v-show="avatarLoaded[avatarKey(selectedResource)]"
-              :src="selectedResource.avatarUrl"
+              :src="avatarUrl(selectedResource)"
               :alt="selectedResource.name"
               @load="markAvatarLoaded(selectedResource)"
               @error="markAvatarFailed(selectedResource)"
@@ -3745,7 +3794,7 @@ onUnmounted(() => {
             >
             <span
               ><IconifyIconOnline icon="ri:information-line" />
-              数据按周维度更新，百分比为周环比</span
+              {{ sampleSummary(selectedProfileAccount, locale) }}</span
             >
           </div>
           <div class="profile-platform-tabs">
@@ -4114,41 +4163,42 @@ onUnmounted(() => {
 
 .discovery-mode-tabs {
   display: flex;
-  align-items: center;
   gap: 10px;
-  margin: 0 0 16px;
+  align-items: center;
   padding: 8px;
+  margin: 0 0 16px;
+  background: #fff;
   border: 1px solid #e8e5dc;
   border-radius: 12px;
-  background: #fff;
 }
 
 .discovery-mode-tabs button {
   min-height: 38px;
   padding: 0 20px;
+  font-weight: 700;
+  color: #555852;
+  cursor: pointer;
+  background: transparent;
   border: 0;
   border-radius: 8px;
-  background: transparent;
-  color: #555852;
-  font-weight: 700;
-  cursor: pointer;
 }
 
 .discovery-mode-tabs button.active {
-  background: #d4fb00;
   color: #17181b;
+  background: #d4fb00;
 }
 
 .discovery-mode-tabs span {
   margin-left: auto;
-  color: #878982;
   font-size: 12px;
+  color: #878982;
 }
 
-@media (max-width: 900px) {
+@media (width <= 900px) {
   .discovery-mode-tabs {
     flex-wrap: wrap;
   }
+
   .discovery-mode-tabs span {
     width: 100%;
     margin-left: 8px;
@@ -5610,8 +5660,8 @@ onUnmounted(() => {
 }
 
 .profile-meta-line i {
-  color: #a7b3c8;
   font-style: normal;
+  color: #a7b3c8;
 }
 
 .profile-platform-link {
