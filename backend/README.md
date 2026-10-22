@@ -133,3 +133,32 @@ Default seeded login:
 Apply `migrations/054_ip_workflow_deadlines.sql` before deploying IP request deadlines and Feishu completion reminders. IP feedback has 10 working days after demand submission; marketing feedback has 5 working days after IP review. China mainland holidays **and makeup workdays** are counted from the following day, through 23:59:59 Asia/Shanghai. Verified 2025/2026 calendars are embedded; maintain complete later annual schedules in the hot-reloaded `work_calendar` list in `config.yaml`. Unknown years are explicitly pending rather than assumed weekdays. Old requests retain unknown stage timestamps. See [IP deadline rules, annual calendar maintenance and QA](../docs/ip-request-deadlines.md).
 
 Marketing feedback is now submitted independently by IMC, brand, user, media and PR partners. Each request patches only its selected function under a row lock, uses a per-function version to reject stale writes, and completes only when all five functions submit. The shared 5-working-day deadline does not reset on individual submissions. Completion uses the existing Feishu application channel to notify the authenticated demand creator; the earlier in-app popup and workflow notice polling were removed. This change reuses `marketing_profile` JSON and needs no migration beyond 054. Existing completed requests and historical shared opinions remain readable.
+
+## AI creator discovery and recommendation
+
+For an existing database, apply [migration 055](migrations/055_creator_discovery.sql) before deploying the updated API and frontend, then restart the API:
+
+```bash
+mysql -uroot -p < migrations/055_creator_discovery.sql
+```
+
+New installations already receive these tables from `migrations/all.sql`. The migration adds discovery jobs, candidate snapshots and a stable platform identity mapping for duplicate-safe resource imports. It does not seed creator data.
+
+Configure the existing integrations before use:
+
+- In **系统管理 → 抓取控制 → 平台 API 配置**, supply the YouTube API Key and, when needed, the YouTube proxy. Discovery uses the same effective configuration as platform synchronization, including the `platform_apis.youtube_api_key` and `platform_apis.youtube_proxy_url` configuration fallback.
+- In **AI 模型配置**, enable a model, provide its existing server-side endpoint and credentials, and enable the recommendation feature. The same model configuration serves both search planning and candidate recommendation. Keep real credentials in the deployment configuration or configuration UI; do not include them in README examples, screenshots or logs.
+
+The unified **AI 推荐** entry accepts a natural-language requirement. Users do not need to choose a platform or prepare search terms. The backend create endpoint, `POST /business/creator-discovery/jobs/create`, requires only `query` (up to 2,000 characters), for example:
+
+```json
+{"query":"推荐适合在日本推广新款手机、近期发布过手机评测的达人"}
+```
+
+The configured model plans one to three content searches from that requirement. The current discovery provider is **YouTube Data API v3**: it searches public videos, identifies their authors, and collects channel details, available metrics, recent works and source URLs for up to 12 distinct channels per job. These snapshots are stored as `pending` candidates. The model then evaluates the collected candidates and automatically produces recommendations; prior approval or entry in the resource library is not required. This implementation covers YouTube discovery, not all websites or social platforms. Missing configuration, failed provider calls and unusable model responses produce explicit errors or partial results rather than mock creators or rule-generated recommendations.
+
+Human review follows the recommendation. Before importing a candidate, the operator confirms the market, content language and topic, supplies a review note, and selects evidence from that candidate's collected profile or works. Approval creates a resource with status `观察中`, score `0`, level `D` and risk `待核实`; pricing remains unconfirmed. A stable YouTube channel identity prevents duplicate imports across jobs, and an existing resource's business fields are preserved. Approval retains the current AI assessment and links the candidate to its resource; rejection invalidates the saved recommendation so it can be regenerated without that candidate. Discovery and recommendation alone never write a formal resource.
+
+All job operations and candidate reviews check the authenticated owner's user ID and require access to the creator recommendation menu (`/business/assistant`). Import approval additionally requires resource-library menu access (`/business/resources`). Candidate IDs, source evidence and resource permissions are checked on the server. Discovery request and response bodies are omitted from system request logs, as with existing recommendation endpoints.
+
+Execution currently uses workers inside a **single API process**: at most two jobs execute concurrently, each user can have one active job, and the eight-minute timeout includes waiting for a worker slot. Job records, collected snapshots and completed recommendations are persisted in MySQL, while running workers and cancellation handles remain in memory. On API restart, unfinished jobs become `partial`; saved candidates remain available, but work does not automatically resume. Users can regenerate a recommendation from saved candidates or retry the job, which starts a new planning and collection run. This is not a durable queue or a coordinated multi-instance worker service; deploy one discovery worker process until shared job claiming and recovery are implemented.

@@ -34,12 +34,14 @@ import {
 } from "@/api/business";
 
 import RecommendationWorkbench from "./RecommendationWorkbench.vue";
+import YouTubeDiscoveryWorkbench from "./YouTubeDiscoveryWorkbench.vue";
 import { buildRecentCooperationWorks } from "../resources/recentWorks";
 
 defineOptions({ name: "BusinessAssistant" });
 
 const { locale } = useI18n();
 const isEnglish = computed(() => locale.value === "en");
+const workspaceMode = ref<"library" | "discovery">("discovery");
 
 const loading = ref(false);
 const resultMode = ref<"recent" | "saved">("recent");
@@ -978,7 +980,29 @@ onBeforeUnmount(stopTimer);
 
 <template>
   <div class="assistant-page">
+    <nav class="assistant-workspace-tabs" :aria-label="fieldLabel('推荐方式')">
+      <button
+        type="button"
+        :class="{ active: workspaceMode === 'discovery' }"
+        :aria-pressed="workspaceMode === 'discovery'"
+        @click="workspaceMode = 'discovery'"
+      >
+        <IconifyIconOnline icon="ri:sparkling-line" />
+        {{ fieldLabel("AI 推荐") }}
+      </button>
+      <button
+        type="button"
+        :class="{ active: workspaceMode === 'library' }"
+        :aria-pressed="workspaceMode === 'library'"
+        @click="workspaceMode = 'library'"
+      >
+        <IconifyIconOnline icon="ri:bookmark-line" />
+        {{ fieldLabel("已保存的寻找条件") }}
+      </button>
+    </nav>
+    <YouTubeDiscoveryWorkbench v-if="workspaceMode === 'discovery'" />
     <RecommendationWorkbench
+      v-show="workspaceMode === 'library'"
       :form="form"
       :items="resultCandidates"
       :selected="matchedResourceIds"
@@ -1359,6 +1383,43 @@ onBeforeUnmount(stopTimer);
   padding: 20px 18px 0;
   color: #171717;
   background: #f7f7f5 !important;
+}
+
+.assistant-workspace-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #e1e1df;
+}
+
+.assistant-workspace-tabs button {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  padding: 10px 13px;
+  margin-bottom: -1px;
+  font-size: 13px;
+  color: #656971;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+}
+
+.assistant-workspace-tabs button.active {
+  font-weight: 600;
+  color: #171717;
+  border-bottom-color: #171717;
+}
+
+.assistant-workspace-tabs button:hover {
+  background: #efefec;
+}
+
+.assistant-workspace-tabs button:focus-visible {
+  outline: 2px solid #667d00;
+  outline-offset: 3px;
 }
 
 /* Let the selection bar stick to the real scrollbar, rather than an

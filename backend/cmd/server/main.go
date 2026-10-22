@@ -27,8 +27,10 @@ import (
 )
 
 type app struct {
-	db     atomic.Value
-	config atomic.Value
+	db                      atomic.Value
+	config                  atomic.Value
+	creatorDiscoveryCancels sync.Map
+	creatorDiscoverySlots   chan struct{}
 }
 
 type apiResponse struct {
@@ -70,6 +72,9 @@ func main() {
 	}
 
 	a := newApp(db, cfg)
+	if err := a.interruptStaleCreatorDiscoveryJobs(context.Background()); err != nil {
+		log.Printf("creator discovery unavailable; apply migration 055: %v", err)
+	}
 	if interrupted, err := a.interruptStalePlatformSyncJobs(context.Background()); err != nil {
 		log.Fatalf("interrupt stale platform sync jobs: %v", err)
 	} else if interrupted > 0 {
@@ -96,7 +101,7 @@ func main() {
 }
 
 func newApp(db *sql.DB, cfg Config) *app {
-	a := &app{}
+	a := &app{creatorDiscoverySlots: make(chan struct{}, 2)}
 	a.db.Store(db)
 	a.config.Store(cfg)
 	configureResourceImageHTTPClient(cfg.PlatformAPIs.YouTubeProxyURL)
@@ -277,6 +282,13 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/resources/translate", a.requireMenu("/business/resources", a.translateBusinessResources))
 	mux.HandleFunc("POST /business/resource-posts", a.requireMenu("/business/resource-posts", a.businessResourcePosts))
 	mux.HandleFunc("POST /business/assistant/recommend", a.requireMenu("/business/assistant", a.businessAssistantRecommend))
+	mux.HandleFunc("POST /business/creator-discovery/jobs/create", a.creatorDiscoveryCreate)
+	mux.HandleFunc("POST /business/creator-discovery/jobs/list", a.creatorDiscoveryList)
+	mux.HandleFunc("POST /business/creator-discovery/jobs/detail", a.creatorDiscoveryDetail)
+	mux.HandleFunc("POST /business/creator-discovery/jobs/cancel", a.creatorDiscoveryCancel)
+	mux.HandleFunc("POST /business/creator-discovery/jobs/retry", a.creatorDiscoveryRetry)
+	mux.HandleFunc("POST /business/creator-discovery/candidates/review", a.creatorDiscoveryReview)
+	mux.HandleFunc("POST /business/creator-discovery/jobs/recommend", a.creatorDiscoveryRecommend)
 	mux.HandleFunc("POST /business/recommendations/subscriptions/list", a.recommendationSubscriptionsList)
 	mux.HandleFunc("POST /business/recommendations/subscriptions/save", a.recommendationSubscriptionSave)
 	mux.HandleFunc("POST /business/recommendations/subscriptions/delete", a.recommendationSubscriptionDelete)
@@ -1505,7 +1517,7 @@ func (a *app) withRequestLogging(next http.Handler) http.Handler {
 		}
 		startedAt := time.Now()
 		path := canonicalAPIPath(r.URL.Path)
-		redactRecommendation := strings.HasPrefix(path, "/business/recommendations/") || path == "/business/assistant/recommend"
+		redactRecommendation := strings.HasPrefix(path, "/business/recommendations/") || strings.HasPrefix(path, "/business/creator-discovery/") || path == "/business/assistant/recommend"
 		requestBody := "[recommendation request omitted]"
 		if !redactRecommendation {
 			requestBody = captureRequestBody(r)
