@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { canonicalIPImportHeader, canonicalIPOption } from "@/utils/ipI18n";
 import { useIPLocale } from "@/utils/ipI18n";
+import {
+  parseIPAssetLinks,
+  isIPAssetLinkURL,
+  ipAssetLinksIssue
+} from "@/utils/ipAssetLinks";
 const { ipText, locale } = useIPLocale();
 import IPTranslationNotice from "../components/IPTranslationNotice.vue";
 import {
@@ -27,7 +32,8 @@ import {
   saveIPCase,
   saveIPResource,
   uploadIPFile,
-  type IPResourceInput
+  type IPResourceInput,
+  type IPResourceProfile
 } from "@/api/ip";
 
 const showOriginal = ref(false);
@@ -73,6 +79,13 @@ const types = [
 const legacyTypes = ["体育IP", "动画/影视", "音乐/活动", "电竞"];
 const filterTypes = [...types, ...legacyTypes];
 const statuses = ["可合作", "洽谈中", "待评估", "暂不可合作"];
+const cooperationForms = [
+  "产品定制",
+  "功能联动",
+  "联名周边礼盒",
+  "线上营销",
+  "线下物料及互动"
+];
 const markets = [
   "中国",
   "东南亚",
@@ -118,10 +131,14 @@ const profileFields = [
     label: "合作建议与提醒",
     hint: "联动内容、监修风险等"
   }
-];
-function objectValue(value: unknown): Record<string, string> {
+] satisfies {
+  key: Exclude<keyof IPResourceProfile, "cooperationForms" | "assetLinks">;
+  label: string;
+  hint: string;
+}[];
+function objectValue(value: unknown): IPResourceProfile {
   if (value && typeof value === "object" && !Array.isArray(value))
-    return value as Record<string, string>;
+    return value as IPResourceProfile;
   try {
     const parsed = JSON.parse(String(value || "{}"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -145,7 +162,7 @@ const emptyForm = (): IPResourceInput => ({
   priceMin: null,
   priceMax: null,
   licenseNotes: "",
-  profile: {}
+  profile: { cooperationForms: [] }
 });
 const form = ref<IPResourceInput>(emptyForm());
 const formTypes = computed(() =>
@@ -260,6 +277,27 @@ function arrayValue(value: unknown): string[] {
   } catch {
     return [];
   }
+}
+function cooperationFormsText(item: any): string {
+  const values = arrayValue(objectValue(item.profile).cooperationForms);
+  return values.length
+    ? values.map(value => ipText(value)).join(" / ")
+    : ipText("待补充");
+}
+function assetLinks(item: any): string[] {
+  return parseIPAssetLinks(objectValue(item.profile).assetLinks).filter(
+    isIPAssetLinkURL
+  );
+}
+function parseCooperationForms(value: unknown): string[] {
+  return [
+    ...new Set(
+      String(value || "")
+        .split(/[、,，;；\n/|]+/)
+        .map(canonicalIPOption)
+        .filter(Boolean)
+    )
+  ];
 }
 function penetrationValues(value: unknown): Record<string, number> {
   let parsed = value;
@@ -650,6 +688,11 @@ async function addVisual(event: Event) {
 }
 async function saveManual() {
   const item = form.value;
+  const linkIssue = ipAssetLinksIssue(item.profile.assetLinks);
+  if (linkIssue) {
+    ElMessage.warning(ipText(linkIssue));
+    return;
+  }
   if (!item.name.trim() || !item.ipType || !item.markets.length) {
     ElMessage.warning(ipText("请填写IP名称、类型和覆盖市场"));
     return;
@@ -991,12 +1034,16 @@ async function readImport(event: Event) {
         priceMin: parseMoney(row["基础权益价格下限"]),
         priceMax: parseMoney(row["基础权益价格上限"]),
         licenseNotes: String(row["授权范围与限制"] || "").trim(),
-        profile: Object.fromEntries(
-          profileFields.map(field => [
-            field.key,
-            String(row[field.label] || "").trim()
-          ])
-        )
+        profile: {
+          ...Object.fromEntries(
+            profileFields.map(field => [
+              field.key,
+              String(row[field.label] || "").trim()
+            ])
+          ),
+          cooperationForms: parseCooperationForms(row["可合作形式"]),
+          assetLinks: String(row["素材链接"] || "").trim()
+        }
       };
     });
     importFileName.value = file.name;
@@ -1510,6 +1557,10 @@ onUnmounted(() => {
                 <dd>
                   {{ ipText(displayDrawerDetail.resource.cooperationStatus) }}
                 </dd>
+                <dt>{{ ipText("可合作形式") }}</dt>
+                <dd>
+                  {{ cooperationFormsText(displayDrawerDetail.resource) }}
+                </dd>
               </dl>
             </div>
             <div class="ip-drawer-section">
@@ -1521,6 +1572,16 @@ onUnmounted(() => {
             </div>
             <div class="ip-drawer-section">
               <h3>{{ ipText("可查看资料") }}</h3>
+              <div
+                v-for="(url, index) in assetLinks(displayDrawerDetail.resource)"
+                :key="`${index}:${url}`"
+                class="ip-asset-link"
+              >
+                <a :href="url" target="_blank" rel="noopener noreferrer"
+                  >{{ ipText("素材链接 {0}", [index + 1]) }} ↗</a
+                >
+                <span>{{ url }}</span>
+              </div>
               <div
                 v-for="file in displayDrawerDetail.files.filter(
                   item => item.fileKind !== 'visual'
@@ -1537,6 +1598,7 @@ onUnmounted(() => {
               </div>
               <p
                 v-if="
+                  !assetLinks(displayDrawerDetail.resource).length &&
                   !displayDrawerDetail.files.some(
                     item => item.fileKind !== 'visual'
                   )
@@ -1614,6 +1676,39 @@ onUnmounted(() => {
             </div>
             <p class="ip-muted">
               {{ ipText("供参考，根据具体需求更新；最终以版权方报价为准。") }}
+            </p>
+            <h3>{{ ipText("可合作形式") }}</h3>
+            <p>{{ cooperationFormsText(displayDetail.resource) }}</p>
+          </div>
+          <div class="ip-card">
+            <div class="ip-card-head">
+              <h2>{{ ipText("素材链接") }}</h2>
+              <el-button link @click="editDetail">{{
+                ipText("编辑IP资料")
+              }}</el-button>
+            </div>
+            <p class="ip-muted">
+              {{
+                ipText(
+                  "可填写飞书文档、网盘文件夹或其他素材库链接，按原链接权限访问。"
+                )
+              }}
+            </p>
+            <div
+              v-for="(url, index) in assetLinks(displayDetail.resource)"
+              :key="`${index}:${url}`"
+              class="ip-asset-link"
+            >
+              <a :href="url" target="_blank" rel="noopener noreferrer"
+                >{{ ipText("素材链接 {0}", [index + 1]) }} ↗</a
+              >
+              <span>{{ url }}</span>
+            </div>
+            <p
+              v-if="!assetLinks(displayDetail.resource).length"
+              class="ip-muted"
+            >
+              {{ ipText("暂无素材链接") }}
             </p>
           </div>
           <div class="ip-card">
@@ -1937,6 +2032,23 @@ onUnmounted(() => {
             <div class="ip-card">
               <h2>{{ ipText("商业与授权") }}</h2>
               <div class="ip-form-grid">
+                <label class="ip-span">
+                  {{ ipText("可合作形式") }}
+                  <el-select
+                    v-model="form.profile.cooperationForms"
+                    multiple
+                    clearable
+                    popper-class="ip-option-popper"
+                    :placeholder="ipText('请选择可合作形式（可多选）')"
+                  >
+                    <el-option
+                      v-for="option in cooperationForms"
+                      :key="option"
+                      :value="option"
+                      :label="ipText(option)"
+                    />
+                  </el-select>
+                </label>
                 <label
                   >{{ ipText("基础权益价格范围（参考）") }}
                   <div class="ip-money">
@@ -1975,6 +2087,22 @@ onUnmounted(() => {
             <div class="ip-card">
               <h2>{{ ipText("资料附件") }}</h2>
               <div class="ip-form-grid">
+                <label class="ip-span">
+                  {{ ipText("素材链接（选填）") }}
+                  <el-input
+                    v-model="form.profile.assetLinks"
+                    type="textarea"
+                    :rows="3"
+                    :placeholder="
+                      ipText('每行填写一个HTTP或HTTPS链接，最多20个')
+                    "
+                  />
+                  <small>{{
+                    ipText(
+                      "可填写飞书文档、网盘文件夹或其他素材库链接，按原链接权限访问。"
+                    )
+                  }}</small>
+                </label>
                 <div class="ip-attachment-field">
                   <strong>{{ ipText("IP形象（PNG / JPG / WebP）") }}</strong
                   ><span class="ip-upload"
@@ -2353,6 +2481,23 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.ip-asset-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  overflow-wrap: anywhere;
+}
+
+.ip-asset-link a {
+  color: var(--el-color-primary);
+}
+
+.ip-asset-link span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
 .ip-page :deep(.el-table th.el-table__cell > .cell) {
   display: block;
   word-break: normal;

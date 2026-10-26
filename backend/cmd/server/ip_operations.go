@@ -178,6 +178,49 @@ func ipMapText(values map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
+// Keep the fixed cooperation choices in profile alongside the existing IP data.
+// Missing values remain valid for resources created before this field existed.
+func ipCooperationFormsIssue(profile map[string]any) string {
+	value, present := profile["cooperationForms"]
+	if !present {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	var forms []string
+	if err != nil || json.Unmarshal(encoded, &forms) != nil || forms == nil {
+		return "可合作形式必须为选项列表"
+	}
+	allowed := map[string]bool{"产品定制": true, "功能联动": true, "联名周边礼盒": true, "线上营销": true, "线下物料及互动": true}
+	seen := map[string]bool{}
+	for _, form := range forms {
+		if !allowed[form] || seen[form] {
+			return "可合作形式包含无效或重复选项"
+		}
+		seen[form] = true
+	}
+	return ""
+}
+
+func ipRequestContactIssue(brief map[string]any) string {
+	if value, present := brief["requesterPIC"]; present {
+		text, ok := value.(string)
+		if !ok || len([]rune(text)) > 100 {
+			return "需求发起人（PIC）应为100字以内的姓名"
+		}
+	}
+	items, _ := brief["externalIPs"].([]any)
+	for _, item := range items {
+		candidate, _ := item.(map[string]any)
+		if value, present := candidate["contact"]; present {
+			text, ok := value.(string)
+			if !ok || len([]rune(text)) > 500 {
+				return "IP方联系人应为500字以内的文本"
+			}
+		}
+	}
+	return ""
+}
+
 func ipBriefValid(brief map[string]any, candidateIDs []int64) bool {
 	for _, key := range []string{"owner", "projectPeriod", "linkedProduct", "cooperationMode", "targetIPType", "targetIPCount"} {
 		if ipMapText(brief, key) == "" {
@@ -358,6 +401,14 @@ func (a *app) ipResourceSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if issue := ipMarketPenetrationIssue(item.Markets, item.MarketPenetrations); issue != "" {
+		writeError(w, http.StatusBadRequest, 400, issue)
+		return
+	}
+	if issue := ipCooperationFormsIssue(item.Profile); issue != "" {
+		writeError(w, http.StatusBadRequest, 400, issue)
+		return
+	}
+	if issue := ipAssetLinksIssue(item.Profile); issue != "" {
 		writeError(w, http.StatusBadRequest, 400, issue)
 		return
 	}
@@ -768,6 +819,12 @@ type ipImportResult struct {
 }
 
 func ipImportOptionIssue(row ipResourceInput) string {
+	if issue := ipAssetLinksIssue(row.Profile); issue != "" {
+		return issue
+	}
+	if issue := ipCooperationFormsIssue(row.Profile); issue != "" {
+		return issue
+	}
 	validType := map[string]bool{
 		"游戏": true, "动画": true, "影视": true, "综艺": true, "体育": true,
 		"潮牌": true, "潮玩": true, "品牌": true, "文化艺术": true, "线下活动": true, "其他": true,
@@ -992,6 +1049,10 @@ func (a *app) ipRequestSave(w http.ResponseWriter, r *http.Request) {
 		item.Brief = map[string]any{}
 	}
 	item.Brief["notificationLanguage"] = ipRequestLanguage(r)
+	if issue := ipRequestContactIssue(item.Brief); issue != "" {
+		writeError(w, http.StatusBadRequest, 400, issue)
+		return
+	}
 	if !ipValidRange(item.BudgetMin, item.BudgetMax) || (item.Submit && (item.ProjectName == "" || item.Department == "" || len(item.Markets) == 0 || item.Goal == "" || item.Description == "" || item.BudgetMin == nil || item.BudgetMax == nil)) {
 		writeError(w, http.StatusBadRequest, 400, "请填写项目、市场、目标、说明及有效授权预算")
 		return

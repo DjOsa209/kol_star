@@ -15,6 +15,20 @@ export const getIPContentTranslations = (
     }
   );
 
+export interface IPResourceProfile {
+  imageStyle?: string;
+  lifecycle?: string;
+  genderRatio?: string;
+  ageRange?: string;
+  spendingPower?: string;
+  registeredUsers?: string;
+  salesROI?: string;
+  showcase?: string;
+  cooperationTips?: string;
+  cooperationForms?: string[];
+  assetLinks?: string;
+}
+
 export interface IPResourceInput {
   id?: number;
   name: string;
@@ -30,7 +44,7 @@ export interface IPResourceInput {
   priceMin: number | null;
   priceMax: number | null;
   licenseNotes: string;
-  profile: Record<string, string>;
+  profile: IPResourceProfile;
 }
 
 export interface IPRequestInput {

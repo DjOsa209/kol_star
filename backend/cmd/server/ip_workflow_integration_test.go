@@ -113,7 +113,26 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	ipID, _ = res.LastInsertId()
+	for _, forms := range [][]string{{"产品定制", "线上营销"}, {}} {
+		links := ""
+		if len(forms) > 0 {
+			links = "https://example.com/hero#pose\nhttps://example.com/folder?x=1&y=2"
+		}
+		code, result := request(a.ipResourceSave, "POST", "/", map[string]any{
+			"id": ipID, "name": marker, "ipType": "游戏", "rightsOwner": marker,
+			"markets": []string{"全球"}, "profile": map[string]any{"cooperationForms": forms, "lifecycle": "常青", "assetLinks": links},
+		}, creatorToken)
+		expectOK(code, result)
+		code, result = request(a.ipResourceDetail, "GET", "/?id="+strconv.FormatInt(ipID, 10), nil, creatorToken)
+		expectOK(code, result)
+		profile := ipTranslationObject(result["data"].(map[string]any)["resource"].(map[string]any)["profile"])
+		if ipJSON(profile["cooperationForms"]) != ipJSON(forms) || profile["lifecycle"] != "常青" || profile["assetLinks"] != links {
+			t.Fatal("cooperation choices or other profile fields lost during save/detail")
+		}
+	}
 	brief := ipTestBrief()
+	brief["requesterPIC"] = "验收发起人"
+	brief["externalIPs"].([]any)[0].(map[string]any)["contact"] = "验收联系人 @example"
 	brief["candidateEvaluations"] = map[string]any{strconv.FormatInt(ipID, 10): map[string]any{"reason": "契合", "productEvaluation": "适配", "technicalFit": "可开发"}}
 	// Real authenticated local recipients; repeated marketing roles must deduplicate.
 	contacts := map[string]any{}
@@ -141,6 +160,10 @@ func TestIPWorkflowDBSmoke(t *testing.T) {
 	code, result = request(a.ipRequestDetail, "GET", "/?id="+strconv.FormatInt(requestID, 10), nil, creatorToken)
 	expectOK(code, result)
 	management := result["data"].(map[string]any)["request"].(map[string]any)
+	storedBrief := ipTranslationObject(management["brief"])
+	if storedBrief["requesterPIC"] != "验收发起人" || storedBrief["externalIPs"].([]any)[0].(map[string]any)["contact"] != "验收联系人 @example" {
+		t.Fatal("requester PIC or optional external contact lost during save/detail")
+	}
 	if management["canEdit"] != true || management["canDelete"] != true || management["candidatesLocked"] != false {
 		t.Fatalf("creator management actions missing: %v", management)
 	}

@@ -9,6 +9,7 @@ import {
 } from "@/utils/ipContentTranslation";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useUserStoreHook } from "@/store/modules/user";
 import { ElMessage, ElMessageBox } from "element-plus";
 import dayjs from "dayjs";
 import * as XLSX from "xlsx";
@@ -130,13 +131,13 @@ const briefFields = [
   }
 ];
 const contactStages = [
-  { key: "product", label: "产品" },
-  { key: "ipMarketing", label: "IP营销" },
-  { key: "imc", label: "IMC" },
-  { key: "brand", label: "品牌运营" },
-  { key: "user", label: "用户运营" },
-  { key: "media", label: "媒介投放" },
-  { key: "pr", label: "PR" }
+  { key: "product", label: "产品", hint: "如：何佳佳 / 苏伟龙" },
+  { key: "ipMarketing", label: "IP营销", hint: "如：董婉琳 / 黄梓婷 / 徐心怡" },
+  { key: "imc", label: "IMC", hint: "如：许光华 / 余晓婧" },
+  { key: "brand", label: "品牌运营", hint: "如：周紫薇 / 曾立宇" },
+  { key: "user", label: "用户运营", hint: "如：田甜" },
+  { key: "media", label: "媒介投放", hint: "如：陈琪" },
+  { key: "pr", label: "PR", hint: "如：王露" }
 ];
 const projectFields = briefFields.filter(field => field.key !== "projectNotes");
 const displayedRows = computed(() =>
@@ -497,6 +498,8 @@ const initialForm = (): IPRequestInput => ({
   candidateIds: [],
   submit: false,
   brief: {
+    requesterPIC:
+      useUserStoreHook().nickname || useUserStoreHook().username || "",
     externalIPs: [],
     candidateEvaluations: {},
     contactsByStage: emptyContactsByStage()
@@ -1823,6 +1826,19 @@ onUnmounted(() => {
           <div class="ip-card">
             <h2>{{ ipText("项目基本信息") }}</h2>
             <div class="ip-form-grid">
+              <label>
+                <span class="ip-field-label">{{
+                  ipText("需求发起人（PIC）")
+                }}</span>
+                <el-input
+                  v-model="form.brief.requesterPIC"
+                  maxlength="100"
+                  :placeholder="ipText('填写需求发起人的姓名')"
+                />
+                <small>{{
+                  ipText("请核对实际对接人，可修改默认姓名。")
+                }}</small>
+              </label>
               <label
                 data-validation-key="projectName"
                 :class="validationClass('projectName')"
@@ -2080,6 +2096,7 @@ onUnmounted(() => {
                     form.brief.externalIPs.push({
                       name: '',
                       rightsOwner: '',
+                      contact: '',
                       imageUrl: '',
                       reason: '',
                       productEvaluation: '',
@@ -2126,6 +2143,16 @@ onUnmounted(() => {
                       ></span
                     ><el-input v-model="item.rightsOwner"
                   /></label>
+                  <label class="ip-span">
+                    <span class="ip-field-label">{{
+                      ipText("IP方联系人（电话/社媒账号等）")
+                    }}</span>
+                    <el-input
+                      v-model="item.contact"
+                      maxlength="500"
+                      :placeholder="ipText('选填：联系人姓名、电话或社媒账号')"
+                    />
+                  </label>
                   <label
                     class="ip-span"
                     :data-validation-key="`external-${index}-imageUrl`"
@@ -2303,7 +2330,7 @@ onUnmounted(() => {
                       :debounce="300"
                       :trigger-on-focus="false"
                       clearable
-                      :placeholder="ipText('搜索姓名或工号')"
+                      :placeholder="ipText(stage.hint)"
                       @input="value => onContactInput(stage.key, value)"
                       @select="person => selectContact(stage.key, person)"
                     >
@@ -2474,6 +2501,10 @@ onUnmounted(() => {
             >
               <h3 id="ip-project-info">{{ ipText("项目资料") }}</h3>
               <dl class="ip-detail-facts">
+                <div>
+                  <dt>{{ ipText("需求发起人（PIC）") }}</dt>
+                  <dd>{{ detailText(requestBrief.requesterPIC) }}</dd>
+                </div>
                 <div
                   v-for="field in projectFields"
                   :key="field.key"
@@ -2534,6 +2565,11 @@ onUnmounted(() => {
                 </div>
                 <p>
                   {{ ipText("版权方：") }}{{ detailText(item.rightsOwner) }}
+                </p>
+                <p v-if="item.contact">
+                  {{ ipText("IP方联系人（电话/社媒账号等）") }}：{{
+                    item.contact
+                  }}
                 </p>
                 <RequestText :text="item.reason" />
               </div>

@@ -154,7 +154,12 @@ const canonicalOptions = new Set([
   "非洲",
   "拉美",
   "北美",
-  "全球"
+  "全球",
+  "产品定制",
+  "功能联动",
+  "联名周边礼盒",
+  "线上营销",
+  "线下物料及互动"
 ]);
 export function canonicalIPOption(value: string): string {
   const normalized = value.trim();
@@ -187,6 +192,8 @@ export function canonicalIPImportHeader(value: string): string {
     "目标受众",
     "IP简介",
     "合作状态",
+    "可合作形式",
+    "素材链接",
     "币种",
     "基础权益价格下限",
     "基础权益价格上限",

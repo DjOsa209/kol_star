@@ -73,7 +73,8 @@ const resourceAST = ts.createSourceFile(
 const marketFormatter = [
   "arrayValue",
   "penetrationValues",
-  "marketCoverageText"
+  "marketCoverageText",
+  "parseCooperationForms"
 ]
   .map(name =>
     resourceAST.statements
@@ -81,13 +82,27 @@ const marketFormatter = [
       .getText(resourceAST)
   )
   .join("\n");
-const marketRuntime = { ipText, JSON, Object, Number };
+const marketRuntime = { ipText, canonicalIPOption, JSON, Object, Number };
 vm.createContext(marketRuntime);
 vm.runInContext(
   ts.transpileModule(marketFormatter, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText,
   marketRuntime
+);
+for (const input of [
+  "产品定制 / 线上营销；功能联动",
+  "Product customization / Online marketing; Feature integration",
+  "产品定制，线上营销\n功能联动 / 产品定制"
+]) {
+  assert.equal(
+    JSON.stringify(marketRuntime.parseCooperationForms(input)),
+    JSON.stringify(["产品定制", "线上营销", "功能联动"])
+  );
+}
+assert.equal(
+  JSON.stringify(marketRuntime.parseCooperationForms(undefined)),
+  "[]"
 );
 const marketFixture = {
   markets: ["全球", "中国", "东南亚", "南亚"],
@@ -128,6 +143,13 @@ const book = XLSX.readFile(
 const headers = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], {
   header: 1
 })[0];
+assert.ok(headers.includes("Available collaboration formats"));
+assert.ok(headers.includes("Asset links"));
+assert.equal(canonicalIPImportHeader("Asset links"), "素材链接");
+assert.equal(
+  canonicalIPImportHeader("Available collaboration formats"),
+  "可合作形式"
+);
 for (const header of headers)
   assert.match(
     canonicalIPImportHeader(header),
@@ -211,6 +233,56 @@ for (const file of files) {
 }
 console.log(
   `PASS: ${Object.keys(catalog).length} English strings, runtime language switching, canonical option values, all English workbook headers and IP template coverage`
+);
+
+const linksModule = { exports: {} };
+vm.runInNewContext(
+  ts.transpileModule(
+    fs.readFileSync(path.join(root, "src/utils/ipAssetLinks.ts"), "utf8"),
+    {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.CommonJS
+      }
+    }
+  ).outputText,
+  { exports: linksModule.exports, URL }
+);
+const { parseIPAssetLinks, ipAssetLinksIssue, isIPAssetLinkURL } =
+  linksModule.exports;
+const linksText =
+  " https://example.com/hero#pose \r\n\nhttps://example.com/folder?x=1&y=2 ";
+assert.equal(
+  JSON.stringify(parseIPAssetLinks(linksText)),
+  JSON.stringify([
+    "https://example.com/hero#pose",
+    "https://example.com/folder?x=1&y=2"
+  ])
+);
+assert.equal(ipAssetLinksIssue(linksText), "");
+assert.equal(ipAssetLinksIssue(""), "");
+assert.equal(ipAssetLinksIssue(undefined), "");
+assert.ok(isIPAssetLinkURL("HTTPS://example.com/assets"));
+for (const link of [
+  "javascript:alert(1)",
+  "data:text/html,hello",
+  "//example.com",
+  "http:example.com",
+  "https://user:secret@example.com",
+  "https://@example.com",
+  "https://example.com/asset one",
+  "https://example.com:99999",
+  "https://example.com/" + "x".repeat(2048)
+]) {
+  assert.ok(
+    !isIPAssetLinkURL(link),
+    `Unsafe/invalid asset link accepted: ${link.slice(0, 80)}`
+  );
+  assert.ok(ipAssetLinksIssue(link));
+}
+assert.ok(ipAssetLinksIssue("https://example.com/\n".repeat(21)));
+console.log(
+  "PASS: asset links parsing, URL validation and English import header"
 );
 
 for (const file of files) {
