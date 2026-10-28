@@ -1068,7 +1068,7 @@ call add_campaign_column('biz_projects', 'report_update_date', 'report_update_da
 call add_campaign_column('biz_projects', 'paused_at', 'paused_at datetime null after report_update_date');
 
 call add_campaign_column('biz_cooperations', 'audience_segment', 'audience_segment varchar(128) not null default '''' after cooperation_type');
-call add_campaign_column('biz_cooperations', 'creative_name', 'creative_name varchar(128) not null default '''' after audience_segment');
+call add_campaign_column('biz_cooperations', 'creative_name', 'creative_name varchar(512) not null default '''' after audience_segment');
 call add_campaign_column('biz_cooperations', 'final_link', 'final_link varchar(1024) not null default '''' after deliverable_links');
 call add_campaign_column('biz_cooperations', 'top_geographies', 'top_geographies varchar(255) not null default '''' after final_link');
 call add_campaign_column('biz_cooperations', 'publish_time', 'publish_time datetime null after top_geographies');
@@ -1102,7 +1102,7 @@ create table if not exists biz_campaign_report_segments (
   project_id bigint not null,
   audience_segment varchar(128) not null default '',
   platform varchar(64) not null default '',
-  creative_name varchar(128) not null default '',
+  creative_name varchar(512) not null default '',
   forecast_views bigint not null default 0,
   actual_views bigint not null default 0,
   forecast_clicks bigint not null default 0,
@@ -2412,3 +2412,14 @@ where r.platform='YouTube' and lower(trim(r.resource_type)) in ('kol','达人')
   ))
   and ((trim(r.avatar_url)='' and r.avatar_remote_url regexp '^https?://[^[:space:]/]+')
     or (trim(r.tier)='' and totals.total_audience>0));
+
+-- 057_content_title_length.sql
+use kol_admin;
+
+-- Preserve longer fetched content titles in both cooperation and report data.
+-- The full report unique key is 2824 bytes with utf8mb4 (below InnoDB's 3072-byte limit).
+-- Widening these columns preserves existing values and can safely be rerun.
+alter table biz_cooperations
+  modify column creative_name varchar(512) not null default '';
+alter table biz_campaign_report_segments
+  modify column creative_name varchar(512) not null default '';

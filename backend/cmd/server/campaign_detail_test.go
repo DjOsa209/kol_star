@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -77,95 +80,113 @@ func TestAggregateProjectResourcesByName(t *testing.T) {
 }
 
 func TestUpdateBusinessProjectContentAllowsFacebookManualMetrics(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	const postURL = "https://127.0.0.1/posts/new"
-	mock.ExpectQuery("select c.project_id, c.resource_id, c.final_link").
-		WithArgs(22).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"project_id", "resource_id", "final_link", "deliverable_links", "content_platform",
-		}).AddRow(11, 33, "https://127.0.0.1/posts/old", "", "Website"))
-	mock.ExpectBegin()
-	mock.ExpectExec("update biz_cooperations").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("update biz_resources").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
-	mock.ExpectExec("update biz_cooperations").
-		WithArgs(4321, 4321, 130, 11, 22, 11, 33).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("insert into biz_resource_platform_posts").
-		WithArgs(33, "manual-22", sqlmock.AnyArg(), postURL, 4321, 123, 11, 7).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("select coalesce\\(r.platform_url").
-		WithArgs(22, 33).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"platform_url", "avatar_remote_url", "final_link", "deliverable_links",
-			"content_cover_url", "content_cover_remote_url",
-		}).AddRow(
-			"https://www.facebook.com/creator",
-			"https://cdn.example.com/avatar.jpg",
-			postURL,
-			postURL,
-			"/api/uploads/resource-images/cover.jpg",
-			"https://cdn.example.com/cover.jpg",
-		))
-
-	body, err := json.Marshal(map[string]any{
-		"projectId":     11,
-		"cooperationId": 22,
-		"resourceId":    33,
-		"platform":      "Facebook",
-		"postUrl":       postURL,
-		"exposure":      4321,
-		"likeCount":     123,
-		"commentCount":  11,
-		"shareCount":    7,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest("POST", "/business/projects/content/update", bytes.NewReader(body))
-	recorder := httptest.NewRecorder()
-	newApp(db, Config{}).updateBusinessProjectContent(recorder, request)
-
-	var response struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != 0 {
-		t.Fatalf("unexpected response: %s", recorder.Body.String())
-	}
-	expected := map[string]string{
-		"platform":                "Facebook",
-		"platformUrl":             "https://www.facebook.com/creator",
-		"finalLink":               postURL,
-		"deliverableLinks":        postURL,
-		"resourceAvatarRemoteUrl": "https://cdn.example.com/avatar.jpg",
-		"contentCoverLocalUrl":    "/api/uploads/resource-images/cover.jpg",
-		"contentCoverRemoteUrl":   "https://cdn.example.com/cover.jpg",
-	}
-	for field, want := range expected {
-		if got := response.Data[field]; got != want {
-			t.Errorf("%s = %#v, want %q", field, got, want)
-		}
-	}
-	for field, want := range map[string]float64{
-		"exposure": 4321, "likeCount": 123, "commentCount": 11, "shareCount": 7,
+	for _, tc := range []struct{ name, postURL, pageTitle, wantTitle string }{
+		{"short fallback", "https://127.0.0.1/posts/new", "", "new"},
+		{"long Facebook title", "https://93.184.216.34/share/v/1EstkZR3rt/", strings.Repeat("新品📱", 80), strings.Repeat("新品📱", 80)},
+		{"oversized Facebook title", "https://93.184.216.34/share/v/long/", strings.Repeat("新品📱", 200), strings.Repeat("新品📱", 170) + "新品"},
+		{"long numeric URL fallback", "https://127.0.0.1/posts/" + strings.Repeat("1", 600), "", "127.0.0.1/posts/" + strings.Repeat("1", 496)},
 	} {
-		if got := response.Data[field]; got != want {
-			t.Errorf("%s = %#v, want %.0f", field, got, want)
-		}
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+
+			a := newApp(db, Config{})
+			originalTransport := http.DefaultTransport
+			t.Cleanup(func() { http.DefaultTransport = originalTransport })
+			http.DefaultTransport = imageRoundTripper(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`<meta property="og:title" content="` + tc.pageTitle + `">`)), Request: req}, nil
+			})
+
+			postURL := tc.postURL
+			mock.ExpectQuery("select c.project_id, c.resource_id, c.final_link").
+				WithArgs(22).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"project_id", "resource_id", "final_link", "deliverable_links", "content_platform",
+				}).AddRow(11, 33, "https://127.0.0.1/posts/old", "", "Website"))
+			mock.ExpectBegin()
+			mock.ExpectExec("update biz_cooperations").
+				WithArgs(postURL, postURL, "Facebook", "", "", tc.wantTitle, tc.wantTitle, true, true, true, true, 22, 11, 33).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("update biz_resources").
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectCommit()
+			mock.ExpectExec("update biz_cooperations").
+				WithArgs(4321, 4321, 130, 11, 22, 11, 33).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("insert into biz_resource_platform_posts").
+				WithArgs(33, "manual-22", sqlmock.AnyArg(), postURL, 4321, 123, 11, 7).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery("select coalesce\\(r.platform_url").
+				WithArgs(22, 33).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"platform_url", "avatar_remote_url", "final_link", "deliverable_links",
+					"content_cover_url", "content_cover_remote_url",
+				}).AddRow(
+					"https://www.facebook.com/creator",
+					"https://cdn.example.com/avatar.jpg",
+					postURL,
+					postURL,
+					"/api/uploads/resource-images/cover.jpg",
+					"https://cdn.example.com/cover.jpg",
+				))
+
+			body, err := json.Marshal(map[string]any{
+				"projectId":     11,
+				"cooperationId": 22,
+				"resourceId":    33,
+				"platform":      "Facebook",
+				"postUrl":       postURL,
+				"exposure":      4321,
+				"likeCount":     123,
+				"commentCount":  11,
+				"shareCount":    7,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest("POST", "/business/projects/content/update", bytes.NewReader(body))
+			recorder := httptest.NewRecorder()
+			a.updateBusinessProjectContent(recorder, request)
+
+			var response struct {
+				Code int            `json:"code"`
+				Data map[string]any `json:"data"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != 0 {
+				t.Fatalf("unexpected response: %s", recorder.Body.String())
+			}
+			expected := map[string]string{
+				"platform":                "Facebook",
+				"platformUrl":             "https://www.facebook.com/creator",
+				"finalLink":               postURL,
+				"deliverableLinks":        postURL,
+				"resourceAvatarRemoteUrl": "https://cdn.example.com/avatar.jpg",
+				"contentCoverLocalUrl":    "/api/uploads/resource-images/cover.jpg",
+				"contentCoverRemoteUrl":   "https://cdn.example.com/cover.jpg",
+			}
+			for field, want := range expected {
+				if got := response.Data[field]; got != want {
+					t.Errorf("%s = %#v, want %q", field, got, want)
+				}
+			}
+			for field, want := range map[string]float64{
+				"exposure": 4321, "likeCount": 123, "commentCount": 11, "shareCount": 7,
+			} {
+				if got := response.Data[field]; got != want {
+					t.Errorf("%s = %#v, want %.0f", field, got, want)
+				}
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+
+		})
 	}
 }
 

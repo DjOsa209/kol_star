@@ -15,6 +15,9 @@ import (
 	"unicode/utf8"
 )
 
+// Match biz_cooperations.creative_name VARCHAR(512); MySQL counts characters, not bytes.
+const contentTitleMaxRunes = 512
+
 var contentPageTitlePattern = regexp.MustCompile(`(?is)<title\b[^>]*>(.*?)</title>`)
 var contentURLPattern = regexp.MustCompile(`https?://[^\s,，;；]+`)
 var projectContentTitleRefreshes sync.Map
@@ -217,11 +220,11 @@ func sanitizeContentTitle(value string) string {
 	value = html.UnescapeString(value)
 	value = strings.Join(strings.Fields(value), " ")
 	value = strings.TrimSpace(value)
-	if utf8.RuneCountInString(value) <= 240 {
+	if utf8.RuneCountInString(value) <= contentTitleMaxRunes {
 		return value
 	}
 	runes := []rune(value)
-	return strings.TrimSpace(string(runes[:240]))
+	return strings.TrimSpace(string(runes[:contentTitleMaxRunes]))
 }
 
 func contentTitleFromURL(contentURL string) string {
@@ -231,12 +234,12 @@ func contentTitleFromURL(contentURL string) string {
 	}
 	path, _ := url.PathUnescape(strings.Trim(parsed.Path, "/"))
 	if path == "" {
-		return strings.TrimPrefix(parsed.Hostname(), "www.")
+		return sanitizeContentTitle(strings.TrimPrefix(parsed.Hostname(), "www."))
 	}
 	parts := strings.Split(path, "/")
 	last := strings.TrimSpace(parts[len(parts)-1])
 	if last == "" || regexp.MustCompile(`^\d+$`).MatchString(last) {
-		return strings.TrimPrefix(parsed.Hostname(), "www.") + "/" + path
+		return sanitizeContentTitle(strings.TrimPrefix(parsed.Hostname(), "www.") + "/" + path)
 	}
 	last = strings.NewReplacer("-", " ", "_", " ").Replace(last)
 	return sanitizeContentTitle(last)
