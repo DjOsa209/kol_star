@@ -1,0 +1,23 @@
+# Replaces the existing backend service. Do not run two backends on port 8080.
+[Unit]
+Description=KOL Admin backend attached to the manual Chrome desktop
+After=network-online.target kol-admin-trend-desktop.service
+Wants=network-online.target kol-admin-trend-desktop.service
+
+[Service]
+Type=simple
+User=kol-admin
+Group=kol-admin
+WorkingDirectory=/opt/kol-admin/backend
+UMask=0077
+EnvironmentFile=/opt/kol-admin/deploy/trend-browser/collector.conf
+Environment=TREND_BACKEND_BINARY=/opt/kol-admin/backend/kol-admin-server
+ExecStart=/opt/kol-admin/scripts/start-trend-attach-backend.sh
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

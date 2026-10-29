@@ -1,0 +1,11 @@
+# Non-secret configuration for systemd EnvironmentFile. Replace the owner ID.
+TREND_BROWSER_ATTACHED_USER_ID=REPLACE_WITH_BACKEND_USER_ID
+TREND_BROWSER_ENDPOINT=ws://127.0.0.1:9222/devtools/browser
+# Enable only after the HTTPS gateway and its independent authentication are configured.
+TREND_BROWSER_DESKTOP_ENABLED=true
+TREND_BROWSER_EXECUTABLE=/usr/bin/google-chrome-stable
+TREND_DESKTOP_STATE_ROOT=/var/lib/kol-trend-browser
+TREND_NOVNC_ROOT=/usr/share/novnc
+TREND_VNC_PASSWORD_FILE=/var/lib/kol-trend-browser/vnc.pass
+# Keep the backend private behind the same-host HTTPS reverse proxy.
+SERVER_ADDR=127.0.0.1:8080

@@ -1,0 +1,23 @@
+[Unit]
+Description=KOL Admin manual Chrome login desktop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kol-trend-browser
+Group=kol-trend-browser
+WorkingDirectory=/opt/kol-admin
+StateDirectory=kol-trend-browser
+StateDirectoryMode=0700
+UMask=0077
+EnvironmentFile=/opt/kol-admin/deploy/trend-browser/collector.conf
+ExecStart=/opt/kol-admin/scripts/start-trend-linux-desktop.sh
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+TimeoutStopSec=30
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

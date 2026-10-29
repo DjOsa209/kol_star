@@ -68,6 +68,7 @@ panel:
   pureHiddenFooter: Hide footer
   pureMultiTagsCache: Remember open tabs
 menus:
+  trendInsights: Trend insights
   ipOperations: IP operations
   ipLibrary: IP library
   ipRecommendations: AI IP

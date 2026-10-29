@@ -14,12 +14,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -27,6 +29,12 @@ import (
 )
 
 type app struct {
+	trendLocalMu            sync.Mutex
+	trendLocalJobs          map[string]*trendLocalJob
+	trendLocalSlots         chan struct{}
+	trendCacheOverride      trendHotCache
+	trendBrowserOnce        sync.Once
+	trendBrowsers           *trendBrowserManager
 	db                      atomic.Value
 	config                  atomic.Value
 	creatorDiscoveryCancels sync.Map
@@ -57,6 +65,20 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "local-trends" {
+		if err := runLocalTrendClient(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && (os.Args[1] == "trends-status" || os.Args[1] == "trends-migrate") {
+		if err := runTrendMaintenance(os.Args[1]); err != nil {
+			log.Print("trend maintenance could not complete; check the status report")
+			os.Exit(1)
+		}
+		return
+	}
 	cfg, watcher, err := loadConfig()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
@@ -95,9 +117,24 @@ func main() {
 	a.routes(mux)
 
 	log.Printf("kol-admin backend listening on %s", cfg.Server.Addr)
-	if err := http.ListenAndServe(cfg.Server.Addr, a.withRequestLogging(a.withCORS(a.withIPLocale(mux)))); err != nil {
+	server := &http.Server{Addr: cfg.Server.Addr, Handler: a.withRequestLogging(a.withCORS(a.withIPLocale(mux))), ReadHeaderTimeout: 10 * time.Second}
+	stopping, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignal()
+	shutdownDone := make(chan struct{})
+	go func() {
+		<-stopping.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		a.closeTrendBrowsers()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Print("backend graceful shutdown deadline reached")
+		}
+		close(shutdownDone)
+	}()
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+	<-shutdownDone
 }
 
 func newApp(db *sql.DB, cfg Config) *app {
@@ -282,6 +319,27 @@ func (a *app) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /business/resources/import", a.requireMenu("/business/resources", a.importBusinessResources))
 	mux.HandleFunc("POST /business/resources/translate", a.requireMenu("/business/resources", a.translateBusinessResources))
 	mux.HandleFunc("POST /business/resource-posts", a.requireMenu("/business/resource-posts", a.businessResourcePosts))
+	mux.HandleFunc("GET /business/trends/monthly", a.requireTrend(a.trendMonthly))
+	mux.HandleFunc("POST /business/trends/monthly/refresh", a.requireTrend(a.trendMonthlyRefresh))
+	mux.HandleFunc("GET /business/trends/options", a.requireTrend(a.withTrendHotCache("options", a.trendOptions)))
+	mux.HandleFunc("POST /business/trends/local-jobs", a.requireTrend(a.trendLocalCreate))
+	mux.HandleFunc("GET /business/trends/local-jobs/{job}", a.requireTrend(a.trendLocalStatus))
+	mux.HandleFunc("POST /business/trends/local-jobs/{job}/cancel", a.requireTrend(a.trendLocalCancel))
+	mux.HandleFunc("GET /business/trends/local-client/{platform}", a.requireTrend(a.trendLocalClientDownload))
+	mux.HandleFunc("GET /business/trends/local-media/{name}", a.requireTrend(a.trendLocalMedia))
+	mux.HandleFunc("POST /business/trends/local-upload", a.trendLocalUpload)
+	mux.HandleFunc("GET /business/trends/local-upload", a.trendLocalUploadStatus)
+	mux.HandleFunc("GET /business/trends/list", a.requireTrend(a.withTrendHotCache("list", a.trendList)))
+	mux.HandleFunc("GET /business/trends/detail", a.requireTrend(a.withTrendHotCache("detail", a.trendDetail)))
+	mux.HandleFunc("GET /business/trends/media/{name}", a.requireTrend(a.trendMedia))
+	mux.HandleFunc("POST /business/trends/collect", a.requireTrend(a.trendCollectStart))
+	mux.HandleFunc("GET /business/trends/collect/{job}", a.requireTrend(a.trendCollectStatus))
+	mux.HandleFunc("POST /business/trends/collect/{job}/cancel", a.requireTrend(a.trendCollectCancel))
+	mux.HandleFunc("POST /business/trends/collect/{job}/login", a.requireTrend(a.trendLoginRestart))
+	mux.HandleFunc("POST /business/trends/collect/{job}/resume", a.requireTrend(a.trendCollectResume))
+	mux.HandleFunc("POST /business/trends/collect/{job}/desktop", a.requireTrend(a.trendDesktopOpen))
+	mux.HandleFunc("GET /business/trends/collect/{job}/screen", a.requireTrend(a.trendLoginScreen))
+	mux.HandleFunc("POST /business/trends/collect/{job}/input", a.requireTrend(a.trendLoginInput))
 	mux.HandleFunc("POST /business/assistant/recommend", a.requireMenu("/business/assistant", a.businessAssistantRecommend))
 	mux.HandleFunc("POST /business/creator-discovery/jobs/create", a.creatorDiscoveryCreate)
 	mux.HandleFunc("POST /business/creator-discovery/jobs/list", a.creatorDiscoveryList)
@@ -1536,6 +1594,9 @@ func (a *app) withRequestLogging(next http.Handler) http.Handler {
 		}
 		responseOK := recorder.apiResponseOK()
 		responseBody := recorder.body.String()
+		if strings.HasPrefix(canonicalAPIPath(r.URL.Path), "/business/trends/local-") {
+			responseBody = "[local collector response omitted]"
+		}
 		if redactRecommendation {
 			responseBody = "[recommendation response omitted]"
 		}
@@ -1548,6 +1609,12 @@ func captureRequestBody(r *http.Request) string {
 		return ""
 	}
 	path := canonicalAPIPath(r.URL.Path)
+	if strings.HasPrefix(path, "/business/trends/local-") {
+		return "[local collector payload omitted]"
+	}
+	if strings.HasPrefix(path, "/business/trends/collect/") && strings.HasSuffix(path, "/input") {
+		return "[remote browser input omitted]"
+	}
 	if strings.Contains(path, "/auth/sso/") {
 		return "[SSO credentials omitted]"
 	}

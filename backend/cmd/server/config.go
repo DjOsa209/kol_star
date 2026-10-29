@@ -17,9 +17,12 @@ import (
 )
 
 type Config struct {
+	TrendLocal   TrendLocalConfig   `mapstructure:"trend_local"`
+	TrendBrowser TrendBrowserConfig `mapstructure:"trend_browser"`
 	WorkCalendar []workCalendarYear `mapstructure:"work_calendar"`
 	Server       ServerConfig       `mapstructure:"server"`
 	MySQL        MySQLConfig        `mapstructure:"mysql"`
+	Redis        RedisConfig        `mapstructure:"redis"`
 	CORS         CORSConfig         `mapstructure:"cors"`
 	PlatformAPIs PlatformAPIConfig  `mapstructure:"platform_apis"`
 	Collector    CollectorConfig    `mapstructure:"collector"`
@@ -143,10 +146,29 @@ func loadBackendEnvFileFrom(file string, required bool) error {
 }
 
 func setConfigDefaults(v *viper.Viper) {
+	v.SetDefault("trend_local.enabled", true)
+	v.SetDefault("trend_local.storage_root", "data/trend-local")
+	v.SetDefault("trend_local.client_dir", "data/trend-clients")
 	v.SetDefault("server.addr", ":8080")
 	v.SetDefault("mysql.username", "root")
 	v.SetDefault("mysql.password", "password")
 	v.SetDefault("mysql.database", "kol_admin")
+	v.SetDefault("trend_browser.mode", "launch")
+	v.SetDefault("trend_browser.endpoint", "")
+	v.SetDefault("trend_browser.attached_user_id", 0)
+	v.SetDefault("trend_browser.desktop_enabled", false)
+	v.SetDefault("trend_browser.enabled", false)
+	v.SetDefault("trend_browser.executable", "")
+	v.SetDefault("trend_browser.profile_root", "")
+	v.SetDefault("trend_browser.max_sessions", 2)
+	v.SetDefault("redis.addr", "127.0.0.1:6379")
+	v.SetDefault("redis.database", 0)
+	v.SetDefault("redis.username", "")
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.tls", false)
+	v.SetDefault("redis.key_prefix", "kol:trends:v1:")
+	v.SetDefault("redis.node_hour", 0)
+	v.SetDefault("redis.node_minute", 0)
 	v.SetDefault("cors.allowed_origins", []string{"*"})
 	v.SetDefault("cors.allowed_headers", []string{"Authorization", "Content-Type", "X-Requested-With", "X-Collector-Token"})
 	v.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
@@ -177,6 +199,7 @@ func decodeConfig(v *viper.Viper) (Config, error) {
 }
 
 func (cfg Config) withDefaults() Config {
+	cfg.Redis = cfg.Redis.withDefaults()
 	if cfg.Server.Addr == "" {
 		cfg.Server.Addr = ":8080"
 	}

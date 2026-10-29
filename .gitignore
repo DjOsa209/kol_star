@@ -14,3 +14,10 @@ backend/uploads/resource-images/*
 !backend/uploads/resource-images/.gitkeep
 backend/uploads/ip-documents/*
 !backend/uploads/ip-documents/.gitkeep
+
+# Runtime-owned browser profiles; never stage or inspect session files.
+.runtime/
+backend/data/trend-local/
+backend/data/trend-clients/
+backend/data/trends/
+**/trend-job*.json

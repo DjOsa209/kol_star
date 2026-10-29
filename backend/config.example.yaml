@@ -43,6 +43,15 @@ platform_apis:
     youtube_proxy_url: http://127.0.0.1:7890
 server:
     addr: :8080
+redis:
+    addr: 127.0.0.1:6379
+    username: ""
+    password: ""
+    database: 0
+    tls: false
+    key_prefix: "kol:trends:v1:"
+    node_hour: 0
+    node_minute: 0
 sso:
     enabled: false
     provider: uac
@@ -60,3 +69,21 @@ sso:
 # workdays (makeup dates YYYY-MM-DD). Entries replace the entire named year.
 # An unconfigured year shows "年度日历待核定"; it is never guessed from weekdays.
 work_calendar: []
+
+# Per-user persistent Ads browsers. Use an unprivileged service account.
+# Requires an approved Chrome installation; headed Linux additionally needs Xvfb.
+trend_browser:
+  mode: launch # attach connects to a manually opened Chrome 144+
+  endpoint: "" # e.g. ws://127.0.0.1:9222/devtools/browser
+  attached_user_id: 0 # explicit authorized backend user ID; required for attach
+  desktop_enabled: false # enable only after provisioning authenticated HTTPS /trend-desktop/
+  enabled: false
+  executable: /usr/bin/google-chrome-stable
+  profile_root: /var/lib/kol-admin/trend-browser-profiles
+  max_sessions: 2
+
+# Preferred deployment: user runs the local client; server receives business data only.
+trend_local:
+  enabled: true
+  storage_root: data/trend-local # private persistent media/datasets, owned by backend user
+  client_dir: data/trend-clients # approved clients built by scripts/build-trend-clients.sh

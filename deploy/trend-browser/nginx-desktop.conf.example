@@ -1,0 +1,31 @@
+# Include ONLY inside the existing admin HTTPS server block (port 443).
+# Provision this password file separately. A missing file fails closed.
+# Give desktop credentials only to the configured attached_user_id owner.
+location ^~ /trend-desktop/ {
+    if ($scheme != "https") { return 404; }
+    # Reject cross-origin browser WebSocket requests even when Basic auth is cached.
+    set $trend_desktop_origin_ok 1;
+    set $trend_desktop_origin "$scheme://$http_host";
+    if ($http_origin != "") { set $trend_desktop_origin_ok 0; }
+    if ($http_origin = $trend_desktop_origin) { set $trend_desktop_origin_ok 1; }
+    if ($trend_desktop_origin_ok = 0) { return 403; }
+    auth_basic "Trend collection desktop";
+    auth_basic_user_file /etc/nginx/trend-desktop.htpasswd;
+    limit_except GET { deny all; }
+    proxy_pass http://127.0.0.1:6080/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    # Do not pass the gateway credentials or admin cookies to noVNC.
+    proxy_set_header Authorization "";
+    proxy_set_header Cookie "";
+    proxy_buffering off;
+    proxy_read_timeout 1800s;
+    proxy_send_timeout 1800s;
+    add_header Cache-Control "no-store" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    access_log off;
+}
+# Never proxy ports 5901, 6080 or 9222 through any other public location.

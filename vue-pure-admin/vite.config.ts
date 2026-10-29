@@ -19,6 +19,23 @@ export default async ({ mode }: ConfigEnv): Promise<UserConfigExport> => {
     VITE_API_BASE_URL,
     VITE_API_PROXY_TARGET
   } = wrapperEnv(loadEnv(mode, root));
+  const monthlyTarget = process.env.VITE_MONTHLY_PROXY_TARGET;
+  const monthlyProxy =
+    VITE_API_BASE_URL && monthlyTarget
+      ? Object.fromEntries(
+          [
+            "/business/trends/monthly",
+            "/business/trends/media/monthly_cover_"
+          ].map(path => [
+            `${VITE_API_BASE_URL}${path}`,
+            {
+              target: monthlyTarget,
+              changeOrigin: true,
+              rewrite: (path: string) => path.slice(VITE_API_BASE_URL.length)
+            }
+          ])
+        )
+      : {};
   return {
     base: VITE_PUBLIC_PATH,
     root,
@@ -35,6 +52,7 @@ export default async ({ mode }: ConfigEnv): Promise<UserConfigExport> => {
       proxy:
         VITE_API_BASE_URL && VITE_API_PROXY_TARGET
           ? {
+              ...monthlyProxy,
               [VITE_API_BASE_URL]: {
                 target: VITE_API_PROXY_TARGET,
                 changeOrigin: true,

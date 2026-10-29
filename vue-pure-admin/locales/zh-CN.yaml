@@ -68,6 +68,7 @@ panel:
   pureHiddenFooter: 隐藏页脚
   pureMultiTagsCache: 页签持久化
 menus:
+  trendInsights: 趋势洞察
   ipOperations: IP运营
   ipLibrary: IP资源库
   ipRecommendations: IP AI推荐
