@@ -2641,12 +2641,23 @@ onMounted(() => {
           <el-table-column
             :label="fieldLabel('项目')"
             min-width="270"
-            align="center"
+            align="left"
             sortable
           >
             <template #default="{ row }">
               <div class="project-name-cell">
-                <strong>{{ row.name }}</strong>
+                <el-tooltip
+                  :content="row.name"
+                  :trigger="['hover', 'focus']"
+                  placement="top-start"
+                  :show-after="250"
+                  :popper-style="{
+                    maxWidth: 'min(480px, calc(100vw - 32px))',
+                    overflowWrap: 'anywhere'
+                  }"
+                >
+                  <strong tabindex="0">{{ row.name }}</strong>
+                </el-tooltip>
                 <small>{{ projectCreatedDate(row) }}</small>
               </div>
             </template>
@@ -7133,11 +7144,16 @@ onMounted(() => {
 }
 .project-name-cell {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: 4px;
-  justify-items: center;
+  justify-items: start;
+  text-align: left;
 }
 .project-name-cell strong {
+  display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   color: #2c2e34;
   font-size: 14px;
@@ -7145,6 +7161,7 @@ onMounted(() => {
   white-space: nowrap;
 }
 .project-name-cell small {
+  max-width: 100%;
   overflow: hidden;
   color: #85878d;
   font-size: 12px;
