@@ -4,6 +4,7 @@ import type { TrendTagDetail, TrendRelatedVideo } from "@/api/trends";
 import TrendChart from "./TrendChart.vue";
 import TrendImage from "./TrendImage.vue";
 import PlayIcon from "~icons/ri/play-circle-line";
+import { trendTikTokTagURL, trendTikTokVideoURL } from "@/utils/trendLinks";
 
 defineProps<{ detail: TrendTagDetail }>();
 const emit = defineEmits<{ preview: [video: TrendRelatedVideo] }>();
@@ -37,6 +38,16 @@ const previewRelated = (video: TrendRelatedVideo) => emit("preview", video);
 
 <template>
   <div class="tag-analysis">
+    <p class="detail-note">
+      <el-link
+        v-if="trendTikTokTagURL(detail.hashtagName)"
+        :href="trendTikTokTagURL(detail.hashtagName)"
+        target="_blank"
+        rel="noopener noreferrer"
+        type="primary"
+        >{{ text("在 TikTok 查看标签", "View hashtag on TikTok") }}</el-link
+      >
+    </p>
     <div class="detail-summary">
       <div>
         <span>{{ text("发帖量", "Posts") }}</span
@@ -110,21 +121,37 @@ const previewRelated = (video: TrendRelatedVideo) => emit("preview", video);
       </h2>
 
       <div class="related-grid">
-        <button
+        <div
           v-for="video in detail.videoList || []"
           :key="video.itemID"
-          :aria-label="text('预览视频', 'Preview video')"
-          @click="previewRelated(video)"
+          class="related-card"
         >
-          <TrendImage
-            :src="video.coverURL"
-            :alt="text('关联视频封面', 'Related video cover')"
-          /><span
-            ><PlayIcon class="trend-ui-icon" />
-            {{ text("预览", "Preview") }}</span
+          <button
+            :aria-label="text('预览视频', 'Preview video')"
+            @click="previewRelated(video)"
           >
-        </button>
+            <TrendImage
+              :src="video.coverURL"
+              :alt="text('关联视频封面', 'Related video cover')"
+            /><span
+              ><PlayIcon class="trend-ui-icon" />
+              {{ text("预览", "Preview") }}</span
+            >
+          </button>
+          <el-link
+            v-if="trendTikTokVideoURL(video.itemID)"
+            :href="trendTikTokVideoURL(video.itemID)"
+            target="_blank"
+            rel="noopener noreferrer"
+            type="primary"
+            >{{ text("在 TikTok 查看视频", "View video on TikTok") }}</el-link
+          >
+        </div>
       </div>
+      <el-empty
+        v-if="!detail.videoList?.length"
+        :description="text('暂无关联视频', 'No related videos')"
+      />
       <p class="detail-note">
         {{
           text(
@@ -230,16 +257,20 @@ const previewRelated = (video: TrendRelatedVideo) => emit("preview", video);
 }
 .related-grid {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: calc((100% - 24px) / 3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  overflow-x: auto;
   padding: 2px 2px 10px;
-  scrollbar-width: thin;
+}
+.related-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
 }
 .related-grid button {
   position: relative;
   display: block;
+  width: 100%;
   aspect-ratio: 4 / 3;
   overflow: hidden;
   padding: 0;
@@ -267,6 +298,9 @@ const previewRelated = (video: TrendRelatedVideo) => emit("preview", video);
   outline-offset: 2px;
 }
 @media (width <= 760px) {
+  .related-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .audience-grid {
     grid-template-columns: 1fr;
     gap: 0;

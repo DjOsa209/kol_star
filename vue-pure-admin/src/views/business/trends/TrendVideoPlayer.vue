@@ -4,15 +4,18 @@ import { useI18n } from "vue-i18n";
 import PlayIcon from "~icons/ri/play-circle-line";
 import { safeTrendVideoURL } from "@/api/trends";
 import TrendImage from "./TrendImage.vue";
+import { trendTikTokPlayerURL } from "@/utils/trendLinks";
 
 const props = defineProps<{
   src?: string | Record<string, string>;
   cover?: string;
   title?: string;
+  itemID?: string;
 }>();
 const { locale } = useI18n();
 const playing = ref(false);
 const failed = ref(false);
+const embedSource = computed(() => trendTikTokPlayerURL(props.itemID));
 const source = computed(() =>
   safeTrendVideoURL(
     typeof props.src === "string"
@@ -24,7 +27,7 @@ const label = computed(() =>
   locale.value === "en" ? "Play video" : "播放视频"
 );
 watch(
-  () => props.src,
+  () => [props.src, props.itemID],
   () => {
     playing.value = false;
     failed.value = false;
@@ -34,8 +37,19 @@ watch(
 
 <template>
   <div class="trend-player">
+    <iframe
+      v-if="embedSource && (!source || failed)"
+      :key="embedSource"
+      :src="embedSource"
+      :title="title || label"
+      class="trend-embed"
+      sandbox="allow-scripts allow-same-origin allow-presentation"
+      allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+      referrerpolicy="no-referrer"
+      allowfullscreen
+    />
     <video
-      v-if="playing && source && !failed"
+      v-else-if="playing && source && !failed"
       :src="source"
       controls
       autoplay
@@ -81,6 +95,13 @@ watch(
   height: 100%;
   max-height: 65vh;
   object-fit: contain;
+}
+.trend-embed {
+  display: block;
+  width: 100%;
+  height: min(65vh, 560px);
+  min-height: 300px;
+  border: 0;
 }
 .player-start {
   position: absolute;

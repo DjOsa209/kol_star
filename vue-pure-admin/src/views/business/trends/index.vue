@@ -26,6 +26,7 @@ import RefreshIcon from "~icons/ri/refresh-line";
 import ArchiveIcon from "~icons/ri/archive-line";
 import GlobalIcon from "~icons/ri/global-line";
 import PlayIcon from "~icons/ri/play-circle-line";
+import { trendTikTokVideoURL } from "@/utils/trendLinks";
 
 defineOptions({ name: "BusinessTrends" });
 const route = useRoute();
@@ -757,6 +758,7 @@ onMounted(async () => {
           <div class="video-detail-grid">
             <div class="detail-cover">
               <TrendVideoPlayer
+                :item-i-d="videoDetail.itemID"
                 :src="videoDetail.videoURL"
                 :cover="videoDetail.coverURL"
                 :title="videoDetail.title"
@@ -783,6 +785,26 @@ onMounted(async () => {
                   text("未提供视频文案", "No caption provided")
                 }}
               </p>
+              <el-link
+                v-if="
+                  trendTikTokVideoURL(
+                    videoDetail.itemID,
+                    videoDetail.author?.handle
+                  )
+                "
+                :href="
+                  trendTikTokVideoURL(
+                    videoDetail.itemID,
+                    videoDetail.author?.handle
+                  )
+                "
+                target="_blank"
+                rel="noopener noreferrer"
+                type="primary"
+                >{{
+                  text("在 TikTok 查看视频", "View video on TikTok")
+                }}</el-link
+              >
             </div>
           </div>
           <section class="detail-section">
@@ -818,10 +840,21 @@ onMounted(async () => {
       <div class="related-player">
         <TrendVideoPlayer
           v-if="relatedVideo"
+          :item-i-d="relatedVideo.itemID"
           :src="relatedVideo.videoURL"
           :cover="relatedVideo.coverURL"
         />
       </div>
+      <template #footer>
+        <el-link
+          v-if="relatedVideo && trendTikTokVideoURL(relatedVideo.itemID)"
+          :href="trendTikTokVideoURL(relatedVideo.itemID)"
+          target="_blank"
+          rel="noopener noreferrer"
+          type="primary"
+          >{{ text("在 TikTok 查看视频", "View video on TikTok") }}</el-link
+        >
+      </template>
     </el-dialog>
   </div>
 </template>
