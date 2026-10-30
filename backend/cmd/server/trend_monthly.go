@@ -219,6 +219,11 @@ func saveMonthlyArchive(archive monthlyArchive) error {
 	if err != nil {
 		return err
 	}
+	// Runtime caches are excluded from Git and may not exist on first deploy.
+	// Create them as the service user; never broaden existing permissions.
+	if err = os.MkdirAll(trendDataDir(), 0750); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(trendDataDir(), "monthly-*.tmp")
 	if err != nil {
 		return err
@@ -339,7 +344,7 @@ func (a *app) trendMonthlyRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, 10001, "月份格式不正确")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 55*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	latest, err := fetchMonthlyPayload(ctx, trendHTTPClient)
 	if err != nil {
@@ -350,14 +355,10 @@ func (a *app) trendMonthlyRefresh(w http.ResponseWriter, r *http.Request) {
 		latest = mergeMonthlyArchive(previous, latest)
 	}
 	if err = saveMonthlyArchive(latest); err != nil {
-		writeError(w, 500, 50001, "月度内容保存失败，请重试")
+		writeError(w, 500, 50001, "月度内容保存失败，请检查服务器数据目录及写入权限")
 		return
 	}
-	if month == "" && len(latest.Records) > 0 {
-		month = latest.Records[0].Month
-	}
-	coverCtx, coverCancel := context.WithTimeout(ctx, 35*time.Second)
-	defer coverCancel()
-	covers := syncMonthlyCovers(coverCtx, trendHTTPClient, latest, month)
-	writeOK(w, map[string]any{"capturedAt": latest.CapturedAt, "sourceUpdatedAt": latest.SourceUpdatedAt, "covers": covers})
+	// Browsers render TikTok's official embeds directly. Refresh only the Later
+	// archive, so server-side TikTok rate limits cannot block content updates.
+	writeOK(w, map[string]any{"capturedAt": latest.CapturedAt, "sourceUpdatedAt": latest.SourceUpdatedAt, "mediaMode": "tiktok-embed"})
 }
