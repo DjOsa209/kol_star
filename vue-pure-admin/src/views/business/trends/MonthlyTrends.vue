@@ -2,14 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { isAxiosError } from "axios";
 import {
   getMonthlyTrends,
   refreshMonthlyTrends,
   type MonthlyTrend,
   type MonthlyTrendResult
 } from "@/api/trends";
-import TrendImage from "./TrendImage.vue";
-import PlayIcon from "~icons/ri/play-circle-line";
 import MusicIcon from "~icons/ri/music-2-line";
 import RefreshIcon from "~icons/ri/refresh-line";
 import VideoIcon from "~icons/ri/video-line";
@@ -22,8 +21,6 @@ const loading = ref(false),
   updating = ref(false),
   error = ref("");
 const updateMessage = ref("");
-const selected = ref<MonthlyTrend>();
-const visible = ref(false);
 let generation = 0;
 const month = computed(() => String(route.query.month || ""));
 const summaries: Record<string, string> = {
@@ -70,18 +67,23 @@ async function load() {
   loading.value = true;
   error.value = "";
   data.value = undefined;
-  visible.value = false;
   try {
     const result = await getMonthlyTrends(month.value);
     if (current !== generation) return;
     if (result.code !== 0) throw new Error("Monthly data unavailable");
     data.value = result.data;
-  } catch {
+  } catch (err) {
     if (current === generation)
-      error.value = text(
-        "月度内容暂时无法读取，请重试。",
-        "Monthly trends are unavailable. Please retry."
-      );
+      error.value =
+        isAxiosError(err) && err.response?.data?.code === 50301
+          ? text(
+              "暂无可读取的月度缓存，请点击“更新内容”初始化。若更新失败，请检查服务器数据目录及写入权限。",
+              "No monthly cache is available. Click Update to initialize it. If it fails, check the server data directory and write permissions."
+            )
+          : text(
+              "月度内容暂时无法读取，请重试。",
+              "Monthly trends are unavailable. Please retry."
+            );
   } finally {
     if (current === generation) loading.value = false;
   }
@@ -99,30 +101,35 @@ async function refresh() {
     const result = await refreshMonthlyTrends(data.value?.month || month.value);
     if (result.code !== 0) throw new Error("Monthly refresh failed");
     await load();
-    const covers = result.data.covers;
-    updateMessage.value = text(
-      `内容已更新 · 封面新增 ${covers.added} 张，已就绪 ${covers.ready} 张${covers.pending ? `，${covers.pending} 张待重试` : ""}`,
-      `Content updated · ${covers.added} covers added, ${covers.ready} ready${covers.pending ? `, ${covers.pending} pending retry` : ""}`
-    );
-  } catch {
-    error.value = text(
-      "更新失败，已保留上次采集内容。请稍后重试。",
-      "Update failed. The saved collection is preserved. Try again later."
-    );
+    if (!error.value)
+      updateMessage.value = text(
+        "内容已更新 · 视频由 TikTok 官方播放器提供",
+        "Content updated · Videos provided by TikTok"
+      );
+  } catch (err) {
+    error.value =
+      isAxiosError(err) && err.response?.data?.code === 50001
+        ? text(
+            "内容已抓取，但服务器保存失败。请检查服务端数据目录及写入权限后重试。",
+            "Content was fetched, but the server could not save it. Check the server data directory and write permissions, then retry."
+          )
+        : text(
+            data.value
+              ? "更新失败，已保留上次采集内容。请稍后重试。"
+              : "更新失败，尚未生成月度缓存。请稍后重试。",
+            data.value
+              ? "Update failed. The saved collection is preserved. Try again later."
+              : "Update failed. No monthly cache has been created yet. Try again later."
+          );
   } finally {
     updating.value = false;
   }
 }
-function preview(row: MonthlyTrend) {
-  selected.value = row;
-  visible.value = true;
-}
-const playerURL = computed(() => {
-  const id = selected.value?.videoID || "";
-  return /^[0-9]{10,24}$/.test(id)
-    ? `https://www.tiktok.com/player/v1/${id}?music_info=1&description=0&autoplay=1`
+function playerURL(row: MonthlyTrend) {
+  return /^[0-9]{10,24}$/.test(row.videoID)
+    ? `https://www.tiktok.com/player/v1/${row.videoID}?music_info=0&description=0&autoplay=0&controls=1`
     : "";
-});
+}
 watch(month, load);
 onMounted(load);
 onBeforeUnmount(() => {
@@ -179,29 +186,42 @@ onBeforeUnmount(() => {
     <div v-loading="loading" :aria-busy="loading" class="monthly-content">
       <div v-if="data?.list.length" class="monthly-grid">
         <article v-for="row in data.list" :key="row.id" class="monthly-card">
-          <button
-            class="monthly-cover"
-            :disabled="!row.videoID"
-            :aria-label="text('预览趋势视频：', 'Preview trend: ') + row.title"
-            @click="preview(row)"
-          >
-            <TrendImage
-              v-if="row.coverURL"
-              :src="row.coverURL"
-              :alt="row.title"
+          <div class="monthly-cover">
+            <iframe
+              v-if="playerURL(row)"
+              :key="row.videoID"
+              :src="playerURL(row)"
+              :title="text('TikTok 视频：', 'TikTok video: ') + row.title"
+              class="monthly-embed"
+              loading="lazy"
+              sandbox="allow-scripts allow-same-origin allow-presentation"
+              allow="encrypted-media; fullscreen; picture-in-picture"
+              referrerpolicy="no-referrer"
+              allowfullscreen
             />
-            <span v-else class="monthly-cover-empty"
-              ><VideoIcon /><span>{{
-                text("封面待同步", "Cover pending")
-              }}</span></span
+            <div v-else class="monthly-cover-empty">
+              <VideoIcon />
+              <span>{{
+                text("请打开原视频查看", "Open the original video to watch")
+              }}</span>
+            </div>
+          </div>
+          <div class="monthly-video-access">
+            <span>{{ text("TikTok 官方预览", "TikTok preview") }}</span>
+            <a
+              v-if="audioLink(row.videoURL)"
+              :href="audioLink(row.videoURL)"
+              target="_blank"
+              rel="noopener noreferrer"
+              :aria-label="
+                text(
+                  '在新标签页打开原视频：',
+                  'Open original video in a new tab: '
+                ) + row.title
+              "
+              >{{ text("打开原视频", "Open original video") }}</a
             >
-            <PlayIcon v-if="row.videoID" class="monthly-play" />
-            <span class="monthly-video-label">{{
-              row.videoID
-                ? text("示例视频", "Example video")
-                : text("视频链接待解析", "Video link pending")
-            }}</span>
-          </button>
+          </div>
           <h2>{{ row.title }}</h2>
           <div class="monthly-date">
             <time :datetime="row.publishedAt || undefined">{{
@@ -262,41 +282,14 @@ onBeforeUnmount(() => {
     <p v-if="data" class="monthly-footnote">
       {{
         text(
-          "本页为 Later 编辑精选，非全站热度榜。视频按源站可用状态加载。",
-          "Editorial picks from Later, not a platform-wide ranking. Video availability depends on TikTok."
+          "本页为 Later 编辑精选，非全站热度榜。预览由浏览器直接加载 TikTok；无法加载时可打开原视频。",
+          "Editorial picks from Later, not a platform-wide ranking. Previews load directly from TikTok in your browser. If unavailable, open the original video."
         )
       }}<span
         >{{ text("采集于", "Collected") }}
         {{ data.capturedAt.slice(0, 10) }}</span
       >
     </p>
-    <el-dialog
-      v-model="visible"
-      :title="selected?.title"
-      width="min(440px, 94vw)"
-      destroy-on-close
-      @closed="selected = undefined"
-    >
-      <iframe
-        v-if="visible && playerURL"
-        :key="playerURL"
-        :src="playerURL"
-        :title="selected?.title"
-        class="monthly-player"
-        sandbox="allow-scripts allow-same-origin allow-presentation"
-        allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-        referrerpolicy="no-referrer"
-        allowfullscreen
-      />
-      <p class="monthly-player-note">
-        {{
-          text(
-            "由 TikTok 播放器提供，源站不可用时可能无法播放。",
-            "Provided by TikTok. Playback may be unavailable when the source is restricted."
-          )
-        }}
-      </p>
-    </el-dialog>
   </section>
 </template>
 <style scoped lang="scss">
@@ -366,19 +359,18 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .monthly-cover {
-  position: relative;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  max-height: 560px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: #101014;
+}
+.monthly-embed {
   display: block;
   width: 100%;
-  aspect-ratio: 1.88;
-  padding: 0;
-  overflow: hidden;
+  height: 100%;
   border: 0;
-  border-radius: 7px;
-  background: var(--el-fill-color-light);
-  cursor: pointer;
-}
-.monthly-cover:disabled {
-  cursor: default;
 }
 .monthly-cover-empty {
   display: flex;
@@ -386,34 +378,29 @@ onBeforeUnmount(() => {
   height: 100%;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: var(--el-text-color-secondary);
+  gap: 12px;
+  padding: 20px;
+  color: #fff;
   font-size: 13px;
+  text-align: center;
 }
 .monthly-cover-empty svg {
   width: 28px;
   height: 28px;
 }
-.monthly-play {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 42px;
-  height: 42px;
-  transform: translate(-50%, -50%);
-  color: #fff;
-  filter: drop-shadow(0 1px 4px rgb(0 0 0 / 35%));
+.monthly-video-access {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
-.monthly-video-label {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  color: #fff;
-  background: rgb(0 0 0 / 55%);
-  font-size: 11px;
-  line-height: 1.5;
+.monthly-video-access a {
+  color: var(--el-color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .monthly-card h2 {
   margin: 11px 0 4px;
@@ -509,20 +496,6 @@ onBeforeUnmount(() => {
 }
 .monthly-retry {
   margin-bottom: 12px;
-}
-.monthly-player {
-  display: block;
-  width: 100%;
-  height: min(65vh, 640px);
-  border: 0;
-  border-radius: 6px;
-  background: #101014;
-}
-.monthly-player-note {
-  margin: 12px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.6;
 }
 button:focus-visible,
 a:focus-visible {

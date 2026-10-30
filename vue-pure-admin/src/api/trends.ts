@@ -274,11 +274,11 @@ export const refreshMonthlyTrends = (month = "") =>
     Result<{
       capturedAt: string;
       sourceUpdatedAt: string;
-      covers: { ready: number; added: number; pending: number };
+      mediaMode: "tiktok-embed";
     }>
   >(
     "post",
     "/business/trends/monthly/refresh",
     { params: { month } },
-    { timeout: 65000 }
+    { timeout: 25000 }
   );

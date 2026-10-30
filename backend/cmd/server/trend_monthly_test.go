@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/DATA-DOG/go-sqlmock"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -141,5 +144,68 @@ func TestMonthlyPublishedDateFormats(t *testing.T) {
 		if err != nil || archive.SourceUpdatedAt != "2026-10-16" {
 			t.Fatal("source date normalization failed")
 		}
+	}
+}
+
+func TestMonthlyRefreshInitializesMissingDataDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TREND_DATA_DIR", filepath.Join(root, "first-deploy", "trends"))
+	previousClient := trendHTTPClient
+	trendHTTPClient = &http.Client{Transport: monthlyTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() == monthlyPayloadURL {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(monthlyFixture())))}, nil
+		}
+		return &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})}
+	t.Cleanup(func() { trendHTTPClient = previousClient })
+	w := httptest.NewRecorder()
+	(&app{}).trendMonthlyRefresh(w, httptest.NewRequest("POST", "/business/trends/monthly/refresh?month=2026-09", nil))
+	if w.Code != 200 {
+		t.Fatalf("first-deploy refresh failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	(&app{}).trendMonthly(w, httptest.NewRequest("GET", "/business/trends/monthly?month=2026-09", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Sample") {
+		t.Fatalf("cache unavailable after initialization: status=%d", w.Code)
+	}
+}
+
+func TestMonthlyArchiveInvalidDestinationPreservesExistingFiles(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(destination, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TREND_DATA_DIR", destination)
+	archive, _ := parseMonthlyPayload(monthlyFixture(), "now")
+	if err := saveMonthlyArchive(archive); err == nil {
+		t.Fatal("accepted an invalid data directory")
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "keep" {
+		t.Fatal("existing data changed")
+	}
+}
+
+func TestMonthlyRefreshOnlyFetchesLater(t *testing.T) {
+	t.Setenv("TREND_DATA_DIR", t.TempDir())
+	previousClient := trendHTTPClient
+	requests := 0
+	trendHTTPClient = &http.Client{Transport: monthlyTransport(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.String() != monthlyPayloadURL {
+			t.Errorf("unexpected media request: %s", r.URL.Host)
+			return nil, errors.New("media requests are forbidden")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(monthlyFixture())))}, nil
+	})}
+	t.Cleanup(func() { trendHTTPClient = previousClient })
+	w := httptest.NewRecorder()
+	(&app{}).trendMonthlyRefresh(w, httptest.NewRequest("POST", "/business/trends/monthly/refresh?month=2026-09", nil))
+	if w.Code != 200 || requests != 1 || !strings.Contains(w.Body.String(), `"mediaMode":"tiktok-embed"`) {
+		t.Fatalf("refresh must only fetch Later: status=%d requests=%d", w.Code, requests)
+	}
+	if _, err := os.Stat(filepath.Join(trendDataDir(), "media")); !os.IsNotExist(err) {
+		t.Fatal("refresh unexpectedly created media cache")
 	}
 }
