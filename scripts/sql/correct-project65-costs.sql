@@ -7,6 +7,8 @@
 -- Do not use mysql --force. Stop project 65 edits/imports during execution.
 -- The backup table intentionally survives for audit and recovery.
 -- DDL stays outside the transaction (MySQL implicitly commits normal DDL).
+-- Revision 2: verified server distribution has 62 rows, including one extra
+-- zero-cost row in group 4. Preserve that row; split its package across 6 paid rows.
 
 SET NAMES utf8mb4;
 
@@ -63,25 +65,27 @@ proc: BEGIN
     name_sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
     expected_rows INT NOT NULL,
     original_unit_cents BIGINT NOT NULL,
-    correct_total_cents BIGINT NOT NULL
+    correct_total_cents BIGINT NOT NULL,
+    preserved_zero_rows INT NOT NULL
   ) ENGINE=InnoDB;
-  -- Identity hashes and package totals derived from the supplied workbook.
+  -- Current identity hashes from the operator's server query; package totals
+  -- and charged-row counts reconciled with the supplied workbook.
   -- No names, contact information or published URLs are stored here.
   INSERT INTO tmp_p65_source VALUES
-  (1,'08554d02509f101d8ee4dd9e4c808a88d1e2d89e028a4136fbda5c766e485e32',7,22700,22700),
-  (2,'0ecd783505707ed7ca71d093a48d36459fa7867b17999e4aa902fba7efdda998',2,9000,9000),
-  (3,'6499a9c43a0d7a2d0d7a7aa864fa007b08060f3f279fe6cc7b4bbd487706c158',2,31800,31800),
-  (4,'b2c2760a7ebc7834ba4b34227ab9aaf98188177d53a6690cfe81f34ba61544a7',6,27200,27200),
-  (5,'82280bb7b30905f97322961a56e3c119150a246cb47293607c23385110c73d52',7,136300,136300),
-  (6,'79a2bf65cc048979a14c03f449f46a59f24d8a74e3d151595468b9971c7e146d',1,20000,20000),
-  (7,'9b338a5f3b80e1af36ddd530779616d800d795dcba948022e999e7f07df9763b',3,366900,366900),
-  (8,'9c10d897732a312407dd7ff168aa428e063f99121526a49945fb92a414bb0b8d',7,27200,27200),
-  (9,'a48c848b68a3b188a24144fef6991d426d84268aac93e7d6d42346793948c02a',4,40900,40900),
-  (10,'a04ec138b0ac26b709a0475238a8d4a61a61187cce35000e80d95e66b1bfe125',4,18100,18100),
-  (11,'4efd8af546fa6bd5db5668a9d864fe96ae8cbb6ffca00dd443dfa5494cf88baa',7,0,0),
-  (12,'92cd357548fb2bd831f965df6fcab0e11debb410f2f123842d3cd6dd5d8f0455',5,13600,13600),
-  (13,'ec5bac21835b96545bc77b9a4d2ccca79d18778a16bb1d35b2997313517b1718',5,18100,18100),
-  (14,'304eb4dd01f2fd3f93e78c9085318d56133b3999eea47e9fb80ab205fc676fcb',1,0,0);
+  (1,'18f278e3737f6479d10fd8969c61bad2dca59000ce3e7f1010c6a3e8b152919f',7,22700,22700,0),
+  (2,'3453a611ab1bceb41fd7f8655bc9a299cb6b0372b20cc7add8be905819639c25',2,9000,9000,0),
+  (3,'dba6e5d387943bd2321a0d71fa07f98ef53db4f093991174fd46cbb08901f204',2,31800,31800,0),
+  (4,'f6183c0523e03deb841f435136b7936b7aa52443a5cddf4aeaa47c0b098b215b',6,27200,27200,1),
+  (5,'82280bb7b30905f97322961a56e3c119150a246cb47293607c23385110c73d52',7,136300,136300,0),
+  (6,'47c4c82f1436dc04c2a5ecf75982960e365424e90857c68d2442bcadeadb6e56',1,20000,20000,0),
+  (7,'58e55487057e1462f9c575f02accc68246c9d6e569ba46cada984d952be64a7e',3,366900,366900,0),
+  (8,'86b9787e1cd10220017eb10481c245a954c70047d4972be4534ce3b2455a9fe8',7,27200,27200,0),
+  (9,'88a918a2f9b52ec211ef5ca3ed1e2a8485202dc78007ce7a640641c094d7f590',4,40900,40900,0),
+  (10,'ad0fe9d0a30c6b4348e8be7eac06bf7a5993410ec4976bf992fd1370a652dce2',4,18100,18100,0),
+  (11,'872b8ba4a6cb8709e2d0c9dee86cd7ab43546b66902d7e487f2deb7e564b78ee',7,0,0,0),
+  (12,'c7641edb7363f4bf44a9134768b4def8de4a49f0d9afbd314307a0c654ec3fa8',5,13600,13600,0),
+  (13,'a54422c17a26de00edd829fc0e40cce7c6ae725e6994c055c558257084d97b91',5,18100,18100,0),
+  (14,'f2a93a5aa8e0d31596fffd28940ce2a94ced8c7dcb02efeee4ecb819b9ba3972',1,0,0,0);
 
   CREATE TEMPORARY TABLE tmp_p65_snapshot (
     cooperation_id BIGINT NOT NULL PRIMARY KEY,
@@ -115,13 +119,13 @@ proc: BEGIN
 
   SELECT COUNT(*), COALESCE(SUM(original_amount),0)
     INTO v_count, v_before FROM tmp_p65_snapshot;
-  IF v_count <> 61 THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Expected exactly 61 cooperation rows; no change made';
+  IF v_count <> 62 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Expected exactly 62 cooperation rows; no change made';
   END IF;
   SELECT COUNT(*) INTO v_count FROM tmp_p65_snapshot
    WHERE currency IS NULL OR UPPER(TRIM(currency)) <> 'USD'
       OR resource_type IS NULL OR LOWER(resource_type) REGEXP '媒体|media'
-      OR import_batch_id IS NULL OR import_batch_id NOT LIKE 'IMP%';
+      OR (original_amount > 0 AND (import_batch_id IS NULL OR import_batch_id NOT LIKE 'IMP%'));
   IF v_count <> 0 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Unexpected currency, resource type or non-imported row';
   END IF;
@@ -129,27 +133,34 @@ proc: BEGIN
     LEFT JOIN tmp_p65_source p ON p.name_sha256 = s.name_sha256
    WHERE p.group_id IS NULL;
   IF v_count <> 0 THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Collaborator identity differs from workbook; no change made';
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Collaborator identity differs from verified server distribution';
   END IF;
   SELECT COUNT(*) INTO v_count FROM (
     SELECT p.group_id FROM tmp_p65_source p
     LEFT JOIN tmp_p65_snapshot s ON s.name_sha256 = p.name_sha256
-    GROUP BY p.group_id, p.expected_rows
-    HAVING COUNT(s.cooperation_id) <> p.expected_rows
+    GROUP BY p.group_id, p.expected_rows, p.preserved_zero_rows
+    HAVING COUNT(s.cooperation_id) <> p.expected_rows + p.preserved_zero_rows
+       OR (p.preserved_zero_rows > 0 AND SUM(s.original_amount = 0) <> p.preserved_zero_rows)
   ) mismatches;
   IF v_count <> 0 THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Cooperation group counts differ from workbook';
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Cooperation group counts differ from verified source distribution';
   END IF;
 
   INSERT INTO tmp_p65_targets
-  SELECT ranked.cooperation_id, p.group_id, ranked.original_amount,
-         (FLOOR(p.correct_total_cents / p.expected_rows)
-          + IF(ranked.position_in_group <= MOD(p.correct_total_cents,p.expected_rows),1,0)) / 100
+  SELECT ranked.cooperation_id, ranked.group_id, ranked.original_amount,
+         (FLOOR(ranked.correct_total_cents / ranked.expected_rows)
+          + IF(ranked.position_in_group <= MOD(ranked.correct_total_cents,ranked.expected_rows),1,0)) / 100
   FROM (
-    SELECT cooperation_id, name_sha256, original_amount,
-           ROW_NUMBER() OVER (PARTITION BY name_sha256 ORDER BY cooperation_id) AS position_in_group
-      FROM tmp_p65_snapshot
-  ) ranked JOIN tmp_p65_source p ON p.name_sha256 = ranked.name_sha256;
+    SELECT s.cooperation_id, s.name_sha256, s.original_amount,
+           p.group_id, p.expected_rows, p.correct_total_cents,
+           ROW_NUMBER() OVER (PARTITION BY s.name_sha256 ORDER BY s.cooperation_id) AS position_in_group
+      FROM tmp_p65_snapshot s JOIN tmp_p65_source p ON p.name_sha256 = s.name_sha256
+     WHERE p.preserved_zero_rows = 0 OR s.original_amount > 0
+  ) ranked;
+  INSERT INTO tmp_p65_targets
+  SELECT s.cooperation_id, p.group_id, s.original_amount, 0
+    FROM tmp_p65_snapshot s JOIN tmp_p65_source p ON p.name_sha256 = s.name_sha256
+   WHERE p.preserved_zero_rows > 0 AND s.original_amount = 0;
   SELECT SUM(corrected_amount) INTO v_after FROM tmp_p65_targets;
   IF v_after <> 7318.00 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Planned total must be exactly 7318.00';
@@ -158,7 +169,7 @@ proc: BEGIN
   -- A second run is a no-op only when the original backup and every row agree.
   SELECT COUNT(*) INTO v_count FROM ops_project65_cost_backup_20261030;
   IF v_count <> 0 THEN
-    IF v_count <> 61 OR v_before <> 7318.00 THEN
+    IF v_count <> 62 OR v_before <> 7318.00 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Existing backup or current total differs; inspect before retry';
     END IF;
     SELECT COUNT(*) INTO v_count FROM tmp_p65_targets t
@@ -177,7 +188,8 @@ proc: BEGIN
     END IF;
     SELECT COUNT(*) INTO v_count FROM tmp_p65_snapshot s
       JOIN tmp_p65_source p ON p.name_sha256 = s.name_sha256
-     WHERE s.original_amount * 100 <> p.original_unit_cents;
+     WHERE s.original_amount * 100 <> p.original_unit_cents
+       AND NOT (p.preserved_zero_rows > 0 AND s.original_amount = 0);
     IF v_count <> 0 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Original per-row amounts differ from workbook';
     END IF;
@@ -201,12 +213,13 @@ proc: BEGIN
       UPDATE biz_cooperations c
       JOIN tmp_p65_targets t ON t.cooperation_id = c.id
          SET c.quote_amount = t.corrected_amount
-       WHERE c.project_id = 65 AND c.quote_amount = t.original_amount;
+       WHERE c.project_id = 65 AND c.quote_amount = t.original_amount
+         AND c.quote_amount <> t.corrected_amount;
       SET v_changed = ROW_COUNT();
 
       SELECT COUNT(*), COALESCE(SUM(quote_amount),0)
         INTO v_count, v_after FROM biz_cooperations WHERE project_id = 65;
-      IF v_count <> 61 OR v_after <> 7318.00 THEN
+      IF v_count <> 62 OR v_after <> 7318.00 THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Post-update check failed; transaction rolled back';
       END IF;
       SELECT COUNT(*) INTO v_count FROM biz_cooperations c
@@ -230,6 +243,6 @@ DELIMITER ;
 CALL ops_correct_project65_costs_20261030(0);
 -- CALL ops_correct_project65_costs_20261030(1);
 
--- Independent final verification (expected: 61 rows, 7318.00 total_usd):
+-- Independent final verification (expected: 62 rows, 7318.00 total_usd):
 -- SELECT COUNT(*) AS cooperation_rows, SUM(quote_amount) AS total_usd
 -- FROM biz_cooperations WHERE project_id = 65;
