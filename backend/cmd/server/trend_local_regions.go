@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-const localTrendMaxRegions = 5
-
 func localTrendRegionQueries(q trendQuery, raw string) ([]trendQuery, error) {
 	regions := []string{q.Region}
 	if raw != "" {
@@ -18,7 +16,7 @@ func localTrendRegionQueries(q trendQuery, raw string) ([]trendQuery, error) {
 	if q.Tab == "video" {
 		allowed = trendVideoRegions
 	}
-	if len(regions) > localTrendMaxRegions {
+	if len(regions) > len(allowed) {
 		return nil, errors.New("too many regions")
 	}
 	seen := map[string]bool{}

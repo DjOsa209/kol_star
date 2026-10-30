@@ -71,10 +71,13 @@ func readLocalTrendTask(r io.Reader, now time.Time) (localTrendTask, error) {
 	}
 	maxValidity := time.Hour
 	if task.Version == 2 {
-		if len(task.Regions) == 0 || len(task.Regions) > localTrendMaxRegions {
+		queries, err := localTrendTaskQueries(task)
+		if len(task.Regions) == 0 || err != nil {
 			return task, errors.New("任务地区列表不正确，请重新下载任务")
 		}
-		maxValidity = 3 * time.Hour
+		// Match the server's per-region allowance, with the same 30-minute
+		// clock tolerance used for a single-region task. Never allow unbounded expiry.
+		maxValidity = time.Duration(len(queries)+1) * 30 * time.Minute
 	} else if len(task.Regions) > 0 {
 		return task, errors.New("任务版本与地区列表不匹配")
 	}
@@ -82,6 +85,19 @@ func readLocalTrendTask(r io.Reader, now time.Time) (localTrendTask, error) {
 		return task, errors.New("任务有效期与本机时间不一致，请核对电脑和服务器时间后重新下载任务")
 	}
 	return task, nil
+}
+
+func localTrendTaskQueries(task localTrendTask) ([]trendQuery, error) {
+	values := url.Values{}
+	for _, key := range []string{"tab", "region", "period", "orderByMetric"} {
+		values.Set(key, task.Query[key])
+	}
+	q, err := parseTrendQuery(values, false)
+	if err != nil {
+		return nil, err
+	}
+	q.Live = true
+	return localTrendRegionQueries(q, strings.Join(task.Regions, ","))
 }
 
 func runLocalTrendClient(args []string) error {
@@ -106,19 +122,11 @@ func runLocalTrendClient(args []string) error {
 	if err != nil {
 		return err
 	}
-	values := url.Values{}
-	for _, key := range []string{"tab", "region", "period", "orderByMetric"} {
-		values.Set(key, task.Query[key])
-	}
-	q, err := parseTrendQuery(values, false)
-	if err != nil {
-		return errors.New("任务筛选条件不正确")
-	}
-	q.Live = true
-	queries, err := localTrendRegionQueries(q, strings.Join(task.Regions, ","))
+	queries, err := localTrendTaskQueries(task)
 	if err != nil {
 		return errors.New("任务地区列表不正确")
 	}
+	q := queries[0]
 	regions := make([]string, 0, len(queries))
 	for _, query := range queries {
 		regions = append(regions, query.Region)

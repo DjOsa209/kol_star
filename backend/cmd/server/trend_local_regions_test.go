@@ -132,7 +132,7 @@ func TestTrendLocalBatchIsolationAndPartialFailure(t *testing.T) {
 }
 
 func TestTrendLocalBatchCancellationAndValidation(t *testing.T) {
-	for _, tc := range []struct{ tab, regions string }{{"tag", "US,US"}, {"tag", "US,GB,FR,JP,DE,IT"}, {"tag", "US,"}, {"tag", "US,../"}, {"video", "US,GB"}} {
+	for _, tc := range []struct{ tab, regions string }{{"tag", "US,US"}, {"tag", strings.Join(trendTagRegions, ",") + ",US"}, {"tag", "US,"}, {"tag", "US,../"}, {"video", "US,GB"}} {
 		a := localFixtureApp(t)
 		r := requestForTrendOwner("/business/trends/local-jobs?tab="+tc.tab+"&regions="+url.QueryEscape(tc.regions), 1)
 		r.RemoteAddr = "127.0.0.1:1234"
@@ -161,6 +161,71 @@ func TestTrendLocalBatchCancellationAndValidation(t *testing.T) {
 		if w := batchUpload(a, id, token, region, raw, false); w.Code != 409 {
 			t.Fatal("cancelled child accepted upload")
 		}
+	}
+}
+
+func TestTrendLocalAllSupportedRegions(t *testing.T) {
+	for _, tc := range []struct {
+		tab     string
+		regions []string
+	}{
+		{"tag", trendTagRegions}, {"video", trendVideoRegions}, {"tag", trendTagRegions[:6]},
+	} {
+		t.Run(tc.tab+"-"+strings.Join(tc.regions, "-"), func(t *testing.T) {
+			a := localFixtureApp(t)
+			params := url.Values{"tab": {tc.tab}, "region": {tc.regions[0]}, "regions": {strings.Join(tc.regions, ",")}}
+			r := requestForTrendOwner("/business/trends/local-jobs?"+params.Encode(), 1)
+			r.RemoteAddr = "127.0.0.1:1234"
+			w := httptest.NewRecorder()
+			a.trendLocalCreate(w, r)
+			var response struct {
+				Data struct {
+					ID        string    `json:"id"`
+					Token     string    `json:"token"`
+					ExpiresAt time.Time `json:"expiresAt"`
+				} `json:"data"`
+			}
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil {
+				t.Fatal("supported regions rejected")
+			}
+			j := a.localJob(response.Data.ID)
+			if len(j.children) != len(tc.regions) {
+				t.Fatal("region scope truncated")
+			}
+			validity := time.Duration(len(tc.regions)) * 30 * time.Minute
+			if remaining := time.Until(j.ExpiresAt); remaining > validity || remaining < validity-time.Minute {
+				t.Fatal("incorrect batch expiry")
+			}
+			task := localTrendTask{Version: 2, Server: "https://admin.example.test/api", Job: response.Data.ID, Token: response.Data.Token, Regions: tc.regions, Query: map[string]string{"tab": tc.tab, "region": tc.regions[0]}, ExpiresAt: response.Data.ExpiresAt}
+			raw, _ := json.Marshal(task)
+			if _, err := readLocalTrendTask(bytes.NewReader(raw), time.Now()); err != nil {
+				t.Fatal("client rejected full server grant:", err)
+			}
+			queries, err := localTrendTaskQueries(task)
+			if err != nil || len(queries) != len(tc.regions) {
+				t.Fatal("client scope truncated")
+			}
+			for i, q := range queries {
+				if q.Region != tc.regions[i] {
+					t.Fatal("region order changed")
+				}
+			}
+			task.ExpiresAt = time.Now().Add(validity + time.Hour)
+			raw, _ = json.Marshal(task)
+			if _, err := readLocalTrendTask(bytes.NewReader(raw), time.Now()); err == nil {
+				t.Fatal("unbounded expiry accepted")
+			}
+			last := tc.regions[len(tc.regions)-1]
+			if w := batchUpload(a, j.ID, response.Data.Token, last, []byte("{}"), true); w.Code != 200 {
+				t.Fatal("last region is not authorized")
+			}
+			task.Regions = append(append([]string{}, tc.regions...), tc.regions[0])
+			task.ExpiresAt = response.Data.ExpiresAt
+			raw, _ = json.Marshal(task)
+			if _, err := readLocalTrendTask(bytes.NewReader(raw), time.Now()); err == nil {
+				t.Fatal("duplicate scope accepted by client")
+			}
+		})
 	}
 }
 

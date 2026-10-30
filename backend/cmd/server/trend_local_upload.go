@@ -75,7 +75,7 @@ func (a *app) trendLocalCreate(w http.ResponseWriter, r *http.Request) {
 	q.Live, q.Page, q.Size, q.ID = true, 1, 20, ""
 	queries, err := localTrendRegionQueries(q, r.URL.Query().Get("regions"))
 	if err != nil {
-		writeError(w, 400, 10001, "请选择当前榜单支持的 1 至 5 个不同地区")
+		writeError(w, 400, 10001, "请至少选择一个当前榜单支持的地区，不能重复选择")
 		return
 	}
 	owner := trendOwner(r)

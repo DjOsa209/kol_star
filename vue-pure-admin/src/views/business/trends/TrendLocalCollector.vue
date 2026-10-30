@@ -203,15 +203,26 @@ onBeforeUnmount(() => {
       show-icon
     />
     <p role="status">{{ busy ? "正在创建本次采集授权…" : job?.message }}</p>
-    <p>采集地区（最多 5 个，按选择顺序依次采集）</p>
+    <p>采集地区（可选全部 {{ regions.length }} 个地区，按选择顺序依次采集）</p>
+    <el-button
+      :disabled="Boolean(active) || busy"
+      @click="selectedRegions = [...regions]"
+      >全选</el-button
+    >
+    <el-button :disabled="Boolean(active) || busy" @click="selectedRegions = []"
+      >清空</el-button
+    >
+    <span>已选 {{ selectedRegions.length }} / {{ regions.length }} 个地区</span>
     <el-select
       v-model="selectedRegions"
       multiple
       filterable
-      :multiple-limit="5"
+      collapse-tags
+      collapse-tags-tooltip
+      :max-collapse-tags="4"
       :disabled="Boolean(active) || busy"
       aria-label="采集地区"
-      style="width: 100%"
+      style="width: 100%; margin-top: 12px"
     >
       <el-option
         v-for="region in regions"
