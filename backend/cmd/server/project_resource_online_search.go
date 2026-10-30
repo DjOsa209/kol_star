@@ -120,7 +120,8 @@ func normalizeOnlineProjectResourceSeed(platformValue, queryValue, resourceTypeV
 		seed.PlatformHandle = handle
 		seed.PlatformURL = "https://www.instagram.com/" + handle + "/"
 	case "TikTok":
-		username, secUID := tiktokUserIdentifier(query)
+		// The search text may be a homepage, secUid or handle.
+		username, secUID := tiktokUserIdentifier("", query, query, query)
 		if username == "" && secUID == "" {
 			return onlineProjectResourceSeed{}, fmt.Errorf("请输入有效的 TikTok 主页链接、@handle 或 secUid")
 		}

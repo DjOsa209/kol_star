@@ -1841,17 +1841,22 @@ func (a *app) syncTikTokResource(ctx context.Context, id int) (map[string]any, e
 	params := url.Values{}
 	if username != "" {
 		params.Set("uniqueId", username)
-	}
-	if secUID != "" {
+	} else if secUID != "" {
 		params.Set("secUid", secUID)
 	}
 	profileData, err := tikhubGET(ctx, client, apiKey, "/tiktok/web/fetch_user_profile", params)
 	if err != nil {
 		return nil, err
 	}
-	user := normalizeTikHubTikTokUser(profileData, username, secUID)
-	if user.UserID == "" && user.SecUID == "" && user.Username == "" {
-		return nil, fmt.Errorf("TikHub 未返回 TikTok 账号数据，请检查用户名或 secUid")
+	// Validate returned identity before writing followers, avatars or posts.
+	// Request fallbacks must not make an empty or unrelated response look valid.
+	user := normalizeTikHubTikTokUser(profileData, "", "")
+	if user.UserID == "" && user.SecUID == "" {
+		return nil, fmt.Errorf("TikTok 返回的账号数据不完整，未更新账号资料")
+	}
+	if (username != "" && !strings.EqualFold(user.Username, username)) ||
+		(username == "" && secUID != "" && user.SecUID != secUID) {
+		return nil, fmt.Errorf("TikTok 返回的账号与请求账号不一致，未更新账号资料")
 	}
 	syncPosts, postLimit := a.platformPostSyncOptions(ctx, "TikTok", 20)
 	warnings := make([]string, 0, 1)
@@ -2682,34 +2687,35 @@ func sanitizeInstagramHandle(value string) string {
 	return builder.String()
 }
 
-func tiktokUserIdentifier(values ...string) (string, string) {
-	username := ""
+func tiktokUserIdentifier(handle, profileURL, platformUserID, displayName string) (string, string) {
 	secUID := ""
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || value == "<nil>" {
-			continue
-		}
-		if strings.Contains(value, "tiktok.com") {
-			if parsed, err := url.Parse(value); err == nil {
-				for _, segment := range strings.Split(strings.Trim(parsed.Path, "/"), "/") {
-					if strings.HasPrefix(segment, "@") {
-						username = normalizeTikTokUsername(segment)
-						break
-					}
-				}
+	if value := strings.TrimSpace(platformUserID); strings.HasPrefix(value, "MS4") {
+		secUID = value
+	}
+	// The explicit homepage is authoritative. A cached handle, numeric user ID
+	// or display name must never replace its account during the first sync.
+	if parsed, err := url.Parse(strings.TrimSpace(profileURL)); err == nil {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "tiktok.com" || strings.HasSuffix(host, ".tiktok.com") {
+			if username := importedProfileAtHandle(parsed); username != "" {
+				return normalizeTikTokUsername(username), secUID
 			}
-			continue
-		}
-		if strings.HasPrefix(value, "MS4") || strings.Contains(value, "secUid") {
-			secUID = value
-			continue
-		}
-		if !strings.Contains(value, " ") && !strings.Contains(value, "/") {
-			username = normalizeTikTokUsername(value)
 		}
 	}
-	return username, secUID
+	asHandle := func(value string) string {
+		value = normalizeTikTokUsername(value)
+		if value == "" || value == "<nil>" || strings.ContainsAny(value, " \t\r\n/:?#&") {
+			return ""
+		}
+		return value
+	}
+	if username := asHandle(handle); username != "" {
+		return username, secUID
+	}
+	if secUID != "" {
+		return "", secUID
+	}
+	return asHandle(displayName), ""
 }
 
 func normalizeTikTokUsername(value string) string {
