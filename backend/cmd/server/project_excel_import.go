@@ -683,6 +683,11 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 		return nil, fmt.Errorf("第4行必须保留填写规范说明")
 	}
 	headers := grid[0]
+	costSources, err := excelCostSourceRows(book, sheet, headers)
+	if err != nil {
+		return nil, err
+	}
+	costGroups := make(map[int][]map[string]any)
 	previous := map[string]any{}
 	result := make([]map[string]any, 0)
 	for rowIndex := 4; rowIndex < len(grid); rowIndex++ {
@@ -861,6 +866,7 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 		row["views"] = float64(0)
 		row["engagementCount"] = float64(0)
 		row["cpm"] = float64(0)
+		firstContent := len(result)
 		if len(contentLinks) == 0 {
 			result = append(result, row)
 		} else {
@@ -876,9 +882,76 @@ func parseExcelContentSheetWithOptions(book *excelize.File, sheet string, option
 				result = append(result, contentRow)
 			}
 		}
+		costSource := rowIndex + 1
+		if source, exists := costSources[costSource]; exists {
+			costSource = source
+		}
+		costGroups[costSource] = append(costGroups[costSource], result[firstContent:]...)
 		previous = row
 	}
+	for _, group := range costGroups {
+		allocateExcelPackageCost(group)
+	}
 	return result, nil
+}
+
+// A merged cost cell is one package total, shared by its content rows.
+// Other merged fields still inherit their full value on every row.
+func excelCostSourceRows(book *excelize.File, sheet string, headers []string) (map[int]int, error) {
+	sources := make(map[int]int)
+	merges, err := book.GetMergeCells(sheet)
+	if err != nil {
+		return nil, err
+	}
+	for column, header := range headers {
+		if excelFieldForHeader(header) != "quoteAmount" {
+			continue
+		}
+		for _, merge := range merges {
+			firstColumn, firstRow, err := excelize.CellNameToCoordinates(merge.GetStartAxis())
+			if err != nil {
+				return nil, err
+			}
+			lastColumn, lastRow, err := excelize.CellNameToCoordinates(merge.GetEndAxis())
+			if err != nil {
+				return nil, err
+			}
+			if column+1 < firstColumn || column+1 > lastColumn {
+				continue
+			}
+			for row := firstRow; row <= lastRow; row++ {
+				sources[row] = firstRow
+			}
+		}
+	}
+	return sources, nil
+}
+
+func allocateExcelPackageCost(rows []map[string]any) {
+	if len(rows) < 2 {
+		return
+	}
+	// Match import deduplication before changing costs. Duplicate content gets
+	// the same share so skipping it later cannot lose part of the package total.
+	indices := make(map[string]int)
+	rowIndices := make([]int, len(rows))
+	for i, row := range rows {
+		key, err := importCooperationRowKey(row)
+		if err != nil {
+			// Invalid rows retain their validation errors and a separate share.
+			key = fmt.Sprintf("invalid-row-%d", i)
+		}
+		index, exists := indices[key]
+		if !exists {
+			index = len(indices)
+			indices[key] = index
+		}
+		rowIndices[i] = index
+	}
+	costs := allocateCooperationCosts(floatField(rows[0], "quoteAmount"), len(indices))
+	for i, row := range rows {
+		row["quoteAmount"] = costs[rowIndices[i]]
+	}
 }
 
 func standardImportOptionAllowed(options map[string][]string, field, value string) bool {
